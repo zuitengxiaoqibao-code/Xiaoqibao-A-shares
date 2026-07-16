@@ -31,10 +31,13 @@ describe("ConvertibleBondView", () => {
 
   it("shows authorization errors and source conflicts", async () => {
     const load = vi.fn().mockRejectedValueOnce(new Error("可转债数据源尚未授权：tencent")).mockResolvedValueOnce({ ...diagnosis, status: "source_conflict" });
-    const props = { loadDashboard: () => Promise.resolve({ status: "empty" as const, bond_count: 0, bond_codes: [] }), loadDiagnosis: load, loadCandidates: () => Promise.resolve({ status: "empty" as const, items: [] }) };
+    const openSettings = vi.fn();
+    const props = { loadDashboard: () => Promise.resolve({ status: "empty" as const, bond_count: 0, bond_codes: [] }), loadDiagnosis: load, loadCandidates: () => Promise.resolve({ status: "empty" as const, items: [] }), openBondCompliance: openSettings };
     const { unmount } = render(<ConvertibleBondView {...props} />);
     fireEvent.click(screen.getByRole("tab", { name: "诊断" })); fireEvent.click(screen.getByRole("button", { name: "诊断转债" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("数据源尚未配置，请在数据设置中检查连接。");
+    fireEvent.click(screen.getByRole("button", { name: "打开数据设置" }));
+    expect(openSettings).toHaveBeenCalledTimes(1);
     expect(screen.queryByText("尚未授权")).not.toBeInTheDocument();
     unmount(); render(<ConvertibleBondView {...props} />);
     fireEvent.click(screen.getByRole("tab", { name: "诊断" })); fireEvent.click(screen.getByRole("button", { name: "诊断转债" }));

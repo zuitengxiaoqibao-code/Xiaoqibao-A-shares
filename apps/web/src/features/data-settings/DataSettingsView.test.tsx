@@ -115,6 +115,35 @@ describe("DataSettingsView", () => {
     expect(screen.queryByText(/offline/i)).not.toBeInTheDocument();
   });
 
+  it("lets beginners switch asset domains and authorize a source", async () => {
+    const aShare = {
+      policy_state: "current",
+      sources: [{ source: "tencent", permission_state: "authorized", disclaimer_version: "2026-07", user_acknowledged_at: "2026-07-16T00:00:00Z" }],
+      features: [],
+    };
+    const bondPending = {
+      policy_state: "pending",
+      sources: [
+        { source: "eastmoney", permission_state: "pending", disclaimer_version: "2026-07", user_acknowledged_at: null },
+        { source: "tencent", permission_state: "pending", disclaimer_version: "2026-07", user_acknowledged_at: null },
+      ],
+      features: [{ feature: "bond_quotes", allowed: false, blocked_reasons: ["tencent:missing"] }],
+    };
+    const loadCompliance = vi.fn()
+      .mockResolvedValueOnce(aShare)
+      .mockResolvedValueOnce(bondPending)
+      .mockResolvedValueOnce({ ...bondPending, sources: [{ ...bondPending.sources[0], permission_state: "authorized" }, bondPending.sources[1]] });
+    const complianceAction = vi.fn().mockResolvedValue({});
+    render(<DataSettingsView loadAI={() => Promise.resolve({ configured: false, base_url: null, model: null, api_key_hint: null })} saveAI={vi.fn()} deleteAI={vi.fn()} loadCompliance={loadCompliance} complianceAction={complianceAction} />);
+
+    expect(await screen.findByText("来源授权")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "可转债" }));
+    expect(await screen.findByText("东方财富")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("东方财富 权限依据"), { target: { value: "个人研究用途" } });
+    fireEvent.click(screen.getByRole("button", { name: "授权 东方财富" }));
+    await waitFor(() => expect(complianceAction).toHaveBeenCalledWith("eastmoney", "authorize", "个人研究用途", "convertible_bond"));
+  });
+
   it("uses the effective state returned after deleting local settings", async () => {
     const deleteAI = vi.fn().mockResolvedValue({ configured: true, base_url: "https://env.example/v1", model: "env-model", api_key_hint: "****env1" });
     render(<DataSettingsView loadAI={() => Promise.resolve({ configured: true, base_url: "https://local.example/v1", model: "local", api_key_hint: "****ocal" })} saveAI={vi.fn()} deleteAI={deleteAI} />);

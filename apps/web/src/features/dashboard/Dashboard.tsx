@@ -209,13 +209,13 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, lo
         {loadStockCockpit ? <StockDecisionCockpit load={loadStockCockpit} prepare={prepareStockData} refreshToken={cockpitRefreshToken} onSnapshot={setLatestCockpit} /> : <main className="stock-cockpit empty-cockpit"><Radar size={24} /><h1>选择股票后查看行动卡</h1><p>可从候选、自选或搜索结果中选择任意已验证 A 股。</p></main>}
       </div>}
 
-      {activeView === "bonds" && loadBondDashboard && loadBondDiagnosis && loadBondCandidates && <ConvertibleBondView loadDashboard={loadBondDashboard} loadDiagnosis={loadBondDiagnosis} loadCandidates={loadBondCandidates} openBondCompliance={() => undefined} />}
+      {activeView === "bonds" && loadBondDashboard && loadBondDiagnosis && loadBondCandidates && <ConvertibleBondView loadDashboard={loadBondDashboard} loadDiagnosis={loadBondDiagnosis} loadCandidates={loadBondCandidates} openBondCompliance={() => navigate("settings")} />}
 
       {activeView === "news" && loadNewsIntelligence && syncNews && createNewsCorrection && <SelectedNewsWorkspace loadBundle={loadNewsIntelligence} syncNews={syncNews} createCorrection={createNewsCorrection} openNewsCompliance={() => undefined} />}
 
       {activeView === "history" && loadDecisionCurrent && <HistoryReview loadCurrent={loadDecisionCurrent} loadDate={loadDecisionDate} symbol={selectedInstrument?.symbol ?? selectedInstrument?.lastSymbol ?? null} runBacktest={runBacktest} />}
 
-      {activeView === "settings" && loadAISettings && saveAISettings && deleteAISettings && <DataSettingsView loadAI={loadAISettings} saveAI={saveAISettings} deleteAI={deleteAISettings} symbol={selectedSymbol} prepare={prepareStockData} preparation={preparationForSymbol(latestCockpit, selectedSymbol)} onAIChanged={() => setCockpitRefreshToken((value) => value + 1)} />}
+      {activeView === "settings" && loadAISettings && saveAISettings && deleteAISettings && <DataSettingsView loadAI={loadAISettings} saveAI={saveAISettings} deleteAI={deleteAISettings} symbol={selectedSymbol} prepare={prepareStockData} preparation={preparationForSymbol(latestCockpit, selectedSymbol)} loadCompliance={loadCompliance} complianceAction={complianceAction} onAIChanged={() => setCockpitRefreshToken((value) => value + 1)} />}
       {activeView === "settings" && (!loadAISettings || !saveAISettings || !deleteAISettings) && <main className="beginner-page"><header><p className="eyebrow">数据设置</p><h1>数据源与 AI</h1><p>设置服务暂不可用，请检查本地服务后重试。</p></header></main>}
 
       {activeView === "dashboard" && loadDecisionCurrent && <TodayDecisionView
