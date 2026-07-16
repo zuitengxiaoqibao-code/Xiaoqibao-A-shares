@@ -126,15 +126,16 @@ class PartialClassification:
 
 
 class FundFlow:
-    def __init__(self, *, fail_once=False):
+    def __init__(self, *, fail_once=False, error_message="fund flow offline"):
         self.calls = []
         self.fail_once = fail_once
+        self.error_message = error_message
 
     async def sync_symbol(self, symbol):
         self.calls.append(symbol)
         if self.fail_once:
             self.fail_once = False
-            raise TimeoutError("fund flow offline")
+            raise TimeoutError(self.error_message)
         return type("Snapshot", (), {"snapshot_id": "fund-flow-1"})()
 
 
@@ -315,6 +316,23 @@ async def test_fund_flow_failure_retries_without_degrading_core_status(tmp_path)
     assert second.status == "partial"
     assert second.refreshed is True
     assert fund_flow.calls == ["600519", "600519"]
+
+
+@pytest.mark.asyncio
+async def test_connection_level_fund_flow_failure_is_temporarily_cooled_down(tmp_path):
+    fund_flow = FundFlow(
+        fail_once=True,
+        error_message="Server disconnected without sending a response.",
+    )
+    service = subject(tmp_path, fund_flow=fund_flow)
+
+    await service.prepare("600519", as_of=FRIDAY)
+    second = await service.prepare("600519", as_of=FRIDAY)
+
+    source = next(item for item in second.sources if item.name == "fund_flow")
+    assert fund_flow.calls == ["600519"]
+    assert source.status == "partial"
+    assert source.reason == "fund_flow_connection_cooldown"
 
 
 @pytest.mark.asyncio

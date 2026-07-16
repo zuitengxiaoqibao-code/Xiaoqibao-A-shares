@@ -17,6 +17,7 @@ export function friendlySourceReason(reason: string | null): string | null {
   const value = reason.toLowerCase();
   if (value.includes("lock") && value.includes("timeout")) return "同步任务繁忙，请稍后重试";
   if (value === "news_no_verified_symbol_events") return "暂未找到与这只股票直接相关且已核实的新闻";
+  if (value.includes("fund_flow_connection_cooldown")) return "资金流连接刚被上游关闭，已暂缓重试，稍后自动再试";
   if (value.includes("server disconnected") || value.includes("remote end closed")) return "东方财富连接被远端关闭，可能是来源限流；已保留其他可用数据";
   if (value.includes("classification")) return "行业与板块来源暂不可用，请稍后重试";
   if (value.includes("fund_flow") || value.includes("fund-flow") || value.includes("fund flow")) return "资金流来源暂不可用，请稍后重试";

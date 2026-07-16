@@ -356,13 +356,22 @@ class AStockPreparationService:
         try:
             async with self._file_lock(f"fund-flow-{symbol}.lock"):
                 marker = self._fund_flow_marker(symbol)
+                failure_marker = self._fund_flow_failure_marker(symbol)
                 if self._fund_flow_is_fresh(marker):
                     return False, None
+                if self._fund_flow_failure_is_fresh(failure_marker):
+                    return False, "fund_flow_connection_cooldown"
                 await self.fund_flow_service.sync_symbol(symbol)
                 self._write_news_marker(marker, self._now())
+                failure_marker.unlink(missing_ok=True)
                 return True, None
         except Exception as error:
-            return False, str(error) or type(error).__name__
+            reason = str(error) or type(error).__name__
+            if self._is_connection_level_failure(reason):
+                self._write_news_marker(
+                    self._fund_flow_failure_marker(symbol), self._now()
+                )
+            return False, reason
 
     def _auxiliary_source(
         self,
@@ -504,6 +513,10 @@ class AStockPreparationService:
         self.lock_dir.mkdir(parents=True, exist_ok=True)
         return self.lock_dir / f"fund-flow-{symbol}-success.txt"
 
+    def _fund_flow_failure_marker(self, symbol: str):
+        self.lock_dir.mkdir(parents=True, exist_ok=True)
+        return self.lock_dir / f"fund-flow-{symbol}-failure.txt"
+
     def _write_news_marker(self, marker: Path, refreshed_at: datetime) -> None:
         temporary = marker.with_name(f".{marker.name}.{uuid4().hex}.tmp")
         try:
@@ -551,6 +564,27 @@ class AStockPreparationService:
             ).total_seconds() < self.fund_flow_cooldown_seconds
         except (OSError, ValueError):
             return False
+
+    def _fund_flow_failure_is_fresh(self, marker: Path):
+        refreshed_at = self._marker_time(marker)
+        return (
+            refreshed_at is not None
+            and (self._now() - refreshed_at).total_seconds()
+            < self.fund_flow_cooldown_seconds
+        )
+
+    @staticmethod
+    def _is_connection_level_failure(reason: str) -> bool:
+        value = reason.lower()
+        return any(
+            marker in value
+            for marker in (
+                "server disconnected",
+                "remote end closed",
+                "connection reset",
+                "connection aborted",
+            )
+        )
 
     @asynccontextmanager
     async def _file_lock(self, name):
