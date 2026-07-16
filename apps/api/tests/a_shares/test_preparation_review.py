@@ -112,6 +112,19 @@ class Classification:
         return type("Snapshot", (), {"classification_id": "classification-1"})()
 
 
+class PartialClassification:
+    def __init__(self):
+        self.calls = []
+
+    async def sync_symbol(self, symbol):
+        self.calls.append(symbol)
+        return type(
+            "Snapshot",
+            (),
+            {"quality": "partial", "reason": "industry endpoint unavailable"},
+        )()
+
+
 class FundFlow:
     def __init__(self, *, fail_once=False):
         self.calls = []
@@ -516,6 +529,27 @@ async def test_lock_retries_nonblocking_until_holder_releases(tmp_path):
     async with waiter._file_lock("retry.lock"):
         assert waiter._active_locks == 1
     await owner
+
+
+@pytest.mark.asyncio
+async def test_partial_classification_is_retried_until_complete(tmp_path):
+    classification = PartialClassification()
+    service = subject(
+        tmp_path,
+        news=SymbolNews(),
+        classification=classification,
+    )
+
+    first = await service.prepare("600519", as_of=FRIDAY)
+    second = await service.prepare("600519", as_of=FRIDAY)
+
+    first_source = next(item for item in first.sources if item.name == "classification")
+    second_source = next(item for item in second.sources if item.name == "classification")
+    assert classification.calls == ["600519", "600519"]
+    assert first_source.status == "partial"
+    assert second_source.status == "partial"
+    assert first_source.reason == "industry endpoint unavailable"
+    assert second_source.reason == "industry endpoint unavailable"
 
 
 class BlockingCalendar(Calendar):

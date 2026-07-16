@@ -296,6 +296,33 @@ async def test_source_retries_one_transient_response() -> None:
 
 
 @pytest.mark.asyncio
+async def test_source_keeps_verified_boards_when_industry_endpoint_is_unavailable() -> None:
+    calls = []
+
+    async def transport(url, _params, _headers):
+        calls.append(url)
+        if url == EASTMONEY_STOCK_INFO_URL:
+            raise OSError("remote end closed")
+        return response({"data": {"diff": [
+            {"f12": "BK0477", "f14": "酿酒行业", "f3": 1.25, "f128": "贵州茅台"},
+        ]}})
+
+    snapshot = await EastmoneyStockClassificationSource(
+        transport=transport, minimum_interval=0
+    ).fetch("600519")
+
+    assert calls == [
+        EASTMONEY_STOCK_INFO_URL,
+        EASTMONEY_STOCK_INFO_URL,
+        EASTMONEY_STOCK_BLOCKS_URL,
+    ]
+    assert snapshot.quality == "partial"
+    assert snapshot.industry is None
+    assert snapshot.reason == "remote end closed"
+    assert [board.name for board in snapshot.boards] == ["酿酒行业"]
+
+
+@pytest.mark.asyncio
 async def test_service_persists_snapshot_and_repository_respects_cutoff(tmp_path) -> None:
     observed = [
         datetime(2026, 7, 15, 8, tzinfo=UTC),

@@ -102,7 +102,7 @@ describe("DataSettingsView", () => {
       symbol: "600000", status: "partial", refreshed: false,
       started_at: "2026-07-16T10:00:00+08:00", completed_at: "2026-07-16T10:00:01+08:00",
       sources: [
-        { name: "classification", status: "partial", observed_at: null, reason: "classification offline" },
+        { name: "classification", status: "partial", observed_at: null, reason: "Server disconnected without sending a response." },
         { name: "fund_flow", status: "partial", observed_at: null, reason: "fund flow offline" },
       ],
     };
@@ -110,7 +110,7 @@ describe("DataSettingsView", () => {
 
     expect(await screen.findByText("行业与板块")).toBeInTheDocument();
     expect(screen.getByText("资金流")).toBeInTheDocument();
-    expect(screen.getByText("行业与板块来源暂不可用，请稍后重试")).toBeInTheDocument();
+    expect(screen.getByText("东方财富连接被远端关闭，可能是来源限流；已保留其他可用数据")).toBeInTheDocument();
     expect(screen.getByText("资金流来源暂不可用，请稍后重试")).toBeInTheDocument();
     expect(screen.queryByText(/offline/i)).not.toBeInTheDocument();
   });

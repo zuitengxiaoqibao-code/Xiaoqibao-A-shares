@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -52,8 +52,10 @@ class StockClassificationSnapshot(BaseModel):
     classification_id: str = Field(pattern=r"^stock-classification-[0-9a-f]{24}$")
     symbol: str = Field(pattern=r"^\d{6}$")
     observed_at: AwareDatetime
-    industry: str = Field(min_length=1, max_length=80)
+    industry: str | None = Field(default=None, max_length=80)
     boards: tuple[StockBoard, ...] = Field(min_length=1)
+    quality: Literal["ready", "partial"] = "ready"
+    reason: str | None = None
     source: str = "eastmoney-stock-classification"
     content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     raw_snapshot: bytes
@@ -106,16 +108,21 @@ class EastmoneyStockClassificationSource:
             "Referer": "https://quote.eastmoney.com/",
         }
         async with self._request_lock:
-            info_raw = await self._fetch_json(
-                EASTMONEY_STOCK_INFO_URL,
-                {
-                    "fltt": "2",
-                    "invt": "2",
-                    "fields": "f57,f127",
-                    "secid": secid,
-                },
-                headers,
-            )
+            info_error = None
+            try:
+                info_raw = await self._fetch_json(
+                    EASTMONEY_STOCK_INFO_URL,
+                    {
+                        "fltt": "2",
+                        "invt": "2",
+                        "fields": "f57,f127",
+                        "secid": secid,
+                    },
+                    headers,
+                )
+            except (OSError, httpx.TransportError, ValueError) as error:
+                info_error = str(error) or type(error).__name__
+                info_raw = {"data": {"f57": symbol}}
             blocks_raw = await self._fetch_json(
                 EASTMONEY_STOCK_BLOCKS_URL,
                 {
@@ -130,7 +137,7 @@ class EastmoneyStockClassificationSource:
                 },
                 headers,
             )
-        return self._parse(symbol, info_raw, blocks_raw)
+        return self._parse(symbol, info_raw, blocks_raw, info_error=info_error)
 
     async def _fetch_json(
         self,
@@ -199,13 +206,18 @@ class EastmoneyStockClassificationSource:
         symbol: str,
         info_payload: dict[str, Any],
         blocks_payload: dict[str, Any],
+        *,
+        info_error: str | None = None,
     ) -> StockClassificationSnapshot:
         info = info_payload.get("data") or {}
-        if not isinstance(info, dict) or str(info.get("f57") or "") != symbol:
+        if not isinstance(info, dict):
+            info = {}
+        info_symbol = str(info.get("f57") or "")
+        if info_symbol and info_symbol != symbol:
             raise ValueError("Eastmoney classification symbol mismatch")
         industry = _nonblank(info.get("f127"))
-        if industry is None:
-            raise ValueError("Eastmoney classification industry is empty")
+        if industry is None and info_error is None:
+            info_error = "Eastmoney classification industry is empty"
 
         diff = (blocks_payload.get("data") or {}).get("diff") or []
         rows = list(diff.values()) if isinstance(diff, dict) else diff
@@ -243,7 +255,11 @@ class EastmoneyStockClassificationSource:
         ).encode("utf-8")
         content_hash = hashlib.sha256(semantic_bytes).hexdigest()
         raw_snapshot = json.dumps(
-            {"blocks": blocks_payload, "info": info_payload},
+            {
+                "blocks": blocks_payload,
+                "info": info_payload,
+                "info_error": info_error,
+            },
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
@@ -261,6 +277,8 @@ class EastmoneyStockClassificationSource:
             observed_at=observed_at,
             industry=industry,
             boards=tuple(boards),
+            quality="partial" if info_error else "ready",
+            reason=info_error,
             content_hash=content_hash,
             raw_snapshot=raw_snapshot,
         )

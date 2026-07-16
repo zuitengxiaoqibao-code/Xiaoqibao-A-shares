@@ -36,7 +36,7 @@ class DiagnosisUnavailableError(RuntimeError):
 class DiagnosisSection(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    status: Literal["ready", "unavailable"]
+    status: Literal["ready", "partial", "unavailable"]
     observed_at: datetime | date | None = None
     source: str
     metrics: dict[str, Decimal | int | str | None] = Field(default_factory=dict)
@@ -226,11 +226,12 @@ class AShareDiagnosisService:
             fund_flow, fund_flow_error,
         )
         missing = [name for name, section in sections.items() if section.status == "unavailable"]
+        degraded = [name for name, section in sections.items() if section.status != "ready"]
         diagnosis = AShareDiagnosis(
             symbol=symbol,
             as_of=as_of,
             action="observe",
-            overall_status="partial" if missing else "ready",
+            overall_status="partial" if degraded else "ready",
             sections=sections,
             missing_data=missing,
         )
@@ -597,8 +598,9 @@ class AShareDiagnosisService:
                 "行业与板块数据不可用："
                 f"{classification_error or '未配置结构化分类仓储'}",
             )
+        partial = classification.quality == "partial" or classification.industry is None
         return DiagnosisSection(
-            status="ready",
+            status="partial" if partial else "ready",
             observed_at=classification.observed_at,
             source=classification.source,
             metrics={
@@ -606,5 +608,9 @@ class AShareDiagnosisService:
                 "board_tags": "、".join(board.name for board in classification.boards),
             },
             evidence_ids=(classification.classification_id,),
-            explanation="所属行业和板块标签来自结构化分类快照。",
+            explanation=(
+                "行业名称暂缺，仅展示已核验板块标签。"
+                f"原因：{classification.reason or '行业字段未返回'}"
+                if partial else "所属行业和板块标签来自结构化分类快照。"
+            ),
         )

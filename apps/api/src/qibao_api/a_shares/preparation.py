@@ -342,9 +342,11 @@ class AStockPreparationService:
                 marker = self._classification_marker(symbol)
                 if self._classification_is_fresh(marker):
                     return False, None
-                await self.classification_service.sync_symbol(symbol)
-                self._write_news_marker(marker, self._now())
-                return True, None
+                snapshot = await self.classification_service.sync_symbol(symbol)
+                if getattr(snapshot, "quality", "ready") == "ready":
+                    self._write_news_marker(marker, self._now())
+                    return True, None
+                return True, getattr(snapshot, "reason", None) or "classification_partial"
         except Exception as error:
             return False, str(error) or type(error).__name__
 

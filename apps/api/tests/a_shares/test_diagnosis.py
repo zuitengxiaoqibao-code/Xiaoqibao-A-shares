@@ -125,6 +125,26 @@ class Classifications:
         )
 
 
+def test_partial_classification_keeps_board_evidence_without_claiming_industry() -> None:
+    snapshot = StockClassificationSnapshot(
+        classification_id="stock-classification-" + "c" * 24,
+        symbol="600000",
+        observed_at=datetime(2026, 7, 14, 10, 30, tzinfo=UTC),
+        industry=None,
+        quality="partial",
+        reason="remote end closed",
+        boards=(StockBoard(code="BK0477", name="酿酒行业"),),
+        content_hash="d" * 64,
+        raw_snapshot=b"{}",
+    )
+
+    section = AShareDiagnosisService._industry_section(snapshot, None)
+
+    assert section.status == "partial"
+    assert section.metrics == {"industry": None, "board_tags": "酿酒行业"}
+    assert "行业名称暂缺" in section.explanation
+
+
 class FundFlows:
     def __init__(
         self,
