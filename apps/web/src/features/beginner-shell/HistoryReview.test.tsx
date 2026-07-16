@@ -44,4 +44,30 @@ describe("HistoryReview", () => {
 
     expect(await screen.findByText("计划 15:30 生成")).toBeInTheDocument();
   });
+  it("shows a beginner-friendly postclose outcome without internal metadata", async () => {
+    const data = response();
+    data.current_phase = "postclose";
+    data.phases.postclose = {
+      ...data.phases.postclose,
+      phase_status: "ready",
+      quality: "ready",
+      ai_status: "ready",
+      advice: [{
+        ...advice,
+        quantitative_result: {
+          outcome_status: "correct",
+          error_attribution: "trend_failure",
+          outcome_input_hash: "internal-hash",
+          original_advice_id: "internal-advice",
+          original_snapshot_id: "internal-snapshot",
+        },
+      }],
+    };
+
+    render(<HistoryReview loadCurrent={() => Promise.resolve(data)} symbol="600000" />);
+
+    expect(await screen.findByText(/判断成立/)).toBeInTheDocument();
+    expect(screen.getByText("趋势结果")).toBeInTheDocument();
+    expect(screen.queryByText(/internal-hash|internal-advice|internal-snapshot/)).not.toBeInTheDocument();
+  });
 });
