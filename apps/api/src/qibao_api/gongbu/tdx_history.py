@@ -11,16 +11,28 @@ class DataSourceUnavailable(RuntimeError):
 
 
 class TdxHistorySource:
-    def __init__(self, client) -> None:
+    def __init__(self, client=None, *, client_factory=None) -> None:
+        if (client is None) == (client_factory is None):
+            raise ValueError("provide exactly one mootdx client or client factory")
         self.client = client
+        self.client_factory = client_factory
 
     def fetch_daily(self, symbol: str, limit: int = 250) -> list[DailyBar]:
-        frame = self.client.bars(symbol=symbol, frequency=9, start=0, offset=limit)
-        if frame is None or frame.empty:
-            raise DataSourceUnavailable("mootdx returned no daily bars")
+        client = self.client_factory() if self.client_factory is not None else self.client
+        try:
+            frame = client.bars(
+                symbol=symbol, frequency=9, start=0, offset=limit
+            )
+            if frame is None or frame.empty:
+                raise DataSourceUnavailable("mootdx returned no daily bars")
 
-        bars = [self._convert_row(symbol, row) for _, row in frame.iterrows()]
-        return sorted(bars, key=lambda item: item.trade_date)
+            bars = [self._convert_row(symbol, row) for _, row in frame.iterrows()]
+            return sorted(bars, key=lambda item: item.trade_date)
+        finally:
+            if self.client_factory is not None:
+                close = getattr(client, "close", None)
+                if callable(close):
+                    close()
 
     @staticmethod
     def _convert_row(symbol: str, row: pd.Series) -> DailyBar:

@@ -180,19 +180,14 @@ async def lifespan(application: FastAPI):
     async with httpx.AsyncClient(timeout=10) as client:
         application.state.a_share_quote_source = TencentQuoteSource(client)
         with httpx.Client(timeout=10) as history_client:
-            history_sources = []
-            try:
-                tdx_source = TdxHistorySource(create_tdx_client())
-                history_sources.append(
-                    AuthorizedHistorySource(
-                        tdx_source,
-                        compliance,
-                        "history_sync.mootdx",
-                        "a_share",
-                    )
+            history_sources = [
+                AuthorizedHistorySource(
+                    TdxHistorySource(client_factory=create_tdx_client),
+                    compliance,
+                    "history_sync.mootdx",
+                    "a_share",
                 )
-            except Exception:
-                pass
+            ]
             history_sources.append(
                 AuthorizedHistorySource(
                     BaiduHistorySource(history_client),

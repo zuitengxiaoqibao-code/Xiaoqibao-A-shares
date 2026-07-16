@@ -63,8 +63,9 @@ async def test_lifespan_injects_guarded_production_sources_and_closes_compliance
         assert isinstance(compliance, ComplianceRepository)
         assert isinstance(application.state.pipeline.quote_source, AuthorizedQuoteSource)
         fallback = application.state.market_data_service.source
-        assert fallback.sources
+        assert len(fallback.sources) == 2
         assert all(isinstance(source, AuthorizedHistorySource) for source in fallback.sources)
+        assert fallback.sources[0]._source.client_factory is main_module.create_tdx_client
         assert len(compliance.list_feature_source_history("realtime_quotes", "a_share")) == 1
         assert compliance.list_feature_source_history("paper_orders", "a_share") == []
         assert len(compliance.list_feature_source_history("history_sync.baidu", "a_share")) == 1
