@@ -120,6 +120,7 @@ def test_diagnosis_fetches_and_appends_reproducible_snapshot(tmp_path):
     body = response.json()
     assert body["bond"]["code"] == "113065"
     assert body["linked_stock"]["code"] == "600001"
+    assert body["quote"]["turnover_amount"] == "526680000"
     assert Decimal(body["metrics"]["conversion_value"]) == Decimal("100") / Decimal("12.34") * Decimal("10.25")
     assert Decimal(body["metrics"]["conversion_premium"]) == (Decimal("121.50") - Decimal(body["metrics"]["conversion_value"])) / Decimal(body["metrics"]["conversion_value"])
     assert Decimal(body["metrics"]["pure_bond_premium"]) == (

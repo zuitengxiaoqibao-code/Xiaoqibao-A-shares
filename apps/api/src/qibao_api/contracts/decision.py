@@ -55,6 +55,8 @@ class DecisionCycleSnapshot(BaseModel):
     market_summary: str | None = None
     hot_topics: tuple[NonBlank, ...] = ()
     industries: tuple[NonBlank, ...] = ()
+    pending_hot_topics: tuple[NonBlank, ...] = ()
+    pending_industries: tuple[NonBlank, ...] = ()
     fund_flow_inflow_count: int = 0
     fund_flow_outflow_count: int = 0
     fund_flow_available_count: int = 0

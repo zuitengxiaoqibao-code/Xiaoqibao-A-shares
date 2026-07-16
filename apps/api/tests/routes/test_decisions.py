@@ -321,6 +321,8 @@ def test_phase_context_exposes_only_referenced_verified_news_and_missing_ids():
             "ai_status": "unavailable", "market_state": "range",
             "candidate_snapshot_id": "candidates-1",
             "quality_reasons": ["compliance_unavailable"],
+            "pending_hot_topics": ["待核验主题"],
+            "pending_industries": ["待核验行业"],
             "news_event_ids": ["news-1", "news-pending", "news-missing"],
             "risk_event_ids": ["market-risk-1"],
         },
@@ -359,6 +361,8 @@ def test_phase_context_exposes_only_referenced_verified_news_and_missing_ids():
     assert context["candidate_snapshot_id"] == "candidates-1"
     assert context["risk_event_count"] == 1
     assert context["quality_reasons"] == ["compliance_unavailable"]
+    assert context["market_overview"]["pending_hot_topics"] == ["待核验主题"]
+    assert context["market_overview"]["pending_industries"] == ["待核验行业"]
     assert context["news"]["status"] == "partial"
     assert context["news"]["missing_event_ids"] == ["news-pending", "news-missing"]
     assert context["news"]["events"] == [{

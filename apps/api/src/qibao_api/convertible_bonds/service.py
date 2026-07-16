@@ -83,7 +83,12 @@ class ConvertibleBondService:
             "linked_stock": {"code": stock.symbol, "name": stock.name, "price": stock.price,
                              "source": stock.source, "observed_at": stock.observed_at},
             "quote": {"source": quote.source, "observed_at": quote.observed_at,
-                      "quality": "stale" if stale else quote.quality, "raw_identity": quote.raw_identity},
+                      "quality": "stale" if stale else quote.quality,
+                      "raw_identity": quote.raw_identity,
+                      "turnover_amount": (
+                          str(quote.turnover_amount)
+                          if quote.turnover_amount is not None else None
+                      )},
             "clause_snapshot": {"source": snapshot.source, "fetched_at": snapshot.fetched_at,
                                 "content_hash": snapshot.content_hash,
                                 "conversion_price": snapshot.contract.conversion_price,

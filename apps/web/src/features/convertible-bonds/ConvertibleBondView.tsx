@@ -19,6 +19,13 @@ const filterName: Record<string, string> = {
 };
 const value = (item: string | null, suffix = "") => item == null ? "未知" : `${item}${suffix}`;
 const redemptionLabel: Record<string, string> = { unknown: "强赎状态未知", triggered: "强赎已触发", announced: "强赎已公告", completed: "强赎已完成" };
+const riskLabel: Record<string, string> = { eligible: "可观察", observe_only: "仅观察", exclude: "排除" };
+const riskReason: Record<string, string> = {
+  pure_bond_value: "纯债价值缺失", turnover_amount: "成交额缺失",
+  bond_liquidity_missing: "成交额缺失", bond_conversion_premium_missing: "转股溢价率缺失",
+  bond_maturity_too_near: "距离到期过近", bond_remaining_size_too_small: "剩余规模偏小",
+  bond_strong_redemption_unknown: "强赎状态未知",
+};
 
 export function ConvertibleBondView({ loadDashboard, loadDiagnosis, loadCandidates, openBondCompliance }: Props) {
   const [tab, setTab] = useState<"overview" | "diagnosis" | "candidates">("overview");
@@ -34,6 +41,7 @@ export function ConvertibleBondView({ loadDashboard, loadDiagnosis, loadCandidat
   async function inspect() { setLoading(true); setError(""); try { setDiagnosis(await loadDiagnosis(code)); } catch (e) { setError(friendlyError(e, "转债诊断")); } finally { setLoading(false); } }
   async function showCandidates() { setTab("candidates"); setLoading(true); setError(""); try { setCandidates(await loadCandidates(filters)); } catch (e) { setError(friendlyError(e, "转债候选池")); } finally { setLoading(false); } }
 
+  const riskDetails = diagnosis ? [...diagnosis.risk.unknowns, ...diagnosis.risk.explanations].map((item) => riskReason[item] ?? item).filter((item, index, values) => values.indexOf(item) === index) : [];
   return <main className="bond-domain">
     <header className="bond-header"><div><p className="eyebrow">独立资产域 / CONVERTIBLE BONDS</p><h1>可转债专区</h1><p>行情、条款与正股上下文分层核验</p></div><div className="bond-domain-mark"><Gauge size={18} /><span>CB</span></div></header>
     <div className="bond-tabs" role="tablist">
@@ -49,7 +57,8 @@ export function ConvertibleBondView({ loadDashboard, loadDiagnosis, loadCandidat
       {diagnosis && <>
         <div className="bond-state-line">{diagnosis.status === "stale_quote" && <span className="warning"><AlertTriangle size={15}/>行情已过期</span>}{diagnosis.status === "source_conflict" && <span className="danger"><AlertTriangle size={15}/>数据源冲突</span>}<span>{sourceName[diagnosis.quote.source] ?? diagnosis.quote.source} · {new Date(diagnosis.quote.observed_at).toLocaleString("zh-CN")}</span></div>
         <div className="bond-identity"><div><small>{diagnosis.bond.code}</small><h2>{diagnosis.bond.name}</h2></div><div><small>关联正股（独立上下文）</small><b>{diagnosis.linked_stock.code} · {diagnosis.linked_stock.name}</b><span>{diagnosis.linked_stock.price}</span></div></div>
-        <div className="bond-metrics"><div><span>转股价值</span><b>{value(diagnosis.metrics.conversion_value)}</b></div><div><span>转股溢价率</span><b>{value(diagnosis.metrics.conversion_premium)}</b></div><div><span>剩余规模</span><b>{diagnosis.clause_snapshot.remaining_size}</b></div><div><span>到期日</span><b>{diagnosis.clause_snapshot.maturity}</b></div><div><span>纯债溢价</span><b>{diagnosis.metrics.pure_bond_premium == null ? "未知（缺少纯债价值）" : diagnosis.metrics.pure_bond_premium}</b></div><div><span>流动性</span><b>未知（缺少成交额）</b></div></div>
+        <div className="bond-metrics"><div><span>转股价值</span><b>{value(diagnosis.metrics.conversion_value)}</b></div><div><span>转股溢价率</span><b>{value(diagnosis.metrics.conversion_premium)}</b></div><div><span>剩余规模</span><b>{diagnosis.clause_snapshot.remaining_size}</b></div><div><span>到期日</span><b>{diagnosis.clause_snapshot.maturity}</b></div><div><span>纯债溢价</span><b>{diagnosis.metrics.pure_bond_premium == null ? "未知（缺少纯债价值）" : diagnosis.metrics.pure_bond_premium}</b></div><div><span>当日成交额</span><b>{diagnosis.quote.turnover_amount == null ? "未知（缺少成交额）" : `${diagnosis.quote.turnover_amount} 元`}</b></div></div>
+        <section className={`bond-risk-summary ${diagnosis.risk.outcome}`}><div><span>规则风险结论</span><b>{riskLabel[diagnosis.risk.outcome] ?? diagnosis.risk.outcome}</b></div><small>{riskDetails.length ? `需要补齐：${riskDetails.join("、")}` : "当前规则输入完整"}</small></section>
         <section className="clause-evidence"><header><FileText size={17}/><div><b>{redemptionLabel[diagnosis.strong_redemption.state] ?? "强赎状态未知"}</b><small>{sourceName[diagnosis.strong_redemption.source] ?? diagnosis.strong_redemption.source} · {new Date(diagnosis.strong_redemption.observed_at).toLocaleString("zh-CN")}</small></div></header>{diagnosis.strong_redemption.clause_text && <p>{diagnosis.strong_redemption.clause_text}</p>}<dl>{Object.entries(diagnosis.strong_redemption.evidence_fields ?? {}).map(([field, fieldValue]) => <div key={field}><dt>{field}</dt><dd>{fieldValue}</dd></div>)}</dl></section>
       </>}
     </section>}

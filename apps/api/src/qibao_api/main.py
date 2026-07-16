@@ -29,6 +29,10 @@ from qibao_api.gongbu.news_collection import (
 )
 from qibao_api.gongbu.news_ingestion import NewsIngestionService
 from qibao_api.gongbu.news_linking import DeterministicNewsLinker
+from qibao_api.gongbu.news_taxonomy import (
+    DEFAULT_INDUSTRY_KEYWORDS,
+    DEFAULT_THEME_KEYWORDS,
+)
 from qibao_api.gongbu.news_repository import NewsRepository
 from qibao_api.gongbu.fund_flow import (
     EastmoneyFundFlowSource,
@@ -248,14 +252,8 @@ async def lifespan(application: FastAPI):
                 news_repository,
                 DeterministicNewsLinker(
                     instrument_aliases={},
-                    industry_keywords={},
-                    theme_keywords={
-                        "政策支持": ("支持政策", "专项政策", "政策支持"),
-                        "业绩变化": ("业绩预增", "业绩预减", "业绩快报"),
-                        "并购重组": ("并购", "重组", "资产收购"),
-                        "股份回购": ("股份回购", "回购方案"),
-                        "风险事件": ("立案调查", "风险提示", "退市风险"),
-                    },
+                    industry_keywords=DEFAULT_INDUSTRY_KEYWORDS,
+                    theme_keywords=DEFAULT_THEME_KEYWORDS,
                 ),
                 compliance,
                 NewsAIGateway(

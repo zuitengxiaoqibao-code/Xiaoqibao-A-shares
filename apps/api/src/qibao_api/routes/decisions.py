@@ -100,6 +100,8 @@ def _phase_context(news_repository, snapshot):
             "summary": snapshot.get("market_summary"),
             "hot_topics": snapshot.get("hot_topics", []),
             "industries": snapshot.get("industries", []),
+            "pending_hot_topics": snapshot.get("pending_hot_topics", []),
+            "pending_industries": snapshot.get("pending_industries", []),
             "fund_flow": {
                 "inflow": snapshot.get("fund_flow_inflow_count", 0),
                 "outflow": snapshot.get("fund_flow_outflow_count", 0),

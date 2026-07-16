@@ -128,6 +128,44 @@ def test_market_risk_includes_verified_topics_industries_and_candidate_fund_flow
     assert result.fund_flow_available_count == 2
 
 
+def test_market_risk_separates_pending_labels_from_verified_evidence():
+    candidate_board = SimpleNamespace(
+        universe_status="ready",
+        short_term=[SimpleNamespace(symbol="600000", score=12)],
+        swing=[],
+        snapshot_id="candidate-1",
+        model_dump=lambda mode: {"symbols": ["600000"]},
+    )
+    news = SimpleNamespace(effective_events=lambda cutoff=None: [
+        SimpleNamespace(
+            review_state="verified", themes=("已核验主题",), industries=("已核验行业",),
+            occurred_at=NOW, normalized_at=NOW,
+        ),
+        SimpleNamespace(
+            review_state="pending", themes=("待核验主题",), industries=("待核验行业",),
+            occurred_at=NOW, normalized_at=NOW,
+        ),
+        SimpleNamespace(
+            review_state="pending", themes=(), industries=(),
+            occurred_at=NOW, normalized_at=NOW,
+        ),
+        SimpleNamespace(
+            review_state="rejected", themes=("拒绝主题",), industries=("拒绝行业",),
+            occurred_at=NOW, normalized_at=NOW,
+        ),
+    ])
+
+    result = RepositoryRiskSource(
+        Audit(), Candidates(candidate_board), news_repository=news,
+    ).summarize(date(2026, 7, 15), NOW)
+
+    assert result.hot_topics == ("已核验主题",)
+    assert result.industries == ("已核验行业",)
+    assert result.pending_hot_topics == ("待核验主题",)
+    assert result.pending_industries == ("待核验行业",)
+    assert result.risks == ()
+
+
 def test_market_risk_deduplicates_fund_flow_for_short_and_swing_membership():
     candidate_board = SimpleNamespace(
         universe_status="ready",

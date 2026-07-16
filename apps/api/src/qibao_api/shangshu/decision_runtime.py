@@ -125,7 +125,9 @@ class RepositoryRiskSource:
             else "range" if average is not None else "insufficient_data"
         )
         market_state = "weak" if severe else factor_state
-        hot_topics, industries = self._news_labels(trading_date, cutoff)
+        hot_topics, industries, pending_hot_topics, pending_industries = self._news_labels(
+            trading_date, cutoff,
+        )
         classified_industries = self._candidate_industries(entries, trading_date, cutoff)
         industries = tuple(dict.fromkeys((*industries, *classified_industries)))
         flow_counts = self._candidate_fund_flow(entries, trading_date, cutoff)
@@ -139,6 +141,7 @@ class RepositoryRiskSource:
             "候选因子宽度",
             f"已核验热点 {len(hot_topics)} 个" if hot_topics else "暂无已核验热点",
             f"行业 {len(industries)} 个" if industries else "暂无行业归因",
+            f"待核验热点 {len(pending_hot_topics)} 个" if pending_hot_topics else "暂无待核验热点",
             f"资金流入/流出 {flow_counts['inflow']}/{flow_counts['outflow']}"
             if flow_counts["available"] else "暂无候选资金流快照",
         ]
@@ -150,15 +153,20 @@ class RepositoryRiskSource:
         content = {
             "date": trading_date.isoformat(), "candidate": board.model_dump(mode="json"),
             "findings": [item.model_dump(mode="json") for item in findings],
-            "hot_topics": hot_topics, "industries": industries, "fund_flow": flow_counts,
+            "hot_topics": hot_topics, "industries": industries,
+            "pending_hot_topics": pending_hot_topics,
+            "pending_industries": pending_industries,
+            "fund_flow": flow_counts,
         }
         return MarketRiskInputSnapshot(
             snapshot_id=_identity("risk", content), captured_at=cutoff,
             available=bool(scores), market_state=market_state,
-            version="factor-breadth-news-flow-risk-v2",
+            version="factor-breadth-news-flow-risk-v3",
             summary="；".join(summary_parts) if scores else "市场因子证据不可用",
             risks=tuple(dict.fromkeys(risk_reasons)),
             hot_topics=hot_topics, industries=industries,
+            pending_hot_topics=pending_hot_topics,
+            pending_industries=pending_industries,
             fund_flow_inflow_count=flow_counts["inflow"],
             fund_flow_outflow_count=flow_counts["outflow"],
             fund_flow_available_count=flow_counts["available"],
@@ -166,7 +174,7 @@ class RepositoryRiskSource:
 
     def _news_labels(self, trading_date, cutoff):
         if self.news_repository is None:
-            return (), ()
+            return (), (), (), ()
         if self.trading_calendar is not None:
             previous = self.trading_calendar.previous_trading_day(trading_date)
             window_start = datetime.combine(previous, time(15), CHINA_TZ)
@@ -175,17 +183,26 @@ class RepositoryRiskSource:
         try:
             events = tuple(
                 item for item in self.news_repository.effective_events(cutoff=cutoff)
-                if item.review_state == "verified"
+                if item.review_state in {"verified", "pending"}
                 and window_start <= item.occurred_at <= cutoff
                 and item.normalized_at <= cutoff
             )
         except Exception:
-            return (), ()
-        topics = Counter(theme for item in events for theme in item.themes if theme)
-        industries = Counter(industry for item in events for industry in item.industries if industry)
+            return (), (), (), ()
+        verified = tuple(item for item in events if item.review_state == "verified")
+        pending = tuple(
+            item for item in events
+            if item.review_state == "pending" and (item.themes or item.industries)
+        )
+        topics = Counter(theme for item in verified for theme in item.themes if theme)
+        industries = Counter(industry for item in verified for industry in item.industries if industry)
+        pending_topics = Counter(theme for item in pending for theme in item.themes if theme)
+        pending_industries = Counter(industry for item in pending for industry in item.industries if industry)
         return (
             tuple(label for label, _ in topics.most_common(5)),
             tuple(label for label, _ in industries.most_common(5)),
+            tuple(label for label, _ in pending_topics.most_common(5)),
+            tuple(label for label, _ in pending_industries.most_common(5)),
         )
 
     def _candidate_industries(self, entries, trading_date, cutoff):

@@ -79,7 +79,8 @@ async def test_lifespan_injects_guarded_production_sources_and_closes_compliance
         news_repository = application.state.news_repository
         assert application.state.news_service.repository is news_repository
         assert application.state.news_service.stock_source is not None
-        assert application.state.news_service.linker.industry_keywords == {}
+        assert "银行" in application.state.news_service.linker.industry_keywords
+        assert "人工智能" in application.state.news_service.linker.theme_keywords
         classification_repository = application.state.stock_classification_repository
         assert (
             application.state.a_share_diagnosis_service.classification_repository

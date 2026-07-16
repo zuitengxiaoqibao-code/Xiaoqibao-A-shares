@@ -122,6 +122,29 @@ class MarketRisk:
     def summarize(self, trading_date, now): return self.value
 
 
+def test_premarket_freezes_pending_market_labels_without_using_them_for_advice(tmp_path) -> None:
+    baseline_subject, _ = service(tmp_path / "baseline")
+    baseline = baseline_subject.run(TRADE_DATE, NOW)
+    risk = MarketRisk()
+    risk.value = risk.value.model_copy(update={
+        "pending_hot_topics": ("待核验主题",),
+        "pending_industries": ("待核验行业",),
+    })
+    subject, _ = service(tmp_path, risk=risk)
+
+    result = subject.run(TRADE_DATE, NOW)
+
+    assert result.snapshot.pending_hot_topics == ("待核验主题",)
+    assert result.snapshot.pending_industries == ("待核验行业",)
+    assert result.advice
+    assert all("待核验主题" not in item.conclusion for item in result.advice)
+    assert result.snapshot.status == baseline.snapshot.status
+    assert result.snapshot.data_quality == baseline.snapshot.data_quality
+    assert [(item.action, item.confidence) for item in result.advice] == [
+        (item.action, item.confidence) for item in baseline.advice
+    ]
+
+
 class AI:
     def __init__(self, ready=True, generated_at=NOW): self.ready, self.generated_at = ready, generated_at
     def explain(self, request):

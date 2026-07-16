@@ -46,6 +46,8 @@ class MarketRiskInputSnapshot(BaseModel):
     risks: tuple[str, ...]
     hot_topics: tuple[str, ...] = ()
     industries: tuple[str, ...] = ()
+    pending_hot_topics: tuple[str, ...] = ()
+    pending_industries: tuple[str, ...] = ()
     fund_flow_inflow_count: int = 0
     fund_flow_outflow_count: int = 0
     fund_flow_available_count: int = 0
@@ -213,6 +215,8 @@ class PremarketDecisionService:
             market_summary=risk.summary,
             hot_topics=risk.hot_topics,
             industries=risk.industries,
+            pending_hot_topics=risk.pending_hot_topics,
+            pending_industries=risk.pending_industries,
             fund_flow_inflow_count=risk.fund_flow_inflow_count,
             fund_flow_outflow_count=risk.fund_flow_outflow_count,
             fund_flow_available_count=risk.fund_flow_available_count,

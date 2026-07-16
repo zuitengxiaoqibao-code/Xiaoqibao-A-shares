@@ -58,6 +58,8 @@ export function PhaseContextPanel({ context }: { context?: PhaseContext }) {
   const marketState = context.market_state ? marketStateNames[context.market_state] : "状态未记录";
   const overview = context.market_overview;
   const flow = overview?.fund_flow;
+  const pendingTopics = overview?.pending_hot_topics ?? [];
+  const pendingIndustries = overview?.pending_industries ?? [];
   return <section className="phase-context" aria-label="阶段依据">
     <header>
       <div>
@@ -77,6 +79,11 @@ export function PhaseContextPanel({ context }: { context?: PhaseContext }) {
         <div><span>行业归因</span><b>{overview.industries.length ? overview.industries.join(" · ") : "暂无"}</b></div>
         <div><span>候选资金流</span><b>{flow?.available ? `流入 ${flow.inflow} · 流出 ${flow.outflow}` : "暂无可用快照"}</b></div>
       </div>
+      {(pendingTopics.length > 0 || pendingIndustries.length > 0) && <div className="market-overview-pending">
+        <div><span>待核验热点</span><b>{pendingTopics.length ? pendingTopics.join(" · ") : "暂无"}</b></div>
+        <div><span>待核验行业</span><b>{pendingIndustries.length ? pendingIndustries.join(" · ") : "暂无"}</b></div>
+        <small>仅作信息流，不进入建议依据</small>
+      </div>}
     </section>}
     {context.quality_reasons.length > 0 && <section className="phase-quality-reasons">
       <h3>为什么当前没有完整建议</h3>

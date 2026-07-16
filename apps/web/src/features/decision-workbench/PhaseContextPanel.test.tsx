@@ -11,6 +11,7 @@ describe("PhaseContextPanel", () => {
       market_overview: {
         summary: "候选因子宽度；已核验热点 1 个",
         hot_topics: ["人工智能"], industries: ["软件服务"],
+        pending_hot_topics: ["机器人"], pending_industries: ["电子"],
         fund_flow: { inflow: 2, outflow: 1, available: 3 },
       },
       news: { status: "empty", events: [], missing_event_ids: [], error_code: null },
@@ -19,5 +20,8 @@ describe("PhaseContextPanel", () => {
     expect(screen.getByText("人工智能")).toBeInTheDocument();
     expect(screen.getByText("软件服务")).toBeInTheDocument();
     expect(screen.getByText("流入 2 · 流出 1")).toBeInTheDocument();
+    expect(screen.getByText("机器人")).toBeInTheDocument();
+    expect(screen.getByText("电子")).toBeInTheDocument();
+    expect(screen.getByText("仅作信息流，不进入建议依据")).toBeInTheDocument();
   });
 });

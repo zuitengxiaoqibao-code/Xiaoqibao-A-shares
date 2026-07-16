@@ -6,7 +6,7 @@ const diagnosis = {
   status: "stale_quote" as const,
   bond: { code: "113065", name: "测试转债", price: "121.50", suspended: false },
   linked_stock: { code: "600001", name: "测试股份", price: "10.25", source: "tencent", observed_at: "2026-07-14T02:30:00Z" },
-  quote: { source: "tencent", observed_at: "2026-07-14T02:30:00Z", quality: "stale" },
+  quote: { source: "tencent", observed_at: "2026-07-14T02:30:00Z", quality: "stale", turnover_amount: "526680000" },
   clause_snapshot: { source: "eastmoney", fetched_at: "2026-07-14T02:30:00Z", conversion_price: "12.34", maturity: "2028-09-15", remaining_size: "18.765432" },
   metrics: { conversion_value: "83.063", conversion_premium: "0.4627", pure_bond_premium: null, remaining_term: { days: 794 } },
   risk: { outcome: "observe_only", unknowns: ["pure_bond_value", "turnover_amount"], explanations: ["bond_liquidity_missing"] },
@@ -23,6 +23,10 @@ describe("ConvertibleBondView", () => {
     expect(screen.getByText("强赎已公告")).toBeInTheDocument();
     expect(screen.getByText(/发行人已发布/)).toBeInTheDocument();
     expect(screen.getByText("未知（缺少纯债价值）")).toBeInTheDocument();
+    expect(screen.getByText("526680000 元")).toBeInTheDocument();
+    expect(screen.getByText("仅观察")).toBeInTheDocument();
+    expect(screen.getByText("当日成交额")).toBeInTheDocument();
+    expect(screen.getByText(/成交额缺失/)).toBeInTheDocument();
   });
 
   it("shows authorization errors and source conflicts", async () => {

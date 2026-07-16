@@ -17,6 +17,7 @@ export type PhaseContext = {
   risk_event_count: number; quality_reasons: string[];
   market_overview?: {
     summary: string | null; hot_topics: string[]; industries: string[];
+    pending_hot_topics: string[]; pending_industries: string[];
     fund_flow: { inflow: number; outflow: number; available: number };
   };
   news: {
