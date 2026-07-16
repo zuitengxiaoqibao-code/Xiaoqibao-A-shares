@@ -204,3 +204,18 @@ async def test_eastmoney_valuation_maps_raw_latest_record_without_using_provider
     assert value.pure_bond_value == Decimal("98.50")
     assert value.provider_conversion_premium == Decimal("46.27")
     assert value.raw_identity
+
+
+@pytest.mark.asyncio
+async def test_eastmoney_valuation_reports_non_numeric_pure_bond_value_as_unavailable() -> None:
+    from qibao_api.convertible_bonds.adapters import EastmoneyBondValuationSource
+
+    payload = json.dumps({"result": {"data": [{
+        "ZCODE": "113065", "DATE": "2026-07-14", "PUREBONDVALUE": "--",
+    }]}}).encode()
+
+    async def transport(_, __):
+        return RawHttpResponse(200, payload)
+
+    with pytest.raises(ValueError, match="PUREBONDVALUE"):
+        await EastmoneyBondValuationSource(transport=transport).fetch("113065")

@@ -4,7 +4,7 @@ import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import httpx
@@ -104,7 +104,7 @@ class EastmoneyBondValuationSource:
             raise ValueError("Eastmoney valuation code does not match requested bond")
         return BondValuation(
             bond_code=bond_code, observed_at=datetime.fromisoformat(str(row["DATE"])).replace(tzinfo=CHINA_TZ),
-            pure_bond_value=Decimal(str(row["PUREBONDVALUE"])),
+            pure_bond_value=_required_decimal(row, "PUREBONDVALUE"),
             provider_conversion_value=_optional_decimal(row.get("SWAPVALUE")),
             provider_conversion_premium=_optional_decimal(row.get("SWAPOR")),
             provider_pure_bond_premium=_optional_decimal(row.get("PUREBONDOR")),
@@ -114,7 +114,26 @@ class EastmoneyBondValuationSource:
 
 
 def _optional_decimal(value) -> Decimal | None:
-    return Decimal(str(value)) if value not in (None, "") else None
+    if value in (None, "", "--", "-"):
+        return None
+    try:
+        parsed = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    return parsed if parsed.is_finite() else None
+
+
+def _required_decimal(row: dict[str, Any], field: str) -> Decimal:
+    value = row.get(field)
+    if value in (None, "", "--", "-"):
+        raise ValueError(f"Eastmoney valuation field {field} is unavailable")
+    try:
+        parsed = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ValueError(f"Eastmoney valuation field {field} is invalid") from exc
+    if not parsed.is_finite():
+        raise ValueError(f"Eastmoney valuation field {field} is invalid")
+    return parsed
 
 
 def pack_raw_reports(reports: dict[str, bytes]) -> bytes:

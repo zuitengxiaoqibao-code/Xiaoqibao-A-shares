@@ -47,6 +47,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1
 
 浏览器访问 `http://127.0.0.1:5173`。可按六位代码或已观察中文名称搜索；A 股选择写入 URL 并支持刷新、前进和后退恢复。进入可转债专区会移除 A 股 `symbol`。
 
+默认运行数据固定写入项目根目录 `.runtime`，不受 API 从 `apps/api` 还是项目根目录启动的影响；需要隔离环境时可通过 `QIBAO_DATA_DIR` 指定绝对路径。
+
 ## 本地 AI 设置
 
 在“数据设置”中保存 OpenAI 兼容 API 地址、模型和密钥。密钥只写入被 Git 忽略的本地运行目录；读取接口只返回是否已配置及脱敏尾部，不返回、预填或记录完整密钥。清除配置需要显式操作。

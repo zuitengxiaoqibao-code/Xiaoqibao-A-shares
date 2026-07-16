@@ -4,6 +4,18 @@ from qibao_api.settings import Settings
 from qibao_api.settings_repository import AISettings
 
 
+def test_default_runtime_data_dir_is_stable_when_api_working_directory_changes(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("QIBAO_DATA_DIR", raising=False)
+
+    settings = Settings()
+
+    expected = Path(__file__).resolve().parents[3] / ".runtime"
+    assert settings.data_dir == expected
+    assert settings.data_dir.is_absolute()
+
+
 def test_settings_places_runtime_data_outside_source(tmp_path: Path) -> None:
     settings = Settings(data_dir=tmp_path)
 
