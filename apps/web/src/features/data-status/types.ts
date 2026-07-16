@@ -1,3 +1,9 @@
+export type SyncAttempt = {
+  source: string;
+  status: "ready" | "error" | "empty";
+  message: string;
+};
+
 export type SyncReport = {
   symbol: string;
   state: "ready" | "error" | "empty";
@@ -7,6 +13,7 @@ export type SyncReport = {
   started_at: string;
   finished_at: string;
   message: string;
+  attempts: SyncAttempt[];
 };
 
 export type DataStatusState =
@@ -14,4 +21,3 @@ export type DataStatusState =
   | { kind: "syncing" }
   | { kind: "ready"; report: SyncReport }
   | { kind: "error"; message: string };
-

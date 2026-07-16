@@ -4,7 +4,7 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from qibao_api.contracts.bars import DailyBar, DataSourceState, SyncReport
+from qibao_api.contracts.bars import DailyBar, DataSourceState, SyncAttempt, SyncReport
 
 
 def test_daily_bar_rejects_inverted_high_low() -> None:
@@ -33,3 +33,11 @@ def test_ready_sync_report_requires_export_path() -> None:
             finished_at=datetime(2026, 7, 13, 14, 1),
             message="同步完成",
         )
+
+
+def test_sync_attempt_keeps_source_outcome_and_reason() -> None:
+    attempt = SyncAttempt(source="mootdx", status="error", message="连接超时")
+
+    assert attempt.source == "mootdx"
+    assert attempt.status == "error"
+    assert attempt.message == "连接超时"

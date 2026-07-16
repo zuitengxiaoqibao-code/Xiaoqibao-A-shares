@@ -9,6 +9,8 @@ BAIDU_KLINE_URL = "https://finance.pae.baidu.com/selfselect/getstockquotation"
 
 
 class BaiduHistorySource:
+    source_name = "baidu"
+
     def __init__(self, client: httpx.Client) -> None:
         self.client = client
 
@@ -55,4 +57,3 @@ class BaiduHistorySource:
             amount=Decimal(data["amount"]),
             source="baidu",
         )
-

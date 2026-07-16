@@ -1,8 +1,9 @@
 from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
+from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class DailyBar(BaseModel):
@@ -33,6 +34,14 @@ class DataSourceState(StrEnum):
     EMPTY = "empty"
 
 
+class SyncAttempt(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    source: str = Field(min_length=1)
+    status: Literal["ready", "error", "empty"]
+    message: str = Field(min_length=1)
+
+
 class SyncReport(BaseModel):
     symbol: str = Field(pattern=r"^\d{6}$")
     state: DataSourceState
@@ -42,6 +51,7 @@ class SyncReport(BaseModel):
     started_at: datetime
     finished_at: datetime
     message: str
+    attempts: tuple[SyncAttempt, ...] = ()
 
     @model_validator(mode="after")
     def validate_ready_report(self) -> "SyncReport":

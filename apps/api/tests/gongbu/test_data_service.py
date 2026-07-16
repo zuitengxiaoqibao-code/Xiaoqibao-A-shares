@@ -37,8 +37,13 @@ class RecordingRepository:
 
 
 def test_fallback_uses_backup_after_primary_failure() -> None:
-    bars = FallbackHistorySource([FailingSource(), StaticSource()]).fetch_daily("600000", 20)
+    source = FallbackHistorySource([FailingSource(), StaticSource()])
+    bars = source.fetch_daily("600000", 20)
     assert bars[0].source == "baidu"
+    assert [(item.status, item.message) for item in source.last_attempts] == [
+        ("error", "primary timeout"),
+        ("ready", "返回 1 条日线"),
+    ]
 
 
 def test_sync_report_uses_actual_source(tmp_path) -> None:
@@ -53,3 +58,15 @@ def test_sync_report_exposes_source_failure(tmp_path) -> None:
     assert report.state == DataSourceState.ERROR
     assert report.written_rows == 0
     assert "primary timeout" in report.message
+    assert report.attempts[0].status == "error"
+    assert report.attempts[0].message == "primary timeout"
+
+
+def test_sync_report_explains_when_backup_source_was_used(tmp_path) -> None:
+    source = FallbackHistorySource([FailingSource(), StaticSource()])
+    report = MarketDataService(source, RecordingRepository(tmp_path)).sync_symbol("600000", 20)
+
+    assert report.state == DataSourceState.READY
+    assert report.source == "baidu"
+    assert len(report.attempts) == 2
+    assert "备用" in report.message

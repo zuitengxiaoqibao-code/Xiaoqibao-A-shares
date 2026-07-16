@@ -11,6 +11,8 @@ class DataSourceUnavailable(RuntimeError):
 
 
 class TdxHistorySource:
+    source_name = "mootdx"
+
     def __init__(self, client=None, *, client_factory=None) -> None:
         if (client is None) == (client_factory is None):
             raise ValueError("provide exactly one mootdx client or client factory")
