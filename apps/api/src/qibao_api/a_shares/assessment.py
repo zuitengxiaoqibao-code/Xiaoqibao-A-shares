@@ -183,6 +183,22 @@ def _is_fund_outflow(name: str, section: Any) -> bool:
     )
 
 
+def _optional_data_risks(sections: dict[str, Any], cutoff: datetime) -> tuple[str, ...]:
+    risks = []
+    for name, label in (("funds", "资金流"), ("industry", "行业与板块")):
+        section = sections.get(name)
+        if (
+            section is None
+            or section.status in {"unavailable", "blocked"}
+            or section.observed_at is None
+            or section.observed_at > cutoff
+        ):
+            risks.append(f"{label}未提供，未参与当前研判。")
+        elif section.status == "partial":
+            risks.append(f"{label}部分可用，未作为单独行动依据。")
+    return tuple(risks)
+
+
 class DeterministicStockAssessor:
     def assess(
         self,
@@ -251,14 +267,6 @@ class DeterministicStockAssessor:
             )
             if (evidence := _evidence(name, section)) is not None
         )
-        assessment_id = _digest({
-            "symbol": symbol,
-            "cutoff": cutoff.isoformat(),
-            "action": action,
-            "candidate_membership": candidate_membership,
-            "supporting_evidence": [item.evidence_id for item in supporting],
-            "contrary_evidence": [item.evidence_id for item in contrary],
-        })
         missing = tuple(
             name for name, section in sorted(sections.items())
             if name not in {"funds", "industry"}
@@ -269,6 +277,16 @@ class DeterministicStockAssessor:
             for name, section in sorted(usable.items())
             if section.observed_at is not None and section.snapshot_id is None
         )
+        optional_data_risks = _optional_data_risks(sections, cutoff)
+        assessment_id = _digest({
+            "symbol": symbol,
+            "cutoff": cutoff.isoformat(),
+            "action": action,
+            "candidate_membership": candidate_membership,
+            "supporting_evidence": [item.evidence_id for item in supporting],
+            "contrary_evidence": [item.evidence_id for item in contrary],
+            "optional_data_risks": optional_data_risks,
+        })
         primary_risk = (
             "风险分区阻断。" if action == "avoid" else
             "核心行情或趋势证据不足。" if action == "wait" else
@@ -289,7 +307,7 @@ class DeterministicStockAssessor:
                 ),
             ) if condition
         )
-        risks = (primary_risk, *metric_risks, *(
+        risks = (primary_risk, *metric_risks, *optional_data_risks, *(
             (f"缺失或晚于截止时间的分区：{'、'.join(missing)}。",) if missing else ()
         ), *snapshot_risks)
         return StockAssessment(

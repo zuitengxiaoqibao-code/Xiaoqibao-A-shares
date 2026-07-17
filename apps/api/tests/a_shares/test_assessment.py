@@ -249,6 +249,20 @@ def test_fund_outflow_is_contrary_but_does_not_change_action() -> None:
     assert any("近5日主力资金净流出" in risk for risk in result.risks)
 
 
+def test_missing_optional_fund_flow_is_explicit_risk_without_changing_action() -> None:
+    values = sections()
+    values["funds"] = section(
+        "funds", status="unavailable", observed_at=None, metrics={}
+    ).model_copy(update={"source": "eastmoney-fund-flow"})
+
+    result = DeterministicStockAssessor().assess(
+        "600519", values, (), CUTOFF
+    )
+
+    assert result.action == "observe"
+    assert any("资金流" in risk and "未提供" in risk for risk in result.risks)
+
+
 def test_news_industry_labels_keep_news_source_and_timestamp() -> None:
     values = sections()
     news_observed_at = CUTOFF.replace(minute=1)
