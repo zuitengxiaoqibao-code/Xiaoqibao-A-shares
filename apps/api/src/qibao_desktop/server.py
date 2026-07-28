@@ -28,6 +28,7 @@ class LocalApiServer:
             port=self.port,
             log_level=log_level,
             access_log=False,
+            log_config=None,
         )
         self._server = uvicorn.Server(config)
         self._thread = threading.Thread(
@@ -70,3 +71,6 @@ class LocalApiServer:
             self._socket.close()
         except OSError:
             pass
+
+    def wait(self) -> None:
+        self._thread.join()

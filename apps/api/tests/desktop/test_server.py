@@ -1,8 +1,17 @@
+import sys
 from urllib.request import urlopen
 
 from fastapi import FastAPI
 
 from qibao_desktop.server import LocalApiServer
+
+
+def test_local_api_server_initializes_without_a_console(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+
+    server = LocalApiServer(app=FastAPI(), port=0, startup_timeout=5)
+    server.stop()
 
 
 def test_local_api_server_uses_loopback_and_stops_cleanly() -> None:
@@ -21,4 +30,5 @@ def test_local_api_server_uses_loopback_and_stops_cleanly() -> None:
     finally:
         server.stop()
 
+    server.wait()
     assert not server.is_alive
