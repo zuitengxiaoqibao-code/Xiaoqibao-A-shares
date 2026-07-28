@@ -1,7 +1,8 @@
 import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, suppress
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from fastapi import FastAPI, Request
@@ -12,15 +13,46 @@ from qibao_api.a_shares.cockpit import StockDecisionCockpitService
 from qibao_api.a_shares.assessment_ai import ReloadableAssessmentGateway
 from qibao_api.a_shares.fundamentals import TdxFinanceSource
 from qibao_api.a_shares.instrument_directory import AShareInstrument, AShareInstrumentDirectory
+from qibao_api.a_shares.market_sentiment import (
+    MarketSentimentFactorBuilder,
+    MarketSentimentEvaluator,
+    MarketSentimentService,
+)
+from qibao_api.a_shares.market_sentiment_repository import (
+    MarketSentimentRepository,
+)
+from qibao_api.a_shares.candidate_sentiment import CandidateSentimentEvaluator
+from qibao_api.a_shares.candidate_sentiment_repository import (
+    CandidateSentimentRepository,
+)
+from qibao_api.a_shares.candidate_sentiment_service import CandidateSentimentService
+from qibao_api.a_shares.first_limit_up_repository import FirstLimitUpRepository
+from qibao_api.a_shares.first_limit_up_service import (
+    FirstLimitUpService,
+    SynchronousTencentQuoteSource,
+)
+from qibao_api.a_shares.kronos_forecast import KronosForecastService
+from qibao_api.a_shares.kronos_runtime import LazyKronosRuntime
 from qibao_api.a_shares.repository import AShareResearchRepository
 from qibao_api.a_shares.preparation import AStockPreparationService
 from qibao_api.gongbu.baidu_history import BaiduHistorySource
 from qibao_api.gongbu.data_service import FallbackHistorySource, MarketDataService
+from qibao_api.gongbu.full_market_history import FullMarketHistoryService
+from qibao_api.gongbu.history_sync_repository import HistorySyncRepository
 from qibao_api.gongbu.tdx_client import create_tdx_client
 from qibao_api.gongbu.tdx_history import TdxHistorySource
 from qibao_api.gongbu.tencent_quotes import TencentQuoteSource, market_prefix
-from qibao_api.convertible_bonds.adapters import EastmoneyBondValuationSource, EastmoneyClauseSource, TencentBondQuoteSource
+from qibao_api.gongbu.tencent_market_sentiment import (
+    TencentMarketSentimentSource,
+)
+from qibao_api.convertible_bonds.adapters import (
+    EastmoneyBondUniverseSource,
+    EastmoneyBondValuationSource,
+    EastmoneyClauseSource,
+    TencentBondQuoteSource,
+)
 from qibao_api.convertible_bonds.repository import BondClauseRepository
+from qibao_api.convertible_bonds.universe_repository import BondUniverseRepository
 from qibao_api.convertible_bonds.service import ConvertibleBondService
 from qibao_api.convertible_bonds.diagnosis_repository import BondDiagnosisRepository
 from qibao_api.gongbu.news_collection import (
@@ -34,6 +66,10 @@ from qibao_api.gongbu.news_taxonomy import (
     DEFAULT_THEME_KEYWORDS,
 )
 from qibao_api.gongbu.news_repository import NewsRepository
+from qibao_api.gongbu.hotspot import (
+    HotspotIngestionService,
+    TonghuashunHotspotSource,
+)
 from qibao_api.gongbu.fund_flow import (
     EastmoneyFundFlowSource,
     FundFlowRepository,
@@ -44,11 +80,17 @@ from qibao_api.gongbu.stock_classification import (
     StockClassificationRepository,
     StockClassificationService,
 )
+from qibao_api.gongbu.a_share_universe import (
+    CninfoAShareUniverseSource,
+    EastmoneyAShareUniverseSource,
+    FallbackAShareUniverseSource,
+)
 from qibao_api.libu_compliance.guard import (
     AuthorizedClassificationSource,
     AuthorizedFinanceSource,
     AuthorizedFundFlowSource,
     AuthorizedHistorySource,
+    AuthorizedMarketSentimentSource,
     AuthorizedQuoteSource,
 )
 from qibao_api.libu_compliance.repository import ComplianceRepository
@@ -57,7 +99,10 @@ from qibao_api.routes.data import router as data_router
 from qibao_api.routes.health import router as health_router
 from qibao_api.routes.research import router as research_router
 from qibao_api.routes.settings import router as settings_router
+from qibao_api.routes.market_sentiment import router as market_sentiment_router
+from qibao_api.routes.first_limit_up import router as first_limit_up_router
 from qibao_api.settings import Settings
+from qibao_api.static_frontend import install_static_frontend
 from qibao_api.settings_repository import AISettingsRepository, EffectiveAISettingsResolver
 from qibao_api.shangshu.pipeline import ResearchPipeline
 from qibao_api.storage.database import create_schema
@@ -70,7 +115,9 @@ from qibao_api.routes.libu import router as libu_router
 from qibao_api.routes.dongchang import router as dongchang_router
 from qibao_api.routes.convertible_bonds import router as convertible_bonds_router
 from qibao_api.routes.news import router as news_router
-from qibao_api.zhongshu.news_ai import NewsAIGateway, UnavailableNewsAIProvider
+from qibao_api.zhongshu.news_ai import (
+    ReloadableNewsAIGateway,
+)
 from qibao_api.shangshu.briefing_repository import BriefingRepository
 from qibao_api.shangshu.daily_briefing import DailyBriefingWorkflow
 from qibao_api.shangshu.trading_calendar import (
@@ -99,7 +146,7 @@ from qibao_api.shangshu.decision_runtime import (
     TencentPollingMarketFeed,
 )
 from qibao_api.shangshu.intraday_monitor import IntradayMonitor, PollStateRepository
-from qibao_api.zhongshu.decision_ai import DecisionAIGateway
+from qibao_api.zhongshu.decision_ai import ReloadableDecisionAIGateway
 from qibao_api.zhongshu.premarket_decision import PremarketDecisionService
 from qibao_api.zhongshu.postclose_review import PostcloseReviewService
 
@@ -153,11 +200,18 @@ async def lifespan(application: FastAPI):
     compliance.set_feature_sources("bond_valuations", "convertible_bond", ("eastmoney",))
     compliance.set_feature_sources("market_news", "a_share", ("eastmoney",))
     compliance.set_feature_sources(
+        "market_hotspots", "a_share", ("tonghuashun",)
+    )
+    compliance.set_feature_sources(
         "stock_classification", "a_share", ("eastmoney",)
     )
     compliance.set_feature_sources("stock_fund_flow", "a_share", ("eastmoney",))
+    compliance.set_feature_sources("a_share_universe", "a_share", ("eastmoney",))
     bond_repository = BondClauseRepository(engine)
     bond_repository.initialize()
+    bond_universe_repository = BondUniverseRepository(
+        settings.data_dir / "bond-universe.sqlite3"
+    )
     diagnosis_repository = BondDiagnosisRepository(settings.data_dir / "bond-diagnoses.sqlite3")
     news_repository = NewsRepository(settings.data_dir / "news.sqlite3")
     application.state.news_repository = news_repository
@@ -175,18 +229,32 @@ async def lifespan(application: FastAPI):
         settings.data_dir / "a-share-research.sqlite3"
     )
     application.state.a_share_research_repository = a_share_research_repository
+    candidate_sentiment_repository = CandidateSentimentRepository(
+        settings.data_dir / "candidate-sentiment.sqlite3"
+    )
+    application.state.candidate_sentiment_repository = (
+        candidate_sentiment_repository
+    )
     briefing_repository = BriefingRepository(settings.data_dir / "briefings.sqlite3")
     application.state.briefing_repository = briefing_repository
     decision_repository = DecisionRepository(
         getattr(settings, "decision_database_path", settings.data_dir / "decisions.sqlite3")
     )
     application.state.decision_repository = decision_repository
+    operations_repository = OperationsRepository(
+        settings.data_dir / "operations.sqlite3"
+    )
+    application.state.operations_repository = operations_repository
+
     async with httpx.AsyncClient(timeout=10) as client:
         application.state.a_share_quote_source = TencentQuoteSource(client)
         with httpx.Client(timeout=10) as history_client:
             history_sources = [
                 AuthorizedHistorySource(
-                    TdxHistorySource(client_factory=create_tdx_client),
+                    TdxHistorySource(
+                        client_factory=create_tdx_client,
+                        observer=operations_repository.append_source_attempt,
+                    ),
                     compliance,
                     "history_sync.mootdx",
                     "a_share",
@@ -194,7 +262,10 @@ async def lifespan(application: FastAPI):
             ]
             history_sources.append(
                 AuthorizedHistorySource(
-                    BaiduHistorySource(history_client),
+                    BaiduHistorySource(
+                        history_client,
+                        observer=operations_repository.append_source_attempt,
+                    ),
                     compliance,
                     "history_sync.baidu",
                     "a_share",
@@ -204,10 +275,41 @@ async def lifespan(application: FastAPI):
                 settings.data_dir / "market.duckdb",
                 settings.data_dir / "parquet" / "a-shares",
             )
+            first_limit_up_repository = FirstLimitUpRepository(
+                settings.data_dir / "first-limit-up.sqlite3"
+            )
+            application.state.first_limit_up_repository = first_limit_up_repository
+            application.state.first_limit_up_service = FirstLimitUpService(
+                bar_repository=bar_repository,
+                quote_source=SynchronousTencentQuoteSource(history_client, compliance),
+                repository=first_limit_up_repository,
+                universe_provider=lambda: (
+                    application.state.a_share_instrument_directory.active_symbols()
+                ),
+            )
             trading_calendar = StoredTradingCalendar(
                 bar_repository,
                 live_signal=TencentIndexTradingDaySignal(history_client),
                 schedule=ExchangeCalendarsTradingDaySchedule(),
+            )
+            kronos_model = getattr(settings, "kronos_model", "NeoQuasar/Kronos-mini")
+            application.state.kronos_forecast_service = KronosForecastService(
+                bar_repository=bar_repository,
+                trading_calendar=trading_calendar,
+                predictor=LazyKronosRuntime(
+                    repo_path=getattr(settings, "kronos_repo_path", None),
+                    tokenizer_name=getattr(
+                        settings,
+                        "kronos_tokenizer",
+                        "NeoQuasar/Kronos-Tokenizer-2k",
+                    ),
+                    model_name=kronos_model,
+                    device=getattr(settings, "kronos_device", None),
+                ),
+                enabled=getattr(settings, "kronos_enabled", False),
+                model_name=kronos_model,
+                lookback_bars=getattr(settings, "kronos_lookback_bars", 250),
+                sample_count=getattr(settings, "kronos_sample_count", 20),
             )
             application.state.bar_repository = bar_repository
             application.state.market_data_service = MarketDataService(
@@ -233,12 +335,19 @@ async def lifespan(application: FastAPI):
                     "a_share",
                 ),
                 AuthorizedFinanceSource(
-                    TdxFinanceSource(), compliance, "a_share_finance", "a_share"
+                    TdxFinanceSource(
+                        client_factory=create_tdx_client,
+                        observer=operations_repository.append_source_attempt,
+                    ),
+                    compliance,
+                    "a_share_finance",
+                    "a_share",
                 ),
                 news_repository,
                 a_share_research_repository,
                 classification_repository=stock_classification_repository,
                 fund_flow_repository=fund_flow_repository,
+                trading_calendar=trading_calendar,
             )
             application.state.bond_repository = bond_repository
             application.state.bond_service = ConvertibleBondService(
@@ -246,7 +355,13 @@ async def lifespan(application: FastAPI):
                 TencentQuoteSource(client), bond_repository, compliance,
                 diagnosis_repository,
                 EastmoneyBondValuationSource(client=client),
+                universe_source=EastmoneyBondUniverseSource(client=client),
+                universe_repository=bond_universe_repository,
             )
+            try:
+                await application.state.bond_service.sync_universe()
+            except Exception:
+                logger.warning("convertible-bond universe sync unavailable", exc_info=True)
             application.state.news_service = NewsIngestionService(
                 EastmoneyGlobalNewsSource(client=client),
                 news_repository,
@@ -256,13 +371,16 @@ async def lifespan(application: FastAPI):
                     theme_keywords=DEFAULT_THEME_KEYWORDS,
                 ),
                 compliance,
-                NewsAIGateway(
-                    UnavailableNewsAIProvider(),
-                    provider_name="unconfigured",
-                    model="none",
-                    prompt_version="news-v1",
+                ReloadableNewsAIGateway(
+                    effective_ai_settings,
+                    client=client,
                 ),
                 stock_source=EastmoneyStockNewsSource(client=client),
+            )
+            application.state.hotspot_service = HotspotIngestionService(
+                TonghuashunHotspotSource(history_client),
+                news_repository,
+                compliance,
             )
             application.state.stock_classification_service = (
                 StockClassificationService(
@@ -277,12 +395,27 @@ async def lifespan(application: FastAPI):
             )
             application.state.fund_flow_service = FundFlowService(
                 AuthorizedFundFlowSource(
-                    EastmoneyFundFlowSource(client=client),
+                    EastmoneyFundFlowSource(
+                        client=client,
+                        observer=operations_repository.append_source_attempt,
+                    ),
                     compliance,
                     "stock_fund_flow",
                     "a_share",
                 ),
                 fund_flow_repository,
+            )
+            application.state.candidate_sentiment_service = (
+                CandidateSentimentService(
+                    research_repository=a_share_research_repository,
+                    sentiment_repository=candidate_sentiment_repository,
+                    news_repository=news_repository,
+                    fund_flow_repository=fund_flow_repository,
+                    evaluator=CandidateSentimentEvaluator(),
+                    news_ingestion_service=application.state.news_service,
+                    hotspot_ingestion_service=application.state.hotspot_service,
+                    fund_flow_service=application.state.fund_flow_service,
+                )
             )
             application.state.a_share_preparation_service = AStockPreparationService(
                 bar_repository,
@@ -304,10 +437,6 @@ async def lifespan(application: FastAPI):
                 RepositoryPostcloseContextSource(decision_repository, audit_repository),
             )
             application.state.decision_calendar = trading_calendar
-            operations_repository = OperationsRepository(
-                settings.data_dir / "operations.sqlite3"
-            )
-            application.state.operations_repository = operations_repository
             decision_candidate_source = RepositoryCandidateFactorSource(
                 application.state.a_share_diagnosis_service
             )
@@ -326,15 +455,16 @@ async def lifespan(application: FastAPI):
                 settings.data_dir / "intraday-poll.sqlite3"
             )
             application.state.poll_state_repository = poll_state_repository
+            decision_ai_gateway = ReloadableDecisionAIGateway(
+                effective_ai_settings,
+                client=history_client,
+            )
             premarket_decision = PremarketDecisionService(
                 candidate_service=decision_candidate_source,
                 news_repository=news_repository,
                 compliance_checker=decision_compliance_source,
                 market_risk_summary=decision_risk_source,
-                ai_gateway=DecisionAIGateway(
-                    UnavailableNewsAIProvider(), provider_name="unconfigured",
-                    model="none", prompt_version="decision-v1",
-                ),
+                ai_gateway=decision_ai_gateway,
                 decision_repository=decision_repository,
                 trading_calendar=application.state.decision_calendar,
                 clock=lambda: datetime.now(timezone.utc),
@@ -352,6 +482,7 @@ async def lifespan(application: FastAPI):
                 universe_symbols=decision_symbols,
                 decision_repository=decision_repository,
                 evaluator=decision_evaluator,
+                ai_gateway=decision_ai_gateway,
                 candidate_factor_port=CandidateFactorInputSource(decision_candidate_source),
                 risk_port=decision_risk_source,
                 compliance_port=decision_compliance_source,
@@ -364,6 +495,7 @@ async def lifespan(application: FastAPI):
                 decision_repository=decision_repository,
                 market_outcome_source=decision_outcome_source,
                 audit_repository=audit_repository,
+                ai_gateway=decision_ai_gateway,
             )
             decision_phase_runner = DecisionPhaseRunner(
                 repository=decision_repository, premarket=premarket_decision,
@@ -384,6 +516,8 @@ async def lifespan(application: FastAPI):
                 operations_repository,
                 decision_workflow=decision_phase_runner,
                 intraday_monitor=intraday_monitor,
+                hotspot_service=application.state.hotspot_service,
+                first_limit_up_service=application.state.first_limit_up_service,
             )
             application.state.backup_service = BackupService(
                 settings.data_dir, bar_repository
@@ -392,8 +526,105 @@ async def lifespan(application: FastAPI):
             a_share_instrument_directory = AShareInstrumentDirectory(
                 settings.data_dir / "a-share-instruments.sqlite3"
             )
+            history_sync_repository = HistorySyncRepository(
+                settings.data_dir / "history-sync.sqlite3"
+            )
+            history_sync_executor = ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix="history-sync",
+            )
+            application.state.history_sync_repository = history_sync_repository
+            application.state.history_sync_executor = history_sync_executor
+            full_market_history_service = None
+            market_sentiment_repository = None
             try:
                 application.state.a_share_instrument_directory = a_share_instrument_directory
+                application.state.a_share_universe_source = FallbackAShareUniverseSource(
+                    EastmoneyAShareUniverseSource(client=client),
+                    CninfoAShareUniverseSource(client=client),
+                )
+                latest_directory_observation = (
+                    a_share_instrument_directory.latest_named_observed_at()
+                    if hasattr(a_share_instrument_directory, "latest_named_observed_at")
+                    else None
+                )
+                named_directory_count = (
+                    a_share_instrument_directory.named_count()
+                    if hasattr(a_share_instrument_directory, "named_count")
+                    else 0
+                )
+                if (
+                    hasattr(a_share_instrument_directory, "observe_many")
+                    and (
+                    named_directory_count < 1000
+                    or
+                    latest_directory_observation is None
+                    or datetime.now(timezone.utc) - latest_directory_observation
+                    > timedelta(hours=12)
+                    )
+                ):
+                    try:
+                        compliance.require_feature_sources("a_share_universe", "a_share")
+                        universe = await application.state.a_share_universe_source.fetch()
+                        a_share_instrument_directory.observe_many(universe)
+                    except Exception:
+                        logger.warning("A-share universe sync unavailable", exc_info=True)
+                full_market_history_service = FullMarketHistoryService(
+                    directory=a_share_instrument_directory,
+                    bar_repository=bar_repository,
+                    tdx_source=history_sources[0],
+                    baidu_source=history_sources[1],
+                    job_repository=history_sync_repository,
+                    clock=lambda: datetime.now(timezone.utc),
+                )
+                application.state.full_market_history_service = (
+                    full_market_history_service
+                )
+                application.state.scheduler.full_market_history_service = (
+                    full_market_history_service
+                )
+                application.state.scheduler.history_sync_submitter = (
+                    history_sync_executor.submit
+                )
+                full_market_history_service.recover_interrupted()
+                interrupted_job = full_market_history_service.current_job()
+                if interrupted_job is not None and interrupted_job.state == "pending":
+                    history_sync_executor.submit(
+                        full_market_history_service.run,
+                        interrupted_job.job_id,
+                    )
+                market_sentiment_repository = MarketSentimentRepository(
+                    settings.data_dir / "market-sentiment.sqlite3"
+                )
+                application.state.market_sentiment_repository = (
+                    market_sentiment_repository
+                )
+                market_sentiment_source = AuthorizedMarketSentimentSource(
+                    TencentMarketSentimentSource(
+                        directory=a_share_instrument_directory,
+                        client=history_client,
+                        clock=lambda: datetime.now(timezone.utc),
+                        observer=operations_repository.append_source_attempt,
+                    ),
+                    compliance,
+                    "realtime_quotes",
+                    "a_share",
+                )
+                application.state.market_sentiment_source = market_sentiment_source
+                application.state.market_sentiment_service = MarketSentimentService(
+                    repository=market_sentiment_repository,
+                    source=market_sentiment_source,
+                    evaluator=MarketSentimentEvaluator(),
+                    trading_calendar=trading_calendar,
+                    news_repository=news_repository,
+                    factor_builder=MarketSentimentFactorBuilder(
+                        bar_repository=bar_repository,
+                        classification_repository=stock_classification_repository,
+                    ),
+                )
+                application.state.scheduler.market_sentiment_service = (
+                    application.state.market_sentiment_service
+                )
                 application.state.a_share_cockpit_service = StockDecisionCockpitService(
                     a_share_instrument_directory,
                     application.state.a_share_diagnosis_service,
@@ -432,7 +663,12 @@ async def lifespan(application: FastAPI):
                     scheduler_task.cancel()
                     with suppress(asyncio.CancelledError):
                         await scheduler_task
+                if full_market_history_service is not None:
+                    full_market_history_service.request_shutdown()
+                history_sync_executor.shutdown(wait=True, cancel_futures=True)
+                history_sync_repository.close()
                 bond_repository.close()
+                bond_universe_repository.close()
                 diagnosis_repository.close()
                 news_repository.close()
                 stock_classification_repository.close()
@@ -441,7 +677,10 @@ async def lifespan(application: FastAPI):
                 compliance.close()
                 audit_repository.close()
                 operations_repository.close()
+                candidate_sentiment_repository.close()
                 a_share_research_repository.close()
+                if market_sentiment_repository is not None:
+                    market_sentiment_repository.close()
                 a_share_instrument_directory.close()
                 poll_state_repository.close()
                 decision_repository.close()
@@ -477,3 +716,6 @@ app.include_router(briefings_router)
 app.include_router(operations_router)
 app.include_router(decisions_router)
 app.include_router(settings_router)
+app.include_router(market_sentiment_router)
+app.include_router(first_limit_up_router)
+install_static_frontend(app, Settings().web_dir)

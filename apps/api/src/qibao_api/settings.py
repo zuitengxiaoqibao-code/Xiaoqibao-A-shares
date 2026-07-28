@@ -10,21 +10,30 @@ from qibao_api.settings_repository import AISettings
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_DATA_DIR = PROJECT_ROOT / ".runtime"
+DEFAULT_WEB_DIR = PROJECT_ROOT / "apps" / "web" / "dist"
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="QIBAO_", extra="ignore")
 
     data_dir: Path = DEFAULT_DATA_DIR
+    web_dir: Path = DEFAULT_WEB_DIR
     scheduler_enabled: bool = True
     scheduler_interval_seconds: int = 30
     ai_base_url: str | None = None
     ai_api_key: SecretStr | None = None
     ai_model: str | None = None
+    kronos_enabled: bool = False
+    kronos_repo_path: Path | None = None
+    kronos_model: str = "NeoQuasar/Kronos-mini"
+    kronos_tokenizer: str = "NeoQuasar/Kronos-Tokenizer-2k"
+    kronos_device: str | None = None
+    kronos_lookback_bars: int = 250
+    kronos_sample_count: int = 20
 
-    @field_validator("data_dir", mode="after")
+    @field_validator("data_dir", "web_dir", mode="after")
     @classmethod
-    def resolve_data_dir(cls, value: Path) -> Path:
+    def resolve_project_path(cls, value: Path) -> Path:
         return value if value.is_absolute() else (PROJECT_ROOT / value).resolve()
 
     @computed_field
