@@ -1,0 +1,24 @@
+:root {
+  --surface-canvas: #070b10;
+  --surface-base: #0b1118;
+  --surface-raised: #101923;
+  --surface-emphasis: #15222d;
+  --border-subtle: #22313d;
+  --border-strong: #344a5a;
+  --text-primary: #dce7ee;
+  --text-secondary: #9fb0bd;
+  --text-muted: #667987;
+  --market-up: #f04f5f;
+  --market-down: #2fcf91;
+  --status-warning: #e5b84b;
+  --status-live: #39c8dd;
+  --status-unavailable: #7d8993;
+  --font-display: "Orbitron", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  --font-body: "JetBrains Mono", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --panel-radius: 3px;
+}
