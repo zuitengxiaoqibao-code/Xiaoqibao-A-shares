@@ -1,3 +1,5 @@
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 import shutil
 import threading
@@ -7,6 +9,13 @@ import duckdb
 
 from qibao_api.contracts.bars import DailyBar
 from qibao_api.contracts.instruments import validate_a_share_code
+
+
+@dataclass(frozen=True)
+class BarCoverage:
+    symbol: str
+    bar_count: int
+    latest_trade_date: date | None
 
 
 class BarRepository:
@@ -92,6 +101,64 @@ class BarRepository:
                 rows,
             )
 
+    def append_missing(self, bars: list[DailyBar]) -> int:
+        if not bars:
+            return 0
+        grouped: dict[tuple[str, date], DailyBar] = {}
+        for bar in bars:
+            symbol = validate_a_share_code(bar.symbol)
+            grouped[(symbol, bar.trade_date)] = bar
+        existing: set[tuple[str, date]] = set()
+        symbols = sorted({symbol for symbol, _ in grouped})
+        with self._lock:
+            with self._connect() as connection:
+                for symbol in symbols:
+                    dates = sorted(
+                        trade_date
+                        for candidate, trade_date in grouped
+                        if candidate == symbol
+                    )
+                    placeholders = ", ".join("?" for _ in dates)
+                    rows = connection.execute(
+                        f"""SELECT DISTINCT symbol, trade_date
+                            FROM daily_bars
+                            WHERE symbol = ? AND trade_date IN ({placeholders})""",
+                        [symbol, *dates],
+                    ).fetchall()
+                    existing.update((row[0], row[1]) for row in rows)
+            missing = [bar for key, bar in grouped.items() if key not in existing]
+            self.upsert(missing)
+        return len(missing)
+
+    def coverage(
+        self, symbols: Sequence[str], target_date: date
+    ) -> dict[str, BarCoverage]:
+        validated = list(dict.fromkeys(
+            validate_a_share_code(symbol) for symbol in symbols
+        ))
+        result = {
+            symbol: BarCoverage(symbol=symbol, bar_count=0, latest_trade_date=None)
+            for symbol in validated
+        }
+        if not validated:
+            return result
+        placeholders = ", ".join("?" for _ in validated)
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                f"""SELECT symbol, count(DISTINCT trade_date), max(trade_date)
+                    FROM daily_bars
+                    WHERE symbol IN ({placeholders}) AND trade_date <= ?
+                    GROUP BY symbol""",
+                [*validated, target_date],
+            ).fetchall()
+        result.update({
+            row[0]: BarCoverage(
+                symbol=row[0], bar_count=int(row[1]), latest_trade_date=row[2]
+            )
+            for row in rows
+        })
+        return result
+
     def latest(
         self, symbol: str, limit: int = 250, *, cutoff: datetime | None = None,
     ) -> list[DailyBar]:
@@ -170,20 +237,26 @@ class BarRepository:
         with self._lock, self._connect() as connection:
             rows = connection.execute(
                 f"""
-                SELECT symbol, trade_date, open, high, low, close, volume, amount, source
-                FROM (
-                    SELECT *, row_number() OVER (
-                        PARTITION BY symbol ORDER BY trade_date DESC
-                    ) AS row_number
+                WITH latest_by_date AS (
+                    SELECT symbol, trade_date, open, high, low, close, volume, amount, source,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY symbol, trade_date
+                               ORDER BY ingested_at DESC, observation_id DESC
+                           ) AS revision_rank
                     FROM daily_bars
                     WHERE symbol IN ({placeholders}) AND trade_date <= ?
                         AND (? IS NULL OR ingested_at <= ?)
-                    QUALIFY row_number() OVER (
-                        PARTITION BY symbol, trade_date
-                        ORDER BY ingested_at DESC, observation_id DESC
-                    ) = 1
-                ) ranked
-                WHERE row_number <= ?
+                ), ranked AS (
+                    SELECT symbol, trade_date, open, high, low, close, volume, amount, source,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY symbol ORDER BY trade_date DESC
+                           ) AS date_rank
+                    FROM latest_by_date
+                    WHERE revision_rank = 1
+                )
+                SELECT symbol, trade_date, open, high, low, close, volume, amount, source
+                FROM ranked
+                WHERE date_rank <= ?
                 ORDER BY symbol, trade_date
                 """,
                 [

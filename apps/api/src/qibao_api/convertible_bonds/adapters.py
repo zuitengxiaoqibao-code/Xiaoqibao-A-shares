@@ -12,7 +12,14 @@ import httpx
 from qibao_api.contracts.convertible_bond import ClauseDates, ConvertibleBondContract
 from qibao_api.contracts.instruments import validate_convertible_bond_code
 from qibao_api.contracts.market import DataQuality
-from qibao_api.convertible_bonds.models import BondClauseSnapshot, BondQuote, BondValuation, StrongRedemptionEvidence
+from qibao_api.convertible_bonds.models import (
+    BondClauseSnapshot,
+    BondQuote,
+    BondUniverseItem,
+    BondUniverseSnapshot,
+    BondValuation,
+    StrongRedemptionEvidence,
+)
 
 CHINA_TZ = timezone(timedelta(hours=8))
 EASTMONEY_ENDPOINT = "https://datacenter-web.eastmoney.com/api/data/v1/get"
@@ -20,6 +27,7 @@ CB_LIST_REPORT = "RPT_BOND_CB_LIST"
 BS_INFO_REPORT = "RPT_BOND_BS_INFO"
 EASTMONEY_PARSER_VERSION = "eastmoney-v2"
 VALUATION_REPORT = "RPTA_WEB_KZZ_LS"
+UNIVERSE_REPORT = CB_LIST_REPORT
 
 
 @dataclass(frozen=True)
@@ -33,6 +41,69 @@ ClauseTransport = Callable[[str, dict[str, str]], Awaitable[RawHttpResponse]]
 
 class ClauseDataUnavailable(LookupError):
     pass
+
+
+def _provider_optional_date(value: Any) -> date | None:
+    if value in (None, "", "--", "-"):
+        return None
+    try:
+        return date.fromisoformat(str(value).split(" ", 1)[0])
+    except ValueError:
+        return None
+
+
+def parse_eastmoney_bond_universe(
+    raw_payload: bytes, *, observed_at: datetime
+) -> BondUniverseSnapshot:
+    try:
+        payload = json.loads(raw_payload.decode("utf-8"))
+        result = payload["result"]
+        rows = result.get("data") or []
+    except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError, AttributeError) as exc:
+        raise ValueError("Eastmoney bond universe response is incomplete") from exc
+
+    items: list[BondUniverseItem] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        code = str(row.get("SECURITY_CODE") or "")
+        try:
+            validate_convertible_bond_code(code)
+        except ValueError:
+            continue
+        delisted = _provider_optional_date(row.get("DELIST_DATE"))
+        ceased = _provider_optional_date(row.get("CEASE_DATE"))
+        maturity = _provider_optional_date(row.get("EXPIRE_DATE"))
+        if delisted is not None and delisted <= observed_at.date():
+            continue
+        if ceased is not None and ceased <= observed_at.date():
+            continue
+        if maturity is not None and maturity < observed_at.date():
+            continue
+        encoded_row = json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        items.append(
+            BondUniverseItem(
+                bond_code=code,
+                name=str(row.get("SECURITY_NAME_ABBR") or code),
+                linked_stock_code=(
+                    str(row["CONVERT_STOCK_CODE"])
+                    if row.get("CONVERT_STOCK_CODE") not in (None, "", "--", "-")
+                    else None
+                ),
+                listing_date=_provider_optional_date(row.get("LISTING_DATE")),
+                maturity=maturity,
+                observed_at=observed_at,
+                source="eastmoney",
+                raw_identity=hashlib.sha256(encoded_row.encode("utf-8")).hexdigest(),
+            )
+        )
+    items.sort(key=lambda item: item.bond_code)
+    return BondUniverseSnapshot(
+        observed_at=observed_at,
+        source="eastmoney",
+        raw_identity=hashlib.sha256(raw_payload).hexdigest(),
+        items=tuple(items),
+    )
 
 
 def _bond_market_prefix(code: str) -> str:
@@ -302,5 +373,70 @@ class EastmoneyClauseSource:
             response = await self.client.get(EASTMONEY_ENDPOINT, params=params)
         else:
             async with httpx.AsyncClient() as client:
+                response = await client.get(EASTMONEY_ENDPOINT, params=params)
+        return RawHttpResponse(status_code=response.status_code, body=response.content)
+
+
+class EastmoneyBondUniverseSource:
+    """Fetch the public in-market convertible-bond universe at low frequency."""
+
+    def __init__(
+        self,
+        transport: ClauseTransport | None = None,
+        *,
+        client: httpx.AsyncClient | None = None,
+        clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        page_size: int = 5000,
+    ) -> None:
+        self.transport = transport
+        self.client = client
+        self.clock = clock
+        self.page_size = page_size
+
+    async def fetch(self) -> BondUniverseSnapshot:
+        fetched_at = self.clock()
+        first = await self._request_page(1)
+        if first.status_code != 200:
+            raise ValueError(f"Eastmoney bond universe status {first.status_code}")
+        try:
+            first_payload = json.loads(first.body.decode("utf-8"))
+            pages = max(1, int(first_payload.get("result", {}).get("pages") or 1))
+        except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError, AttributeError) as exc:
+            raise ValueError("Eastmoney bond universe response is incomplete") from exc
+        bodies = [first.body]
+        for page in range(2, pages + 1):
+            response = await self._request_page(page)
+            if response.status_code != 200:
+                raise ValueError(f"Eastmoney bond universe status {response.status_code}")
+            bodies.append(response.body)
+        if len(bodies) == 1:
+            return parse_eastmoney_bond_universe(first.body, observed_at=fetched_at)
+        rows: list[dict[str, Any]] = []
+        for body in bodies:
+            try:
+                payload = json.loads(body.decode("utf-8"))
+                rows.extend(payload.get("result", {}).get("data") or [])
+            except (UnicodeDecodeError, json.JSONDecodeError, TypeError, AttributeError) as exc:
+                raise ValueError("Eastmoney bond universe response is incomplete") from exc
+        merged = json.dumps({"result": {"data": rows}}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        return parse_eastmoney_bond_universe(merged, observed_at=fetched_at).model_copy(
+            update={"raw_identity": hashlib.sha256(b"".join(bodies)).hexdigest()}
+        )
+
+    async def _request_page(self, page: int) -> RawHttpResponse:
+        params = {
+            "reportName": UNIVERSE_REPORT,
+            "columns": "SECURITY_CODE,SECURITY_NAME_ABBR,CONVERT_STOCK_CODE,LISTING_DATE,EXPIRE_DATE,DELIST_DATE,CEASE_DATE",
+            "sortColumns": "SECURITY_CODE",
+            "sortTypes": "1",
+            "pageNumber": str(page),
+            "pageSize": str(self.page_size),
+        }
+        if self.transport is not None:
+            return await self.transport(EASTMONEY_ENDPOINT, params)
+        if self.client is not None:
+            response = await self.client.get(EASTMONEY_ENDPOINT, params=params)
+        else:
+            async with httpx.AsyncClient(timeout=10) as client:
                 response = await client.get(EASTMONEY_ENDPOINT, params=params)
         return RawHttpResponse(status_code=response.status_code, body=response.content)

@@ -11,7 +11,22 @@ from qibao_api.contracts.decision import EvidenceReference
 from qibao_api.settings_repository import AISettings, EffectiveAISettingsResolver
 
 
-AIStatus = Literal["ready", "unconfigured", "timeout", "http_error", "invalid"]
+AIStatus = Literal[
+    "ready", "unconfigured", "deferred", "timeout", "http_error", "invalid"
+]
+_OUTPUT_KEYS = (
+    "plain_language", "news_impact", "hotspot_attribution",
+    "uncertainty", "contrary_view", "evidence_ids",
+)
+_TRADING_INSTRUCTION_PATTERNS = (
+    r"\b(?:buy|sell)\s+(?:at|now|this|the|\d)",
+    r"\bposition\b.{0,20}\d+(?:\.\d+)?\s*%",
+    r"\bstop[ -]?loss\b.{0,20}\d+(?:\.\d+)?",
+    r"(?:建议|应当|应该|可以|可考虑|立即|现在|请|适合|需要).{0,8}(?:买入|卖出|加仓|减仓)",
+    r"(?:买入|卖出)(?:价|点|区间|位置|在).{0,8}\d+(?:\.\d+)?",
+    r"(?:仓位|止损|止盈).{0,12}\d+(?:\.\d+)?\s*(?:元|%)?",
+    r"\d+(?:\.\d+)?\s*(?:元|%).{0,8}(?:止损|止盈)",
+)
 
 
 class AssessmentAIExplanation(BaseModel):
@@ -42,7 +57,7 @@ class OpenAICompatibleAssessmentGateway:
         model: str | None,
         client: httpx.AsyncClient | None = None,
         client_factory: Callable[[], httpx.AsyncClient] | None = None,
-        timeout: float = 10,
+        timeout: float = 35,
     ) -> None:
         self.base_url = base_url.rstrip("/") if base_url else None
         self.model = model
@@ -107,9 +122,9 @@ class OpenAICompatibleAssessmentGateway:
                 explanation.hotspot_attribution, explanation.uncertainty,
                 explanation.contrary_view,
             ))
-            if re.search(
-                r"(?:\b(?:buy|sell|position|stop[ -]?loss)\b|买入|卖出|仓位|止损|止盈|\d+(?:\.\d+)?\s*(?:元|%))",
-                text, re.IGNORECASE,
+            if any(
+                re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+                for pattern in _TRADING_INSTRUCTION_PATTERNS
             ):
                 raise ValueError("AI explanation contains a trading instruction")
         except (ValueError, TypeError, KeyError, IndexError):
@@ -135,10 +150,18 @@ class OpenAICompatibleAssessmentGateway:
             },
             "evidence": [item.model_dump(mode="json") for item in evidence],
             "allowed_evidence_ids": [item.evidence_id for item in evidence],
+            "required_output_keys": list(_OUTPUT_KEYS),
+            "output_rules": (
+                "Return exactly the six required keys. Every explanation field must be "
+                "a string. evidence_ids must exactly match allowed_evidence_ids. Numeric "
+                "facts may be repeated only when present in evidence. Do not issue a buy, "
+                "sell, position-size, take-profit, or stop-loss instruction."
+            ),
         }
         return {
             "model": self.model,
             "temperature": 0,
+            "max_tokens": 1800,
             "response_format": {"type": "json_object"},
             "messages": [
                 {
@@ -146,7 +169,8 @@ class OpenAICompatibleAssessmentGateway:
                     "content": (
                         "Return one strict JSON object matching the supplied schema. "
                         "Explain only; never change the deterministic action, confidence, "
-                        "or supporting evidence. Cite only allowed evidence IDs."
+                        "or supporting evidence. Cite only allowed evidence IDs. Return no "
+                        "Markdown and no keys outside required_output_keys."
                     ),
                 },
                 {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
@@ -167,7 +191,7 @@ class ReloadableAssessmentGateway:
         *,
         client: httpx.AsyncClient | None = None,
         client_factory: Callable[[], httpx.AsyncClient] | None = None,
-        timeout: float = 10,
+        timeout: float = 35,
     ) -> None:
         self._settings = settings
         self._client = client

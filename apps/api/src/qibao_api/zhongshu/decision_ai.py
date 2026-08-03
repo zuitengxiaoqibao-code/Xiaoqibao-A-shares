@@ -1,12 +1,77 @@
+import json
 import re
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Literal, Protocol
 
+import httpx
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError, model_validator
+
+from qibao_api.settings_repository import AISettings, EffectiveAISettingsResolver
 
 
 class DecisionAIProvider(Protocol):
     def complete(self, request: dict[str, object]) -> str: ...
+
+
+class UnavailableDecisionAIProvider:
+    def complete(self, _request: dict[str, object]) -> str:
+        raise OSError("decision AI provider is not configured")
+
+
+class OpenAICompatibleDecisionProvider:
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        api_key: str,
+        model: str,
+        client: httpx.Client,
+        timeout: float = 10,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self._api_key = api_key
+        self._client = client
+        self.timeout = timeout
+
+    def __repr__(self) -> str:
+        return (
+            "OpenAICompatibleDecisionProvider("
+            f"base_url={self.base_url!r}, model={self.model!r})"
+        )
+
+    def complete(self, request: dict[str, object]) -> str:
+        response = self._client.post(
+            f"{self.base_url}/chat/completions",
+            headers={"Authorization": f"Bearer {self._api_key}"},
+            json={
+                "model": self.model,
+                "temperature": 0,
+                "response_format": {"type": "json_object"},
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Return one strict JSON object matching the supplied schema. "
+                            "Explain only the frozen evidence and deterministic conclusions. "
+                            "Never add numbers, prices, scores, positions, or trade plans."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": json.dumps(request, ensure_ascii=False),
+                    },
+                ],
+            },
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        envelope = response.json()
+        content = envelope["choices"][0]["message"]["content"]
+        if not isinstance(content, str):
+            raise TypeError("chat completion content must be a JSON string")
+        return content
 
 
 class DecisionAIEvidence(BaseModel):
@@ -145,3 +210,84 @@ class DecisionAIGateway:
             evidence_ids=tuple(item.evidence_id for item in request.evidence),
             invalid_output_count=invalid, provider_error_count=provider_errors,
         )
+
+
+class ReloadableDecisionAIGateway:
+    provider_name = "openai-compatible"
+
+    def __init__(
+        self,
+        settings: EffectiveAISettingsResolver,
+        *,
+        client: httpx.Client | None = None,
+        client_factory: Callable[[], httpx.Client] | None = None,
+        timeout: float = 10,
+        prompt_version: str = "decision-v1",
+    ) -> None:
+        self._settings = settings
+        self._client = client
+        self._client_factory = client_factory or (
+            lambda: httpx.Client(timeout=timeout)
+        )
+        self._owns_client = client is None
+        self._timeout = timeout
+        self.prompt_version = prompt_version
+
+    def __repr__(self) -> str:
+        return (
+            "ReloadableDecisionAIGateway("
+            f"provider_name={self.provider_name!r}, "
+            f"prompt_version={self.prompt_version!r})"
+        )
+
+    def _client_or_create(self) -> httpx.Client:
+        if self._client is None:
+            self._client = self._client_factory()
+        return self._client
+
+    def close(self) -> None:
+        if self._owns_client and self._client is not None:
+            self._client.close()
+
+    def configuration_identity(self) -> tuple[str, ...]:
+        current = self._settings.resolve()
+        if not isinstance(current, AISettings):
+            return ("unconfigured", current.reason, self.prompt_version)
+        revision = self._settings.repository.revision() or "fallback-or-legacy"
+        return (
+            "configured",
+            self.provider_name,
+            current.base_url.rstrip("/"),
+            current.model,
+            self.prompt_version,
+            revision,
+        )
+
+    def explain(self, request: DecisionAIRequest) -> DecisionAIResult:
+        current = self._settings.resolve()
+        provider: DecisionAIProvider
+        if not isinstance(current, AISettings):
+            provider = UnavailableDecisionAIProvider()
+            provider_name = "unconfigured"
+            model = "none"
+            api_key = None
+        else:
+            provider = OpenAICompatibleDecisionProvider(
+                base_url=current.base_url,
+                api_key=current.api_key,
+                model=current.model,
+                client=self._client_or_create(),
+                timeout=self._timeout,
+            )
+            provider_name = self.provider_name
+            model = current.model
+            api_key = current.api_key
+        gateway = DecisionAIGateway(
+            provider,
+            provider_name=provider_name,
+            model=model,
+            prompt_version=self.prompt_version,
+            clock=lambda: request.generated_at,
+            api_key=api_key,
+        )
+        return gateway.explain(request)

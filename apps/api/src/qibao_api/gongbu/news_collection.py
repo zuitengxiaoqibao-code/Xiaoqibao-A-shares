@@ -176,6 +176,8 @@ class EastmoneyGlobalNewsSource:
 
 
 class EastmoneyStockNewsSource:
+    source_name = "eastmoney-stock-news"
+
     def __init__(
         self,
         transport: NewsTransport | None = None,

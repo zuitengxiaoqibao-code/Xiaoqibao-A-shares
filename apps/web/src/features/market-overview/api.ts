@@ -1,0 +1,21 @@
+import type { MarketOverviewLoader, MarketOverviewResponse } from "./types";
+
+export const loadMarketOverview: MarketOverviewLoader = async (signal) => {
+  let response: Response;
+  try {
+    response = await fetch("/api/v1/a-shares/market-overview", { signal });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    throw new Error("信息总览数据暂不可用，请检查本地 API 后重试。");
+  }
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(
+      body.detail?.message
+      ?? body.detail?.code
+      ?? body.detail
+      ?? `信息总览请求失败 (${response.status})`,
+    );
+  }
+  return response.json() as Promise<MarketOverviewResponse>;
+};

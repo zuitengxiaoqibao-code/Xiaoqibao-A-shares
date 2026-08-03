@@ -1,6 +1,8 @@
-import { Activity, CheckCircle2, Clock3 } from "lucide-react";
+import { Activity, CheckCircle2, Clock3, ShieldAlert } from "lucide-react";
 
 import type { Advice, DecisionPhase } from "../decision-workbench/types";
+import { qualityReasonLabel } from "../decision-workbench/PhaseContextPanel";
+import { beginnerAdviceExplanation } from "../decision-workbench/explanation";
 import { phaseExecutionCopy } from "../decision-workbench/phaseExecution";
 import type { StockCockpitSnapshot } from "./types";
 
@@ -19,8 +21,17 @@ export function PhaseTimeline({ phases: histories, symbol }: { phases: StockCock
       const latest = selected.at(-1);
       const executionCopy = phaseExecutionCopy(history?.execution ?? undefined, phase);
       const phaseRan = (history?.change_stream ?? []).length > 0 || history?.execution?.status === "completed";
-      return <section className="phase-lane" key={phase}><header><div><Activity size={15} /><h3>{title}</h3></div><p>{description}</p></header>
-        {!latest ? <p className="phase-empty"><Clock3 size={14} />{executionCopy?.label ?? (phaseRan ? "本阶段已运行，当时未纳入这只股票" : "本阶段没有生成可核验记录")}</p> : <>{executionCopy && <p className={`phase-empty execution-${history?.execution?.status}`}><Clock3 size={14} />{executionCopy.label}</p>}<article className="phase-summary"><span><CheckCircle2 size={14} />{actions[latest.action]}</span><h4>{latest.conclusion}</h4><p>{latest.plain_language_explanation || latest.supporting_evidence[0]?.summary || "等待更多可验证信息"}</p><time>{new Date(latest.created_at).toLocaleString("zh-CN", { hour12: false })}</time></article></>}
+      const blocked = history?.phase_status === "blocked";
+      const blockedReason = qualityReasonLabel(
+        history?.quality_reasons?.[0] ?? "block_reason_unrecorded",
+      );
+      const blockedNotice = blocked
+        ? `本轮${title}已拦截：${blockedReason}。${latest ? "下方保留最近一次可验证判断。" : "当前没有新的可验证判断。"}`
+        : null;
+      const laneState = blocked ? "blocked" : history?.execution?.status ?? history?.phase_status ?? (latest ? "ready" : "empty");
+      return <section className={`phase-lane state-${laneState}`} key={phase}><header><div><Activity size={15} /><h3>{title}</h3></div><p>{description}</p></header>
+        {blockedNotice && <p className="phase-blocked-notice" role="status"><ShieldAlert size={14} /><span>{blockedNotice}</span></p>}
+        {!latest ? !blockedNotice && <p className={`phase-empty execution-${history?.execution?.status ?? "empty"}`}><Clock3 size={14} />{executionCopy?.label ?? (phaseRan ? "本阶段已运行，当时未纳入这只股票" : "本阶段没有生成可核验记录")}</p> : <>{executionCopy && <p className={`phase-empty execution-${history?.execution?.status}`}><Clock3 size={14} />{executionCopy.label}</p>}<article className={`phase-summary action-${latest.action}`}><span><CheckCircle2 size={14} />{actions[latest.action]}</span><h4>{latest.conclusion}</h4><p>{beginnerAdviceExplanation(latest, phase) || latest.supporting_evidence[0]?.summary || "等待更多可验证信息"}</p><time>{new Date(latest.created_at).toLocaleString("zh-CN", { hour12: false })}</time></article></>}
       </section>;
     })}</div>
   </section>;

@@ -53,6 +53,17 @@ const partialDiagnosis = {
 };
 
 describe("AShareResearchView", () => {
+  it("uses the shared terminal shell without changing candidate behavior", async () => {
+    render(<AShareResearchView
+      loadCandidates={() => Promise.resolve(boards)}
+      loadDiagnosis={() => Promise.resolve(partialDiagnosis)}
+    />);
+
+    expect(screen.getByRole("main")).toHaveClass("terminal-page", "a-share-domain");
+    expect(screen.getByRole("heading", { name: "A 股研究工作区" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /600000/ })).toBeInTheDocument();
+  });
+
   it("loads URL selection and writes candidate selection back to global state", async () => {
     window.history.replaceState({}, "", "/a-shares?symbol=600000");
     const loadDiagnosis = vi.fn(() => Promise.resolve(partialDiagnosis));

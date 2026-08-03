@@ -18,3 +18,5 @@ def configure_desktop_logging(logs_dir: Path) -> None:
     root.setLevel(logging.INFO)
     root.handlers.clear()
     root.addHandler(handler)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)

@@ -368,8 +368,8 @@ class AStockPreparationService:
         except Exception as error:
             reason = str(error) or type(error).__name__
             if self._is_connection_level_failure(reason):
-                self._write_news_marker(
-                    self._fund_flow_failure_marker(symbol), self._now()
+                self._write_fund_flow_failure_marker(
+                    self._fund_flow_failure_marker(symbol), self._now(), reason
                 )
             return False, reason
 
@@ -404,6 +404,13 @@ class AStockPreparationService:
             ):
                 observed_at = marker_time
         reason = refresh_error or repository_error
+        if reason is None and name == "fund_flow":
+            failure_marker = self._fund_flow_failure_marker(symbol)
+            if self._fund_flow_failure_is_fresh(failure_marker):
+                reason = (
+                    self._fund_flow_failure_reason(failure_marker)
+                    or "fund_flow_connection_cooldown"
+                )
         if reason is None and observed_at is None:
             reason = f"{name}_no_verified_snapshot"
         return PreparationSource(
@@ -528,6 +535,21 @@ class AStockPreparationService:
         finally:
             temporary.unlink(missing_ok=True)
 
+    @staticmethod
+    def _write_fund_flow_failure_marker(
+        marker: Path, failed_at: datetime, reason: str
+    ) -> None:
+        temporary = marker.with_name(f".{marker.name}.{uuid4().hex}.tmp")
+        try:
+            safe_reason = reason.replace("\r", " ").replace("\n", " ").strip()
+            with temporary.open("w", encoding="utf-8") as handle:
+                handle.write(f"{failed_at.isoformat()}\n{safe_reason}")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, marker)
+        finally:
+            temporary.unlink(missing_ok=True)
+
     def _news_is_fresh(self, marker: Path):
         try:
             refreshed_at = datetime.fromisoformat(
@@ -539,9 +561,18 @@ class AStockPreparationService:
 
     def _marker_time(self, marker: Path):
         try:
-            return self._aware(datetime.fromisoformat(marker.read_text(encoding="utf-8")))
+            first_line = marker.read_text(encoding="utf-8").splitlines()[0].strip()
+            return self._aware(datetime.fromisoformat(first_line))
         except (OSError, ValueError):
             return None
+
+    @staticmethod
+    def _fund_flow_failure_reason(marker: Path) -> str | None:
+        try:
+            lines = marker.read_text(encoding="utf-8").splitlines()
+        except (OSError, ValueError):
+            return None
+        return lines[1].strip() if len(lines) > 1 and lines[1].strip() else None
 
     def _classification_is_fresh(self, marker: Path):
         try:

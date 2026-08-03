@@ -4,6 +4,7 @@ from decimal import Decimal
 import pandas as pd
 
 from qibao_api.contracts.bars import DailyBar
+from qibao_api.gongbu.tdx_client import SourceAttemptObserver
 
 
 class DataSourceUnavailable(RuntimeError):
@@ -13,14 +14,23 @@ class DataSourceUnavailable(RuntimeError):
 class TdxHistorySource:
     source_name = "mootdx"
 
-    def __init__(self, client=None, *, client_factory=None) -> None:
+    def __init__(
+        self,
+        client=None,
+        *,
+        client_factory=None,
+        observer: SourceAttemptObserver | None = None,
+    ) -> None:
         if (client is None) == (client_factory is None):
             raise ValueError("provide exactly one mootdx client or client factory")
         self.client = client
         self.client_factory = client_factory
+        self.observer = observer
 
     def fetch_daily(self, symbol: str, limit: int = 250) -> list[DailyBar]:
         client = self.client_factory() if self.client_factory is not None else self.client
+        if self.observer is not None and hasattr(client, "observer"):
+            client.observer = self.observer
         try:
             frame = client.bars(
                 symbol=symbol, frequency=9, start=0, offset=limit

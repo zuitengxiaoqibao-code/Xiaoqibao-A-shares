@@ -46,7 +46,9 @@ class CandidateExclusion(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     symbol: str = Field(pattern=r"^\d{6}$")
-    reason_code: Literal["insufficient_liquidity", "invalid_history"]
+    reason_code: Literal[
+        "insufficient_liquidity", "invalid_history", "stale_history"
+    ]
     observed_value: Decimal | None = None
     threshold: Decimal | None = None
     detail: str | None = None
@@ -61,6 +63,11 @@ class CandidateBoard(BaseModel):
     input_snapshot_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     as_of: date
     factor_version: Literal["a-share-factors-v1"] = FACTOR_VERSION
+    universe_size: int = Field(default=0, ge=0)
+    eligible_size: int = Field(default=0, ge=0)
+    latest_trade_date: date | None = None
+    sources: tuple[str, ...] = ()
+    refresh_policy: Literal["after_close"] = "after_close"
     short_term: list[CandidateEntry]
     swing: list[CandidateEntry]
     exclusions: list[CandidateExclusion] = Field(default_factory=list)
@@ -81,3 +88,32 @@ class CandidateBoard(BaseModel):
         if any(item.factor_snapshot.as_of != self.as_of for item in entries):
             raise ValueError("candidate snapshots must match board as_of")
         return self
+
+
+class CandidateScoreItem(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    symbol: str = Field(pattern=r"^\d{6}$")
+    status: Literal[
+        "ready", "insufficient_history", "insufficient_liquidity",
+        "invalid_history", "stale_history",
+    ]
+    score: Decimal | None = Field(default=None, ge=-30, le=90)
+    latest_trade_date: date | None = None
+    reason: Literal[
+        "history_requires_60_bars", "liquidity_below_threshold",
+        "history_invalid", "history_not_through_confirmed_day",
+    ] | None = None
+
+
+class CandidateScoreBoard(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    as_of: date
+    horizon: Literal["short_term", "swing"]
+    factor_version: Literal["a-share-factors-v1"] = FACTOR_VERSION
+    universe_size: int = Field(ge=0)
+    eligible_size: int = Field(ge=0)
+    latest_trade_date: date | None = None
+    sources: tuple[str, ...] = ()
+    items: tuple[CandidateScoreItem, ...]

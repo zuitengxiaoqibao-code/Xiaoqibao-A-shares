@@ -1,0 +1,225 @@
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
+
+from qibao_api.contracts.bars import DailyBar
+from qibao_api.gongbu.full_market_history import FullMarketHistoryService
+from qibao_api.gongbu.history_sync_repository import HistorySyncRepository
+from qibao_api.storage.bar_repository import BarCoverage
+
+
+TARGET = date(2026, 7, 24)
+NOW = datetime(2026, 7, 24, 8, tzinfo=timezone.utc)
+
+
+def bars(symbol: str, count: int, *, source: str = "mootdx") -> list[DailyBar]:
+    first = TARGET - timedelta(days=count - 1)
+    return [
+        DailyBar(
+            symbol=symbol,
+            trade_date=first + timedelta(days=index),
+            open=Decimal("10"),
+            high=Decimal("10.2"),
+            low=Decimal("9.8"),
+            close=Decimal("10"),
+            volume=1000,
+            amount=Decimal("10000"),
+            source=source,
+        )
+        for index in range(count)
+    ]
+
+
+class Directory:
+    def __init__(self, symbols):
+        self.symbols = tuple(symbols)
+
+    def active_symbols(self):
+        return self.symbols
+
+
+class Bars:
+    def __init__(self, coverage):
+        self.values = dict(coverage)
+        self.writes: list[DailyBar] = []
+
+    def coverage(self, symbols, target_date):
+        return {
+            symbol: BarCoverage(
+                symbol=symbol,
+                bar_count=self.values.get(symbol, (0, None))[0],
+                latest_trade_date=self.values.get(symbol, (0, None))[1],
+            )
+            for symbol in symbols
+        }
+
+    def append_missing(self, values):
+        self.writes.extend(values)
+        if values:
+            symbol = values[0].symbol
+            previous = self.values.get(symbol, (0, None))[0]
+            self.values[symbol] = (previous + len(values), values[-1].trade_date)
+        return len(values)
+
+
+class Source:
+    def __init__(self, responses):
+        self.responses = responses
+        self.calls: list[tuple[str, int]] = []
+
+    def fetch_daily(self, symbol, limit):
+        self.calls.append((symbol, limit))
+        result = self.responses[symbol]
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+
+class CallbackSource(Source):
+    def __init__(self, responses, callback):
+        super().__init__(responses)
+        self.callback = callback
+
+    def fetch_daily(self, symbol, limit):
+        self.callback()
+        return super().fetch_daily(symbol, limit)
+
+
+def service(tmp_path, *, symbols, coverage, tdx, baidu, threshold=20):
+    return FullMarketHistoryService(
+        directory=Directory(symbols),
+        bar_repository=Bars(coverage),
+        tdx_source=tdx,
+        baidu_source=baidu,
+        job_repository=HistorySyncRepository(tmp_path / "history-sync.sqlite3"),
+        clock=lambda: NOW,
+        failure_pause_threshold=threshold,
+    )
+
+
+def test_backfill_skips_complete_symbols_and_falls_back_to_baidu(tmp_path) -> None:
+    tdx = Source({"600000": OSError("tdx unavailable")})
+    baidu = Source({"600000": bars("600000", 280, source="baidu")})
+    value = service(
+        tmp_path,
+        symbols=("000001", "600000"),
+        coverage={"000001": (300, TARGET), "600000": (0, None)},
+        tdx=tdx,
+        baidu=baidu,
+    )
+
+    job = value.create_backfill()
+    completed = value.run(job.job_id)
+
+    assert completed.state == "completed"
+    assert completed.skipped_count == 1
+    assert completed.baidu_ready_count == 1
+    assert completed.ready_count == 1
+    assert tdx.calls == [("600000", 300)]
+    assert baidu.calls == [("600000", 300)]
+
+
+def test_global_source_outage_pauses_without_attempting_entire_universe(tmp_path) -> None:
+    symbols = ("000001", "000002", "600000", "600001")
+    failures = {symbol: OSError("offline") for symbol in symbols}
+    tdx = Source(failures)
+    baidu = Source(failures)
+    value = service(
+        tmp_path,
+        symbols=symbols,
+        coverage={},
+        tdx=tdx,
+        baidu=baidu,
+        threshold=2,
+    )
+
+    paused = value.run(value.create_backfill().job_id)
+
+    assert paused.state == "paused"
+    assert paused.failed_count == 2
+    assert paused.pending_count == 2
+    assert len(tdx.calls) == 2
+    assert len(baidu.calls) == 2
+
+
+def test_incremental_writes_only_bars_after_the_latest_stored_date(tmp_path) -> None:
+    latest = TARGET - timedelta(days=1)
+    returned = bars("600000", 3)
+    tdx = Source({"600000": returned})
+    baidu = Source({})
+    value = service(
+        tmp_path,
+        symbols=("600000",),
+        coverage={"600000": (250, latest)},
+        tdx=tdx,
+        baidu=baidu,
+    )
+
+    completed = value.run(value.create_incremental(TARGET).job_id)
+
+    assert completed.ready_count == 1
+    assert [bar.trade_date for bar in value.bar_repository.writes] == [TARGET]
+    assert tdx.calls == [("600000", 30)]
+    assert baidu.calls == []
+
+
+def test_coverage_reports_real_universe_eligibility_and_target_freshness(tmp_path) -> None:
+    value = service(
+        tmp_path,
+        symbols=("000001", "600000", "688001"),
+        coverage={
+            "000001": (300, TARGET),
+            "600000": (250, TARGET - timedelta(days=1)),
+            "688001": (20, TARGET),
+        },
+        tdx=Source({}),
+        baidu=Source({}),
+    )
+
+    summary = value.coverage(TARGET)
+
+    assert summary.universe_count == 3
+    assert summary.backfill_complete_count == 1
+    assert summary.eligible_count == 2
+    assert summary.target_date_count == 2
+
+
+def test_shutdown_request_leaves_pending_work_restartable(tmp_path) -> None:
+    value = service(
+        tmp_path,
+        symbols=("000001", "600000"),
+        coverage={},
+        tdx=Source({"000001": bars("000001", 300), "600000": bars("600000", 300)}),
+        baidu=Source({}),
+    )
+    job = value.create_backfill()
+
+    value.request_shutdown()
+    stopped = value.run(job.job_id)
+
+    assert stopped.state == "pending"
+    assert stopped.pending_count == 2
+    assert value.tdx_source.calls == []
+
+
+def test_pause_during_an_item_does_not_try_to_finish_pending_work(tmp_path) -> None:
+    holder = {}
+    tdx = CallbackSource(
+        {"000001": bars("000001", 300)},
+        lambda: holder["service"].pause(holder["job_id"]),
+    )
+    value = service(
+        tmp_path,
+        symbols=("000001", "600000"),
+        coverage={},
+        tdx=tdx,
+        baidu=Source({}),
+    )
+    holder["service"] = value
+    job = value.create_backfill()
+    holder["job_id"] = job.job_id
+
+    paused = value.run(job.job_id)
+
+    assert paused.state == "paused"
+    assert paused.ready_count == 1
+    assert paused.pending_count == 1

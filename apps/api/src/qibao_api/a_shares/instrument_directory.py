@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from qibao_api.contracts.instruments import AShareCode
+from qibao_api.contracts.market import AssetKind
 from qibao_api.gongbu.tencent_quotes import market_prefix
 
 
@@ -60,6 +61,17 @@ class AShareInstrumentDirectory:
             ON a_share_instrument_observations(symbol, observed_at DESC, id DESC)
             """
         )
+        self._connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS a_share_active_universe (
+                symbol TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                exchange TEXT NOT NULL,
+                observed_at TEXT NOT NULL,
+                quote_quality TEXT NOT NULL
+            )
+            """
+        )
         self._connection.commit()
 
     def observe(self, instrument: AShareInstrument) -> None:
@@ -80,7 +92,50 @@ class AShareInstrumentDirectory:
             )
             self._connection.commit()
 
+    def observe_many(self, instruments: tuple[AShareInstrument, ...] | list[AShareInstrument]) -> None:
+        active_instruments = {instrument.symbol: instrument for instrument in instruments}
+        with self._lock:
+            self._connection.executemany(
+                """
+                INSERT INTO a_share_instrument_observations
+                    (symbol, name, exchange, observed_at, quote_quality)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        instrument.symbol,
+                        instrument.name,
+                        instrument.exchange,
+                        instrument.observed_at.isoformat(),
+                        instrument.quote_quality,
+                    )
+                    for instrument in instruments
+                ],
+            )
+            self._connection.execute("DELETE FROM a_share_active_universe")
+            self._connection.executemany(
+                """
+                INSERT INTO a_share_active_universe
+                    (symbol, name, exchange, observed_at, quote_quality)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        instrument.symbol,
+                        instrument.name,
+                        instrument.exchange,
+                        instrument.observed_at.isoformat(),
+                        instrument.quote_quality,
+                    )
+                    for instrument in active_instruments.values()
+                ],
+            )
+            self._connection.commit()
+
     def resolve(self, symbol: str) -> AShareInstrument | None:
+        active = self._active(symbol)
+        if active is not None:
+            return active
         return self.resolve_at(symbol, None)
 
     def resolve_at(
@@ -106,11 +161,8 @@ class AShareInstrumentDirectory:
             raise ValueError("query must not be empty")
         if limit < 1:
             raise ValueError("limit must be positive")
-        matches = [
-            item
-            for item in self._all_rows()
-            if normalized in item.symbol or normalized in item.name.casefold()
-        ]
+        rows = self._active_rows() if self._active_count() else self._all_rows()
+        matches = [item for item in rows if normalized in item.symbol or normalized in item.name.casefold()]
         return tuple(
             sorted(
                 matches,
@@ -121,6 +173,38 @@ class AShareInstrumentDirectory:
                 ),
             )[:limit]
         )
+
+    def latest_observed_at(self) -> datetime | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT MAX(observed_at) FROM a_share_instrument_observations"
+            ).fetchone()
+        return datetime.fromisoformat(row[0]) if row and row[0] else None
+
+    def latest_named_observed_at(self) -> datetime | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT MAX(observed_at) FROM a_share_instrument_observations WHERE name <> symbol"
+            ).fetchone()
+        return datetime.fromisoformat(row[0]) if row and row[0] else None
+
+    def active_symbols(self) -> tuple[str, ...]:
+        return tuple(item.symbol for item in self._active_rows())
+
+    def alias_map(self) -> dict[tuple[AssetKind, str], tuple[str, ...]]:
+        rows = self._active_rows() if self._active_count() else self._all_rows()
+        return {
+            (AssetKind.A_SHARE, item.symbol): (item.name.strip(),)
+            for item in rows
+            if item.name.strip() and item.name.strip() != item.symbol
+        }
+
+    def named_count(self) -> int:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT COUNT(DISTINCT symbol) FROM a_share_instrument_observations WHERE name <> symbol"
+            ).fetchone()
+        return int(row[0] or 0)
 
     def _all_rows(self) -> tuple[AShareInstrument, ...]:
         with self._lock:
@@ -137,6 +221,34 @@ class AShareInstrumentDirectory:
                 """
             ).fetchall()
         return tuple(self._instrument(row) for row in rows)
+
+    def _active_count(self) -> int:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT COUNT(*) FROM a_share_active_universe"
+            ).fetchone()
+        return int(row[0] or 0)
+
+    def _active_rows(self) -> tuple[AShareInstrument, ...]:
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT symbol, name, exchange, observed_at, quote_quality
+                FROM a_share_active_universe ORDER BY symbol
+                """
+            ).fetchall()
+        return tuple(self._instrument(row) for row in rows)
+
+    def _active(self, symbol: str) -> AShareInstrument | None:
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT symbol, name, exchange, observed_at, quote_quality
+                FROM a_share_active_universe WHERE symbol = ?
+                """,
+                (symbol,),
+            ).fetchone()
+        return self._instrument(row) if row is not None else None
 
     @staticmethod
     def _instrument(row) -> AShareInstrument:

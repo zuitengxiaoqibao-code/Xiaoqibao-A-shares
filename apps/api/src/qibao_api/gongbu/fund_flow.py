@@ -16,10 +16,14 @@ import httpx
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from qibao_api.contracts.instruments import validate_a_share_code
+from qibao_api.contracts.source_health import SourceAttemptEvent, SourceAttemptStatus
 
 
 EASTMONEY_FUND_FLOW_DAILY_URL = (
     "https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get"
+)
+EASTMONEY_FUND_FLOW_DAILY_FALLBACK_URL = (
+    "https://push2.eastmoney.com/api/qt/stock/fflow/kline/get"
 )
 EASTMONEY_FUND_FLOW_MINUTE_URL = (
     "https://push2.eastmoney.com/api/qt/stock/fflow/kline/get"
@@ -39,6 +43,7 @@ FundFlowTransport = Callable[
     [str, dict[str, str], dict[str, str]],
     Awaitable[FundFlowHttpResponse],
 ]
+FundFlowAttemptObserver = Callable[[SourceAttemptEvent], None]
 
 
 class FundFlowSnapshot(BaseModel):
@@ -58,6 +63,9 @@ class FundFlowSnapshot(BaseModel):
     intraday_sample_count: int = Field(ge=0)
     flow_direction: Literal["inflow", "outflow", "balanced"]
     source: str = "eastmoney-fund-flow"
+    daily_endpoint: str = "push2his/stock/fflow/daykline"
+    minute_endpoint: str | None = "push2/stock/fflow/kline"
+    minute_error: str | None = None
     content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     raw_snapshot: bytes = Field(min_length=1)
 
@@ -88,6 +96,7 @@ class EastmoneyFundFlowSource:
         monotonic=time.monotonic,
         sleep=asyncio.sleep,
         minimum_interval: float = 1.0,
+        observer: FundFlowAttemptObserver | None = None,
     ) -> None:
         self.transport = transport
         self.client = client
@@ -95,8 +104,36 @@ class EastmoneyFundFlowSource:
         self.monotonic = monotonic
         self.sleep = sleep
         self.minimum_interval = minimum_interval
+        self.observer = observer
         self._last_request_at: float | None = None
         self._request_lock = asyncio.Lock()
+
+    def _record(
+        self,
+        *,
+        operation: str,
+        target: str,
+        status: SourceAttemptStatus,
+        started: float,
+        error_code: str | None = None,
+        metadata: dict[str, str | int] | None = None,
+    ) -> None:
+        if self.observer is None:
+            return
+        event = SourceAttemptEvent(
+            source="eastmoney-fund-flow",
+            operation=operation,
+            target=target,
+            status=status,
+            latency_ms=max(0, round((time.perf_counter() - started) * 1000)),
+            observed_at=self.clock(),
+            error_code=error_code,
+            metadata=metadata or {},
+        )
+        try:
+            self.observer(event)
+        except Exception:
+            return
 
     async def fetch(self, symbol: str) -> FundFlowSnapshot:
         symbol = validate_a_share_code(symbol)
@@ -107,52 +144,183 @@ class EastmoneyFundFlowSource:
             "Origin": "https://quote.eastmoney.com",
         }
         async with self._request_lock:
-            daily = await self._fetch_json(
-                EASTMONEY_FUND_FLOW_DAILY_URL,
-                {
-                    "secid": secid,
-                    "fields1": "f1,f2,f3,f7",
-                    "fields2": (
-                        "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,"
-                        "f62,f63,f64,f65"
+            daily, daily_endpoint = await self._fetch_series(
+                symbol,
+                "daily",
+                (
+                    (
+                        EASTMONEY_FUND_FLOW_DAILY_URL,
+                        {
+                            "secid": secid,
+                            "fields1": "f1,f2,f3,f7",
+                            "fields2": (
+                                "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,"
+                                "f62,f63,f64,f65"
+                            ),
+                            "lmt": "120",
+                        },
+                        "push2his/stock/fflow/daykline",
                     ),
-                    "lmt": "120",
-                },
+                    (
+                        EASTMONEY_FUND_FLOW_DAILY_FALLBACK_URL,
+                        {
+                            "secid": secid,
+                            "klt": "101",
+                            "fields1": "f1,f2,f3,f7",
+                            "fields2": (
+                                "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,"
+                                "f62,f63,f64,f65"
+                            ),
+                            "lmt": "120",
+                        },
+                        "push2/stock/fflow/kline",
+                    ),
+                ),
                 headers,
             )
-            minute = await self._fetch_json(
-                EASTMONEY_FUND_FLOW_MINUTE_URL,
-                {
-                    "secid": secid,
-                    "klt": "1",
-                    "fields1": "f1,f2,f3,f7",
-                    "fields2": "f51,f52,f53,f54,f55,f56,f57",
-                },
-                headers,
-            )
-        return self._parse(symbol, daily, minute)
+            minute_error = None
+            try:
+                minute, minute_endpoint = await self._fetch_series(
+                    symbol,
+                    "minute",
+                    (
+                        (
+                            EASTMONEY_FUND_FLOW_MINUTE_URL,
+                            {
+                                "secid": secid,
+                                "klt": "1",
+                                "fields1": "f1,f2,f3,f7",
+                                "fields2": "f51,f52,f53,f54,f55,f56,f57",
+                            },
+                            "push2/stock/fflow/kline",
+                        ),
+                    ),
+                    headers,
+                )
+            except (OSError, ValueError, httpx.TransportError) as error:
+                minute = {"data": {"code": symbol, "klines": []}}
+                minute_endpoint = None
+                minute_error = str(error)
+        return self._parse(
+            symbol,
+            daily,
+            minute,
+            daily_endpoint=daily_endpoint,
+            minute_endpoint=minute_endpoint,
+            minute_error=minute_error,
+        )
+
+    async def _fetch_series(
+        self,
+        symbol: str,
+        series: Literal["daily", "minute"],
+        candidates: tuple[tuple[str, dict[str, str], str], ...],
+        headers: dict[str, str],
+    ) -> tuple[dict[str, Any], str]:
+        failures: list[str] = []
+        last_error: OSError | ValueError | httpx.TransportError | None = None
+        for url, params, endpoint in candidates:
+            started = time.perf_counter()
+            try:
+                payload = await self._fetch_json(
+                    url, params, headers, operation=series, target=url, started=started
+                )
+                rows = self._rows(symbol, payload, series)
+                if not rows:
+                    self._record(
+                        operation=series,
+                        target=url,
+                        status="empty",
+                        started=started,
+                        error_code="EmptyResponse",
+                        metadata={"row_count": 0},
+                    )
+                    if series == "daily":
+                        raise ValueError("Eastmoney daily fund-flow series is empty")
+                    return payload, endpoint
+                metadata = {
+                    "field_count": max(len(row.split(",")) for row in rows),
+                    "row_count": len(rows),
+                    "validation": "schema_fund_flow",
+                }
+                if series == "daily":
+                    metadata["latest_trade_date"] = max(
+                        row.split(",", 1)[0] for row in rows
+                    )
+                self._record(
+                    operation=series,
+                    target=url,
+                    status="ready",
+                    started=started,
+                    metadata=metadata,
+                )
+                return payload, endpoint
+            except (OSError, ValueError, httpx.TransportError) as error:
+                last_error = error
+                failures.append(f"{endpoint}: {error}")
+                if isinstance(error, ValueError):
+                    self._record(
+                        operation=series,
+                        target=url,
+                        status="error",
+                        started=started,
+                        error_code=type(error).__name__,
+                    )
+        if isinstance(last_error, ValueError):
+            raise ValueError(
+                f"Eastmoney {series} fund-flow endpoints returned invalid data: "
+                f"{'; '.join(failures)}"
+            ) from last_error
+        raise OSError(
+            f"Eastmoney {series} fund-flow endpoints failed: {'; '.join(failures)}"
+        )
 
     async def _fetch_json(
         self,
         url: str,
         params: dict[str, str],
         headers: dict[str, str],
+        *,
+        operation: str,
+        target: str,
+        started: float,
     ) -> dict[str, Any]:
         response: FundFlowHttpResponse | None = None
         for attempt in range(2):
             try:
                 await self._wait_for_rate_limit()
                 response = await self._request(url, params, headers)
-            except (OSError, httpx.TransportError):
+            except (OSError, httpx.TransportError) as error:
+                self._record(
+                    operation=operation,
+                    target=target,
+                    status="error",
+                    started=started,
+                    error_code=type(error).__name__,
+                )
                 if attempt == 1:
                     raise
                 continue
             if response.status_code not in {429, 500, 502, 503, 504}:
                 break
+            self._record(
+                operation=operation,
+                target=target,
+                status="error",
+                started=started,
+                error_code=f"HTTP{response.status_code}",
+            )
             if attempt == 1:
                 raise OSError(f"Eastmoney fund-flow status {response.status_code}")
         assert response is not None
         if response.status_code != 200:
+            self._record(
+                operation=operation,
+                target=target,
+                status="error",
+                started=started,
+                error_code=f"HTTP{response.status_code}",
+            )
             raise OSError(f"Eastmoney fund-flow status {response.status_code}")
         try:
             payload = json.loads(response.body)
@@ -195,6 +363,10 @@ class EastmoneyFundFlowSource:
         symbol: str,
         daily_payload: dict[str, Any],
         minute_payload: dict[str, Any],
+        *,
+        daily_endpoint: str,
+        minute_endpoint: str | None,
+        minute_error: str | None,
     ) -> FundFlowSnapshot:
         daily_rows = self._rows(symbol, daily_payload, "daily")
         if not daily_rows:
@@ -251,6 +423,9 @@ class EastmoneyFundFlowSource:
                 if intraday_values else None
             ),
             "intraday_sample_count": len(intraday_values),
+            "daily_endpoint": daily_endpoint,
+            "minute_endpoint": minute_endpoint,
+            "minute_error": minute_error,
             "latest_large_net": str(latest[2]),
             "latest_main_net": str(latest[1]),
             "latest_super_net": str(latest[3]),
@@ -293,6 +468,9 @@ class EastmoneyFundFlowSource:
             daily_sample_count=len(parsed_daily),
             intraday_sample_count=len(intraday_values),
             flow_direction=direction,
+            daily_endpoint=daily_endpoint,
+            minute_endpoint=minute_endpoint,
+            minute_error=minute_error,
             content_hash=content_hash,
             raw_snapshot=raw_snapshot,
         )

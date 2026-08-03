@@ -139,7 +139,42 @@ def test_diagnosis_fetches_and_appends_reproducible_snapshot(tmp_path):
 
     candidates = client.get("/api/v1/convertible-bonds/candidates")
     assert candidates.status_code == 200
-    assert candidates.json()["items"][0]["bond_code"] == "113065"
+    assert candidates.json()["items"] == []
+    assert candidates.json()["coverage"]["candidate_count"] == 0
+
+
+def test_cached_diagnosis_returns_latest_snapshot_without_contacting_sources(tmp_path):
+    client, compliance, _ = make_client(tmp_path)
+    authorize(compliance, "tencent", AssetKind.CONVERTIBLE_BOND)
+    authorize(compliance, "eastmoney", AssetKind.CONVERTIBLE_BOND)
+    assert client.get("/api/v1/convertible-bonds/113065/diagnosis").status_code == 200
+    service = client.app.dependency_overrides[get_bond_service]()
+
+    class MustNotRun:
+        async def fetch(self, _):
+            raise AssertionError("cached diagnosis must not contact an upstream source")
+
+    service.quote_source = MustNotRun()
+    service.clause_source = MustNotRun()
+    service.linked_stock_source = MustNotRun()
+    service.valuation_source = MustNotRun()
+
+    response = client.get("/api/v1/convertible-bonds/113065/diagnosis/cached")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["bond"]["code"] == "113065"
+    assert body["is_cached"] is True
+    assert body["cache_recorded_at"]
+
+
+def test_cached_diagnosis_reports_a_cache_miss_without_running_live_diagnosis(tmp_path):
+    client, _, _ = make_client(tmp_path)
+
+    response = client.get("/api/v1/convertible-bonds/113065/diagnosis/cached")
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "bond_diagnosis_cache_miss"
 
 
 def test_route_maps_empty_upstream_and_parse_errors_without_500():
@@ -154,6 +189,23 @@ def test_route_maps_empty_upstream_and_parse_errors_without_500():
     response = TestClient(app).get("/api/v1/convertible-bonds/113065/diagnosis")
     assert response.status_code == 404
     assert response.json()["detail"]["code"] == "clauses_unavailable"
+
+
+def test_route_runs_bounded_discovered_bond_diagnosis_batch():
+    class Batch:
+        def dashboard(self): return {}
+        def candidates(self): return {}
+        async def diagnose(self, _): return {}
+        async def diagnose_discovered(self, limit):
+            return {"requested": limit, "diagnosed_count": 0, "unavailable_count": 0, "items": []}
+
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_bond_service] = lambda: Batch()
+    response = TestClient(app).post("/api/v1/convertible-bonds/diagnose-discovered?limit=3")
+
+    assert response.status_code == 200
+    assert response.json()["requested"] == 3
 
 
 def test_suspended_diagnosis_is_not_a_candidate(tmp_path):
@@ -196,5 +248,5 @@ def test_candidate_query_filters_are_applied(tmp_path):
     )
     excluded = client.get("/api/v1/convertible-bonds/candidates?min_turnover_amount=526680001")
 
-    assert [item["bond_code"] for item in included.json()["items"]] == ["113065"]
+    assert included.json()["items"] == []
     assert excluded.json()["items"] == []

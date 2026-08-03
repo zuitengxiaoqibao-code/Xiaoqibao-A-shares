@@ -40,13 +40,29 @@ def performance_metrics(
         for previous, current in zip(equity_curve, equity_curve[1:], strict=False)
         if previous.equity > 0
     ]
+    annualized_return = Decimal("0")
     volatility = Decimal("0")
+    sharpe_ratio = None
     if len(returns) >= 2:
         mean = sum(returns, Decimal("0")) / Decimal(len(returns))
         variance = sum(
             ((value - mean) ** 2 for value in returns), Decimal("0")
         ) / Decimal(len(returns) - 1)
-        volatility = variance.sqrt() * Decimal("252").sqrt()
+        daily_volatility = variance.sqrt()
+        volatility = daily_volatility * Decimal("252").sqrt()
+        if daily_volatility > 0:
+            sharpe_ratio = _quantize(
+                mean / daily_volatility * Decimal("252").sqrt()
+            )
+    if returns and equity_curve[0].equity > 0 and equity_curve[-1].equity > 0:
+        growth = equity_curve[-1].equity / equity_curve[0].equity
+        annualized_return = _quantize(
+            growth ** (Decimal("252") / Decimal(len(returns))) - Decimal("1")
+        )
+    drawdown = max_drawdown([point.equity for point in equity_curve])
+    calmar_ratio = (
+        _quantize(annualized_return / drawdown) if drawdown > 0 else None
+    )
 
     closed_results: list[Decimal] = []
     open_cost: Decimal | None = None
@@ -73,7 +89,10 @@ def performance_metrics(
     gross_turnover = sum((trade.gross_amount for trade in trades), Decimal("0"))
     turnover_rate = gross_turnover / average_equity if average_equity > 0 else Decimal("0")
     return PerformanceMetrics(
+        annualized_return=_quantize(annualized_return),
         annualized_volatility=_quantize(volatility),
+        sharpe_ratio=sharpe_ratio,
+        calmar_ratio=calmar_ratio,
         win_rate=win_rate,
         profit_loss_ratio=profit_loss_ratio,
         turnover_rate=_quantize(turnover_rate),

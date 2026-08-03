@@ -1,0 +1,102 @@
+from datetime import date, datetime, timezone
+from decimal import Decimal
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from qibao_api.contracts.company_research import (
+    CompanyProfileEvidence,
+    CompanyResearchDimension,
+    CompanyResearchResponse,
+    CounterCaseItem,
+    FinancialHistory,
+    ValuationObservation,
+)
+from qibao_api.dependencies import get_company_research_service
+from qibao_api.routes.research import router
+
+
+NOW = datetime(2026, 8, 3, tzinfo=timezone.utc)
+
+
+def sample_response() -> CompanyResearchResponse:
+    return CompanyResearchResponse(
+        status="partial", symbol="600519", name="贵州茅台",
+        as_of=date(2026, 8, 3), generated_at=NOW,
+        dimensions=(CompanyResearchDimension(
+            key="valuation", label="估值吸引力", weight=15,
+            status="ready", score=Decimal("60"), summary="估值原值可用。",
+            metrics={"pe_ttm": Decimal("25")}, evidence_ids=("valuation",),
+        ),),
+        evidence_coverage=Decimal("0.15"), base_score=Decimal("60"),
+        risk_penalty=Decimal("0"), final_score=None,
+        financial_history=FinancialHistory(
+            status="unavailable", periods=(), annual_periods=(), latest_period=None,
+            revenue_cagr_3y=None, net_profit_cagr_3y=None,
+            source="sina-finance", observed_at=None, reasons=("unavailable",),
+        ),
+        valuation=ValuationObservation(
+            status="ready", pe_ttm=Decimal("25"), pb=Decimal("8"),
+            market_cap_yi=Decimal("18000"), observation_range_status="unavailable",
+            observation_range_reason="缺少历史估值。", source="tencent", observed_at=NOW,
+        ),
+        counter_case=tuple(CounterCaseItem(
+            key=f"risk_{index}", title=f"风险 {index}", status="unavailable",
+            detail="无法核验", threshold=None, penalty=Decimal("0"),
+        ) for index in range(10)),
+        profile=CompanyProfileEvidence(
+            status="unavailable", company_overview=None, industry_analysis=None,
+            latest_tips=None, source="mootdx-f10", observed_at=None,
+            reasons=("unavailable",),
+        ),
+        sources=(), reasons=("部分来源不可用",),
+    )
+
+
+class Service:
+    def __init__(self, fail: bool = False) -> None:
+        self.fail = fail
+        self.calls: list[tuple[str, date | None]] = []
+
+    async def get(self, symbol: str, as_of: date | None = None) -> CompanyResearchResponse:
+        self.calls.append((symbol, as_of))
+        if self.fail:
+            raise OSError("financial source unavailable")
+        return sample_response()
+
+
+def application(service: Service) -> FastAPI:
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_company_research_service] = lambda: service
+    return app
+
+
+def test_company_research_route_returns_evidence_contract() -> None:
+    service = Service()
+    response = TestClient(application(service)).get(
+        "/api/v1/a-shares/600519/company-research?as_of=2026-08-03"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "贵州茅台"
+    assert response.json()["final_score"] is None
+    assert len(response.json()["counter_case"]) == 10
+    assert service.calls == [("600519", date(2026, 8, 3))]
+
+
+def test_company_research_route_rejects_invalid_a_share_code() -> None:
+    response = TestClient(application(Service())).get(
+        "/api/v1/a-shares/123/company-research"
+    )
+
+    assert response.status_code == 422
+
+
+def test_company_research_route_translates_service_failure() -> None:
+    response = TestClient(application(Service(fail=True))).get(
+        "/api/v1/a-shares/600519/company-research"
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "company_research_unavailable"

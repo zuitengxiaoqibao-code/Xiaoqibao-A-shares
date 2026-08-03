@@ -15,6 +15,7 @@ const reasonNames: Record<string, string> = {
   source_authorization_required: "数据源尚未授权",
   diagnosis_unavailable: "诊断数据暂不可用",
   diagnosis_section_unavailable: "该分区数据暂不可用",
+  fund_flow_intraday_unavailable: "日级资金流可用，盘中分钟资金流暂未返回；本项仅供历史观察。",
   observed_after_cutoff: "数据晚于当前快照截止时间",
 };
 const sourceNames: Record<string, string> = {

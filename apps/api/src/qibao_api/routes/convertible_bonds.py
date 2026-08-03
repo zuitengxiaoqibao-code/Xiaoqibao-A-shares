@@ -44,6 +44,40 @@ def candidates(service: Annotated[object, Depends(get_bond_service)],
         raise HTTPException(status_code=503, detail={"code": "diagnosis_integrity_error", "message": "转债诊断存档校验失败"}) from error
 
 
+@router.post("/diagnose-discovered")
+async def diagnose_discovered(
+    service: Annotated[object, Depends(get_bond_service)],
+    limit: Annotated[int, Query(ge=1, le=12)] = 6,
+):
+    return await service.diagnose_discovered(limit=limit)
+
+
+@router.get("/{bond_code}/diagnosis/cached")
+def cached_diagnosis(
+    bond_code: str,
+    service: Annotated[object, Depends(get_bond_service)],
+):
+    try:
+        result = service.cached_diagnosis(bond_code)
+    except DataIntegrityError as error:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "diagnosis_integrity_error",
+                "message": "转债诊断存档校验失败",
+            },
+        ) from error
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "bond_diagnosis_cache_miss",
+                "message": "尚无该转债的诊断快照",
+            },
+        )
+    return result
+
+
 @router.get("/{bond_code}/diagnosis")
 async def diagnosis(bond_code: str, service: Annotated[object, Depends(get_bond_service)]):
     try:

@@ -79,6 +79,13 @@ def gateway(handler=None, **updates):
     return OpenAICompatibleAssessmentGateway(**values)
 
 
+def neutral_numeric_response():
+    return response_payload(
+        plain_language="The latest price is 10.50 yuan and the five-day move is 2.3%.",
+        contrary_view="There is no verified buy condition or sell instruction.",
+    )
+
+
 @pytest.mark.asyncio
 async def test_unconfigured_ai_preserves_deterministic_assessment() -> None:
     created = 0
@@ -130,10 +137,15 @@ async def test_sends_strict_json_request_and_accepts_frozen_evidence() -> None:
         body = json.loads(request.content)
         assert body["model"] == "provider-model"
         assert body["response_format"] == {"type": "json_object"}
+        assert body["max_tokens"] == 1800
         prompt = json.loads(body["messages"][1]["content"])
         assert prompt["assessment"]["action"] == "observe"
         assert prompt["allowed_evidence_ids"] == ["evidence-1"]
         assert prompt["evidence"][0]["summary"] == "frozen evidence"
+        assert prompt["required_output_keys"] == [
+            "plain_language", "news_impact", "hotspot_attribution",
+            "uncertainty", "contrary_view", "evidence_ids",
+        ]
         assert SECRET not in request.content.decode()
         assert request.extensions["timeout"] == {
             "connect": 2.5, "read": 2.5, "write": 2.5, "pool": 2.5
@@ -204,6 +216,17 @@ async def test_rejects_free_text_trading_instructions(instruction: str) -> None:
     await ai.aclose()
 
     assert result.status == "invalid"
+
+
+@pytest.mark.asyncio
+async def test_allows_numeric_evidence_and_neutral_trading_terms() -> None:
+    ai = gateway(lambda request: httpx.Response(200, json=neutral_numeric_response()))
+
+    result = await ai.explain(assessment(), (evidence(),))
+    await ai.aclose()
+
+    assert result.status == "ready"
+    assert result.explanation is not None
 
 
 @pytest.mark.asyncio

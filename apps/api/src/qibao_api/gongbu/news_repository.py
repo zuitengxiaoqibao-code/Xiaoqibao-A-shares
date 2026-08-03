@@ -2,7 +2,9 @@ import hashlib
 import hmac
 import json
 import sqlite3
+import threading
 from datetime import datetime, timezone
+from functools import wraps
 from pathlib import Path
 
 from qibao_api.contracts.news import (
@@ -18,11 +20,22 @@ class NewsIntegrityError(RuntimeError):
     pass
 
 
+def _serialized(method):
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapped
+
+
 _CORRECTABLE_EVENT_FIELDS = (
     "affected_instruments",
     "industries",
     "themes",
     "association_confidence",
+    "association_kind",
+    "association_reasons",
     "review_state",
 )
 _FROZEN_EVENT_FIELDS = (
@@ -37,6 +50,7 @@ _FROZEN_EVENT_FIELDS = (
 
 class NewsRepository:
     def __init__(self, database: str | Path) -> None:
+        self._lock = threading.RLock()
         self.connection = sqlite3.connect(database, check_same_thread=False)
         self.connection.row_factory = sqlite3.Row
         self.connection.execute("PRAGMA foreign_keys=ON")
@@ -107,6 +121,7 @@ class NewsRepository:
         BEGIN SELECT RAISE(ABORT, 'append-only news corrections'); END;
         """)
 
+    @_serialized
     def append_articles(self, articles: tuple[NewsArticle, ...]) -> int:
         inserted = 0
         with self.connection:
@@ -143,6 +158,7 @@ class NewsRepository:
                 inserted += 1
         return inserted
 
+    @_serialized
     def append_cluster(self, cluster: NewsCluster) -> str:
         missing = [
             article_id
@@ -169,12 +185,14 @@ class NewsRepository:
             )
         return cluster_id
 
+    @_serialized
     def articles(self) -> list[NewsArticle]:
         rows = self.connection.execute(
             "SELECT * FROM news_articles ORDER BY sequence"
         ).fetchall()
         return self._articles_from_rows(rows)
 
+    @_serialized
     def articles_by_ids(self, article_ids: tuple[str, ...]) -> list[NewsArticle]:
         if not article_ids:
             return []
@@ -200,6 +218,7 @@ class NewsRepository:
             articles.append(NewsArticle.model_validate(values))
         return articles
 
+    @_serialized
     def append_event(self, event: NormalizedNewsEvent) -> bool:
         missing = [
             citation.article_id
@@ -233,6 +252,7 @@ class NewsRepository:
             )
         return True
 
+    @_serialized
     def reconcile_event(self, event: NormalizedNewsEvent) -> tuple[bool, bool]:
         row = self.connection.execute(
             "SELECT * FROM news_events WHERE event_id=?", (event.event_id,)
@@ -278,9 +298,12 @@ class NewsRepository:
             industries=event.industries,
             themes=event.themes,
             association_confidence=event.association_confidence,
+            association_kind=event.association_kind,
+            association_reasons=event.association_reasons,
         )
         return False, self.append_correction(correction)
 
+    @_serialized
     def events(self) -> list[NormalizedNewsEvent]:
         rows = self.connection.execute(
             "SELECT * FROM news_events ORDER BY sequence"
@@ -299,6 +322,7 @@ class NewsRepository:
             events.append(NormalizedNewsEvent.model_validate_json(row["payload"]))
         return events
 
+    @_serialized
     def effective_events(
         self, *, cutoff: datetime | None = None
     ) -> list[NormalizedNewsEvent]:
@@ -332,9 +356,14 @@ class NewsRepository:
             }
             if correction.association_confidence is not None:
                 update["association_confidence"] = correction.association_confidence
+            if correction.association_kind is not None:
+                update["association_kind"] = correction.association_kind
+            if correction.association_reasons is not None:
+                update["association_reasons"] = correction.association_reasons
             effective = effective.model_copy(update=update)
         return effective
 
+    @_serialized
     def effective_events_for_symbol(
         self, symbol: str, *, cutoff: datetime | None = None
     ) -> list[NormalizedNewsEvent]:
@@ -350,6 +379,7 @@ class NewsRepository:
             and (normalized_cutoff is None or event.occurred_at <= normalized_cutoff)
         ]
 
+    @_serialized
     def events_for_symbol(
         self, symbol: str, *, cutoff: datetime | None = None
     ) -> list[NormalizedNewsEvent]:
@@ -388,6 +418,7 @@ class NewsRepository:
             events.append(NormalizedNewsEvent.model_validate_json(row["payload"]))
         return events
 
+    @_serialized
     def append_interpretation(self, interpretation: AIInterpretation) -> bool:
         event_row = self.connection.execute(
             "SELECT payload FROM news_events WHERE event_id=?",
@@ -433,10 +464,39 @@ class NewsRepository:
             )
         return True
 
+    @_serialized
     def interpretations(self) -> list[AIInterpretation]:
         rows = self.connection.execute(
             "SELECT * FROM news_interpretations ORDER BY sequence"
         ).fetchall()
+        return self._interpretations_from_rows(rows)
+
+    @_serialized
+    def interpretations_for_events(
+        self,
+        event_ids: tuple[str, ...],
+        *,
+        cutoff: datetime | None = None,
+    ) -> list[AIInterpretation]:
+        unique_ids = tuple(dict.fromkeys(event_ids))
+        if not unique_ids:
+            return []
+        placeholders = ",".join("?" for _ in unique_ids)
+        rows = self.connection.execute(
+            f"SELECT * FROM news_interpretations WHERE event_id IN ({placeholders}) "
+            "ORDER BY sequence",
+            unique_ids,
+        ).fetchall()
+        normalized_cutoff = cutoff.astimezone(timezone.utc) if cutoff else None
+        return [
+            item
+            for item in self._interpretations_from_rows(rows)
+            if normalized_cutoff is None
+            or item.generated_at.astimezone(timezone.utc) <= normalized_cutoff
+        ]
+
+    @staticmethod
+    def _interpretations_from_rows(rows) -> list[AIInterpretation]:
         interpretations = []
         for row in rows:
             computed = hashlib.sha256(row["payload"].encode("utf-8")).hexdigest()
@@ -447,6 +507,7 @@ class NewsRepository:
             interpretations.append(AIInterpretation.model_validate_json(row["payload"]))
         return interpretations
 
+    @_serialized
     def append_correction(self, correction: NewsCorrection) -> bool:
         if self.connection.execute(
             "SELECT 1 FROM news_events WHERE event_id=?", (correction.event_id,)
@@ -483,6 +544,7 @@ class NewsRepository:
             )
         return True
 
+    @_serialized
     def corrections(self) -> list[NewsCorrection]:
         rows = self.connection.execute(
             "SELECT * FROM news_corrections ORDER BY sequence"
@@ -497,6 +559,7 @@ class NewsRepository:
             corrections.append(NewsCorrection.model_validate_json(row["payload"]))
         return corrections
 
+    @_serialized
     def clusters(self) -> list[dict]:
         rows = self.connection.execute(
             "SELECT * FROM news_clusters ORDER BY sequence"
@@ -516,6 +579,26 @@ class NewsRepository:
             )
         return result
 
+    @_serialized
+    def cluster_for_article(self, article_id: str) -> NewsCluster | None:
+        for item in self.clusters():
+            cluster = item["cluster"]
+            if article_id in cluster.article_ids:
+                return cluster
+        return None
+
+    @_serialized
+    def latest_interpretations_by_event(
+        self, event_ids: tuple[str, ...], cutoff: datetime
+    ) -> dict[str, AIInterpretation]:
+        result: dict[str, AIInterpretation] = {}
+        for item in self.interpretations_for_events(event_ids, cutoff=cutoff):
+            current = result.get(item.event_id)
+            if current is None or item.generated_at > current.generated_at:
+                result[item.event_id] = item
+        return result
+
+    @_serialized
     def close(self) -> None:
         self.connection.close()
 

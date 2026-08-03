@@ -11,6 +11,7 @@ from qibao_api.contracts.decision import (
     DecisionCycleSnapshot,
 )
 from qibao_api.contracts.market import AssetKind
+from qibao_api.zhongshu.decision_ai import DecisionAIEvidence, DecisionAIRequest
 
 
 CHINA_TZ = timezone(timedelta(hours=8))
@@ -86,6 +87,8 @@ class PostcloseReviewService:
             if item.status == "correct"
             or (item.status == "unverifiable" and item.withdrawal_reason is None)
         )
+        identity = getattr(self.ai_gateway, "configuration_identity", None)
+        ai_configuration = identity() if callable(identity) else None
         input_hash = _canonical_hash({
             "trading_date": trading_date,
             "strategy_version": POSTCLOSE_STRATEGY_VERSION,
@@ -94,6 +97,7 @@ class PostcloseReviewService:
                 item.model_dump(mode="json", exclude={"reviewed_at"}) for item in outcomes
             ),
             "next_day_observations": next_day,
+            "ai_configuration": ai_configuration,
         })
         latest = self.decision_repository.latest(trading_date, "postclose")
         if latest is not None and latest.snapshot.input_snapshot_hash == input_hash:
@@ -106,6 +110,36 @@ class PostcloseReviewService:
         derived = tuple(
             self._postclose_advice(item, outcomes_by_id[item.advice_id], snapshot_id)
             for item in advice
+        )
+        ai_result = None
+        if derived and self.ai_gateway is not None:
+            ai_result = self.ai_gateway.explain(
+                _postclose_ai_request(derived, outcomes, close)
+            )
+            ai_ready = (
+                ai_result.status == "ready"
+                and ai_result.generated_at <= close
+                and ai_result.explanation is not None
+            )
+            if ai_ready:
+                derived = tuple(
+                    _with_ai_metadata(item, ai_result).model_copy(update={
+                        "plain_language_explanation": (
+                            f"{item.plain_language_explanation or ''}"
+                            f"模型补充：{ai_result.explanation}"
+                        ),
+                        "ai_interpretation_id": _ai_identity(ai_result),
+                    })
+                    for item in derived
+                )
+            else:
+                derived = tuple(_with_ai_metadata(item, ai_result) for item in derived)
+        else:
+            ai_ready = False
+        ai_status = (
+            "not_requested"
+            if not derived or self.ai_gateway is None
+            else "ready" if ai_ready else "unavailable"
         )
         canonical_inputs = tuple(
             item
@@ -145,7 +179,7 @@ class PostcloseReviewService:
                 status="partial" if any(
                     item.status == "unverifiable" for item in outcomes
                 ) else "ready",
-                ai_status="not_requested",
+                ai_status=ai_status,
             ),
             advice=derived,
         )
@@ -266,7 +300,10 @@ class PostcloseReviewService:
             )
         )
         quantitative = {
-            **original.quantitative_result,
+            **{
+                key: value for key, value in original.quantitative_result.items()
+                if not key.startswith("ai_")
+            },
             "outcome_status": outcome.status,
             "outcome_label": outcome_label,
             "error_attribution": outcome.attribution,
@@ -275,13 +312,14 @@ class PostcloseReviewService:
             "original_snapshot_id": original.snapshot_id,
         }
         return original.model_copy(update={
-            "advice_id": f"postclose-{outcome.outcome_input_hash[:24]}",
+            "advice_id": f"postclose-{_canonical_hash((snapshot_id, outcome.outcome_input_hash))[:24]}",
             "snapshot_id": snapshot_id,
             "action": "observe" if retained else "invalidated",
             "observation_state": "next_day_observation" if retained else "withdrawn_revalidation_required",
             "conclusion": conclusion,
             "plain_language_explanation": explanation,
             "quantitative_result": quantitative,
+            "ai_interpretation_id": None,
             "risk_decision_id": None,
             "previous_advice_id": original.advice_id,
             "changed_fields": (
@@ -292,6 +330,56 @@ class PostcloseReviewService:
             "strategy_version": f"{POSTCLOSE_STRATEGY_VERSION}/{original.strategy_version}",
             "created_at": outcome.reviewed_at,
         })
+
+
+def _postclose_ai_request(
+    advice: tuple[AdviceCard, ...],
+    outcomes: tuple[AdviceOutcome, ...],
+    close: datetime,
+) -> DecisionAIRequest:
+    evidence: dict[str, DecisionAIEvidence] = {}
+    for item in advice:
+        for reference in (*item.supporting_evidence, *item.contrary_evidence):
+            evidence.setdefault(
+                reference.evidence_id,
+                DecisionAIEvidence(
+                    evidence_id=reference.evidence_id,
+                    summary=reference.summary,
+                ),
+            )
+    for outcome in outcomes:
+        evidence_id = f"postclose-outcome-{outcome.outcome_input_hash[:24]}"
+        evidence[evidence_id] = DecisionAIEvidence(
+            evidence_id=evidence_id,
+            summary=(
+                f"Advice {outcome.advice_id} closed with status {outcome.status}; "
+                f"attribution {outcome.attribution}."
+            ),
+        )
+    return DecisionAIRequest(
+        generated_at=close,
+        evidence=tuple(evidence[key] for key in sorted(evidence)),
+        deterministic_conclusions=tuple(item.conclusion for item in advice),
+    )
+
+
+def _ai_identity(result) -> str:
+    return f"decision-ai-{_canonical_hash(result.model_dump(mode='json'))[:24]}"
+
+
+def _with_ai_metadata(advice: AdviceCard, result) -> AdviceCard:
+    metadata = {
+        "ai_provider": result.provider,
+        "ai_model": result.model,
+        "ai_prompt_version": result.prompt_version,
+        "ai_generated_at": result.generated_at.isoformat(),
+        "ai_evidence_ids": ",".join(result.evidence_ids),
+        "ai_invalid_output_count": str(result.invalid_output_count),
+        "ai_provider_error_count": str(result.provider_error_count),
+    }
+    return advice.model_copy(update={
+        "quantitative_result": {**advice.quantitative_result, **metadata},
+    })
 
 
 def _value(value: Any, field: str, default=None):

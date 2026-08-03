@@ -48,8 +48,12 @@ class LocalApiServer:
     def _run(self) -> None:
         self._server.run(sockets=[self._socket])
 
-    def start(self) -> None:
+    def launch(self) -> None:
+        if self._thread.ident is not None:
+            return
         self._thread.start()
+
+    def wait_until_ready(self) -> None:
         deadline = time.monotonic() + self.startup_timeout
         while time.monotonic() < deadline:
             if not self._thread.is_alive():
@@ -62,6 +66,10 @@ class LocalApiServer:
                 time.sleep(0.05)
         self.stop()
         raise TimeoutError("local API health check timed out")
+
+    def start(self) -> None:
+        self.launch()
+        self.wait_until_ready()
 
     def stop(self) -> None:
         self._server.should_exit = True

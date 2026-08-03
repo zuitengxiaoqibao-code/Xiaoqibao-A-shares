@@ -15,6 +15,7 @@ from qibao_api.contracts.decision import (
     AdviceCard, DecisionCycleAggregate, DecisionCycleSnapshot,
 )
 from qibao_api.gongbu.market_feed import DeterministicPollingCadence, MarketFeedSnapshot
+from qibao_api.zhongshu.decision_ai import DecisionAIEvidence, DecisionAIRequest
 
 
 CHINA_TZ = timezone(timedelta(hours=8))
@@ -57,20 +58,33 @@ class AdviceChangeDetector:
             "advice_id": f"advice-{hashlib.sha256(identity.encode()).hexdigest()[:24]}",
             "action": "invalidated", "conclusion": reason,
             "risks": tuple(dict.fromkeys((*previous.risks, reason))),
+            "plain_language_explanation": (
+                f"候选状态发生变化：{reason}。原建议已失效，等待重新核验。"
+            ),
             "quantitative_result": {
-                **previous.quantitative_result, "invalidation_reason_code": reason,
+                **_without_ai_metadata(previous.quantitative_result),
+                "invalidation_reason_code": reason,
             },
+            "ai_interpretation_id": None,
             "risk_decision_id": None,
             "created_at": now,
         })
         return cls.changed(previous, proposed)
 
     @staticmethod
-    def validate_cutoff(advice: AdviceCard, cutoff: datetime, baseline: datetime | None = None) -> None:
+    def validate_cutoff(
+        advice: AdviceCard, cutoff: datetime, baseline: datetime | None = None,
+        previous: AdviceCard | None = None,
+    ) -> None:
         evidence = advice.supporting_evidence + advice.contrary_evidence
         if any(item.observed_at > cutoff for item in evidence):
             raise ValueError("future evidence is not allowed")
-        if baseline is not None and any(item.observed_at < baseline for item in evidence):
+        inherited = () if previous is None else (
+            previous.supporting_evidence + previous.contrary_evidence
+        )
+        if baseline is not None and any(
+            item.observed_at < baseline and item not in inherited for item in evidence
+        ):
             raise ValueError("evidence predates the advice baseline")
 
 
@@ -86,6 +100,8 @@ class PollState(BaseModel):
     next_focus_due_at: AwareDatetime
     next_universe_due_at: AwareDatetime
     mode: Literal["normal", "degraded"] = "normal"
+    focus_error_code: str | None = None
+    universe_error_code: str | None = None
     last_error_code: str | None = None
 
 
@@ -110,6 +126,7 @@ class IntradayEvaluationResult(BaseModel):
     candidate_snapshot_id: str | None
     news_event_ids: tuple[str, ...]
     risk_event_ids: tuple[str, ...]
+    quality_reasons: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -320,6 +337,25 @@ class PollStateRepository:
             latest[row["symbol"]] = snapshot
         return tuple(latest[symbol] for symbol in sorted(latest))
 
+    def intraday_snapshots(
+        self, symbol: str, trading_date, *, cutoff: datetime,
+    ) -> tuple[MarketFeedSnapshot, ...]:
+        with self._lock:
+            rows = self.connection.execute(
+                """SELECT payload FROM intraday_market_snapshot_events
+                WHERE symbol=? AND payload IS NOT NULL ORDER BY observed_at, sequence""",
+                (symbol,),
+            ).fetchall()
+        values = []
+        for row in rows:
+            snapshot = MarketFeedSnapshot.model_validate_json(row["payload"])
+            if snapshot.observed_at > cutoff:
+                continue
+            if snapshot.observed_at.astimezone(CHINA_TZ).date() != trading_date:
+                continue
+            values.append(snapshot)
+        return tuple(values)
+
     def snapshots(self) -> list[dict]:
         with self._lock:
             rows = self.connection.execute(
@@ -349,6 +385,7 @@ class IntradayMonitor:
     def __init__(self, *, feed, calendar, state_repository: PollStateRepository,
                  focus_symbols, universe_symbols, decision_repository=None,
                  evaluator: IntradayEvaluationPort | None = None,
+                 ai_gateway=None,
                  cadence=None, source_budget=None,
                  candidate_factor_port: IntradayInputPort | None = None,
                  risk_port: IntradayInputPort | None = None,
@@ -362,6 +399,7 @@ class IntradayMonitor:
         self.universe_symbols = universe_symbols
         self.decision_repository = decision_repository
         self.evaluator = evaluator
+        self.ai_gateway = ai_gateway
         self.cadence = cadence or DeterministicPollingCadence()
         self.source_budget = source_budget or (lambda _now: "available")
         self.delivery_mode = delivery_mode
@@ -471,26 +509,32 @@ class IntradayMonitor:
         return state.model_copy(update={
             count_field: count, interval_field: interval,
             due_field: now + timedelta(seconds=interval),
-            "mode": "degraded", "last_error_code": code,
+            "mode": "degraded", f"{scope}_error_code": code,
+            "last_error_code": code,
         })
 
     @staticmethod
     def _success(state: PollState, scope: Scope, now: datetime, interval: int) -> PollState:
         other = "universe" if scope == "focus" else "focus"
         other_failures = getattr(state, f"consecutive_{other}_failures")
+        other_error_code = getattr(state, f"{other}_error_code")
         return state.model_copy(update={
             f"last_{scope}_success_at": now,
             f"consecutive_{scope}_failures": 0,
+            f"{scope}_error_code": None,
             f"{scope}_interval_seconds": interval,
             f"next_{scope}_due_at": now + timedelta(seconds=interval),
             "mode": "degraded" if other_failures else "normal",
-            "last_error_code": state.last_error_code if other_failures else None,
+            "last_error_code": (
+                other_error_code or state.last_error_code
+                if other_failures else None
+            ),
         })
 
     def _evaluate(
         self, now: datetime, quotes: tuple[MarketFeedSnapshot, ...],
     ) -> DecisionCycleAggregate | None:
-        if self.evaluator is None or not quotes:
+        if self.evaluator is None:
             return None
         local = now.astimezone(CHINA_TZ)
         trading_date = local.date()
@@ -509,10 +553,15 @@ class IntradayMonitor:
             candidate_factor_input=inputs[0], risk_input=inputs[1],
             compliance_input=inputs[2], evidence_input=inputs[3],
         ))
+        if result.status == "blocked":
+            result = result.model_copy(update={"advice": ()})
         if any(item.asset.value != "a_share" for item in result.advice):
             raise ValueError("intraday evaluator returned a non-A-share advice")
         for item in result.advice:
-            AdviceChangeDetector.validate_cutoff(item, window_end, window_start)
+            AdviceChangeDetector.validate_cutoff(
+                item, window_end, window_start,
+                previous=current.get((item.symbol, item.horizon)),
+            )
         source_hash = self._source_hash(result, quotes)
         latest = self.decision_repository.latest(trading_date, "intraday")
         if latest is not None and latest.snapshot.input_snapshot_hash == source_hash:
@@ -529,6 +578,8 @@ class IntradayMonitor:
             candidate = item.model_copy(update={
                 "advice_id": advice_id, "snapshot_id": snapshot_id,
                 "created_at": now, "previous_advice_id": None, "changed_fields": (),
+                "quantitative_result": _without_ai_metadata(item.quantitative_result),
+                "ai_interpretation_id": None,
             })
             gate = result.gates.get(item.advice_id)
             if gate is not None:
@@ -538,25 +589,78 @@ class IntradayMonitor:
             updated = candidate if previous is None else AdviceChangeDetector.changed(previous, candidate)
             if updated is not None:
                 changed.append(updated)
-        for key, previous in current.items():
-            if key not in proposed_keys:
-                invalidated = AdviceChangeDetector.removed(previous, "candidate_removed", now)
-                if invalidated is not None:
-                    changed.append(invalidated.model_copy(update={"snapshot_id": snapshot_id}))
-        if not changed:
+        if result.status == "ready":
+            for key, previous in current.items():
+                if key not in proposed_keys:
+                    invalidated = AdviceChangeDetector.removed(
+                        previous, "candidate_removed", now,
+                    )
+                    if invalidated is not None:
+                        changed.append(invalidated.model_copy(update={"snapshot_id": snapshot_id}))
+        recovered_to_ready = (
+            result.status == "ready"
+            and latest is not None
+            and (
+                latest.snapshot.status != "ready"
+                or latest.snapshot.data_quality != "ready"
+            )
+        )
+        if not changed and result.status != "blocked" and not recovered_to_ready:
             return latest or self.decision_repository.latest(trading_date, "premarket")
+        ai_result = None
+        ai_ready = False
+        if result.status == "ready" and changed and self.ai_gateway is not None:
+            ai_result = self.ai_gateway.explain(
+                _intraday_ai_request(tuple(changed), window_end)
+            )
+            ai_ready = (
+                ai_result.status == "ready"
+                and ai_result.generated_at <= window_end
+                and ai_result.explanation is not None
+            )
+            if ai_ready:
+                changed = [
+                    _with_ai_metadata(item, ai_result).model_copy(update={
+                        "plain_language_explanation": (
+                            f"{item.plain_language_explanation or ''}"
+                            f"模型补充：{ai_result.explanation}"
+                        ),
+                        "ai_interpretation_id": _ai_identity(ai_result),
+                        "changed_fields": tuple(sorted({
+                            *item.changed_fields,
+                            "ai_interpretation_id",
+                            "plain_language_explanation",
+                            "quantitative_result",
+                        })),
+                    })
+                    for item in changed
+                ]
+            else:
+                changed = [
+                    _with_ai_metadata(item, ai_result).model_copy(update={
+                        "changed_fields": tuple(sorted({
+                            *item.changed_fields, "quantitative_result",
+                        })),
+                    })
+                    for item in changed
+                ]
+        ai_status = (
+            "not_requested"
+            if not changed or result.status != "ready" or self.ai_gateway is None
+            else "ready" if ai_ready else "unavailable"
+        )
         snapshot = DecisionCycleSnapshot(
             snapshot_id=snapshot_id, trading_date=trading_date, phase="intraday",
             sequence=sequence, generated_at=now, window_start=window_start,
             window_end=window_end, market_state=result.market_state,
-            data_quality=result.data_quality,
+            data_quality=result.data_quality, quality_reasons=result.quality_reasons,
             source_snapshot_ids=tuple(sorted({item.source_snapshot_id for item in quotes})),
             source_observed_at=tuple(sorted({item.observed_at for item in quotes})),
             candidate_snapshot_id=result.candidate_snapshot_id,
             news_event_ids=tuple(sorted(result.news_event_ids)),
             risk_event_ids=tuple(sorted(result.risk_event_ids)),
             input_snapshot_hash=source_hash, previous_snapshot_id=previous_snapshot_id,
-            status=result.status, ai_status="not_requested",
+            status=result.status, ai_status=ai_status,
         )
         aggregate = DecisionCycleAggregate(
             snapshot=snapshot,
@@ -605,6 +709,10 @@ class IntradayMonitor:
             "quotes": quote_content,
             "advice": advice_content,
             "gates": gate_content,
+            "market_state": result.market_state,
+            "data_quality": result.data_quality,
+            "status": result.status,
+            "quality_reasons": result.quality_reasons,
         }, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(payload.encode()).hexdigest()
 
@@ -617,3 +725,52 @@ class IntradayMonitor:
         observed_at = getattr(value, "observed_at", None)
         if observed_at is not None and observed_at > cutoff:
             raise ValueError("future deterministic input is not allowed")
+
+
+def _intraday_ai_request(
+    advice: tuple[AdviceCard, ...], window_end: datetime,
+) -> DecisionAIRequest:
+    evidence: dict[str, DecisionAIEvidence] = {}
+    for item in advice:
+        for reference in (*item.supporting_evidence, *item.contrary_evidence):
+            evidence.setdefault(
+                reference.evidence_id,
+                DecisionAIEvidence(
+                    evidence_id=reference.evidence_id,
+                    summary=reference.summary,
+                ),
+            )
+    return DecisionAIRequest(
+        generated_at=window_end,
+        evidence=tuple(evidence[key] for key in sorted(evidence)),
+        deterministic_conclusions=tuple(item.conclusion for item in advice),
+    )
+
+
+def _ai_identity(result) -> str:
+    payload = json.dumps(
+        result.model_dump(mode="json"),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return f"decision-ai-{hashlib.sha256(payload.encode()).hexdigest()[:24]}"
+
+
+def _without_ai_metadata(values: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in values.items() if not key.startswith("ai_")}
+
+
+def _with_ai_metadata(advice: AdviceCard, result) -> AdviceCard:
+    metadata = {
+        "ai_provider": result.provider,
+        "ai_model": result.model,
+        "ai_prompt_version": result.prompt_version,
+        "ai_generated_at": result.generated_at.isoformat(),
+        "ai_evidence_ids": ",".join(result.evidence_ids),
+        "ai_invalid_output_count": str(result.invalid_output_count),
+        "ai_provider_error_count": str(result.provider_error_count),
+    }
+    return advice.model_copy(update={
+        "quantitative_result": {**advice.quantitative_result, **metadata},
+    })

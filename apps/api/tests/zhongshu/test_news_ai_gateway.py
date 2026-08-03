@@ -2,10 +2,16 @@ import json
 from datetime import UTC, datetime
 from decimal import Decimal
 
+import httpx
 import pytest
 
 from qibao_api.contracts.news import EvidenceCitation, NormalizedNewsEvent
-from qibao_api.zhongshu.news_ai import NewsAIGateway
+from qibao_api.settings_repository import (
+    AISettings,
+    AISettingsRepository,
+    EffectiveAISettingsResolver,
+)
+from qibao_api.zhongshu.news_ai import NewsAIGateway, ReloadableNewsAIGateway
 
 
 NOW = datetime(2026, 7, 14, 1, 0, tzinfo=UTC)
@@ -101,3 +107,73 @@ async def test_gateway_degrades_deterministically_without_leaking_provider_error
     assert result.provider_attempts == 2
     assert result.provider_error_count == 1
     assert result.invalid_output_count == 1
+
+
+@pytest.mark.asyncio
+async def test_reloadable_gateway_uses_saved_settings_without_restart(tmp_path) -> None:
+    repository = AISettingsRepository(tmp_path)
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        prompt = json.loads(body["messages"][1]["content"])
+        requests.append((str(request.url), request.headers["authorization"], body))
+        assert prompt["event"]["event_id"] == "event-1"
+        assert prompt["allowed_citation_ids"] == ["citation-1"]
+        assert SECRET not in body["messages"][1]["content"]
+        content = json.dumps({
+            "statements": [{
+                "statement_id": "s-ready",
+                "kind": "fact",
+                "text": "政策已经发布。",
+                "citation_ids": ["citation-1"],
+            }],
+            "impact_direction": "positive",
+            "confidence": "0.75",
+            "contrary_citation_ids": [],
+        }, ensure_ascii=False)
+        return httpx.Response(200, json={
+            "choices": [{"message": {"content": content}}],
+        })
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gateway = ReloadableNewsAIGateway(
+        EffectiveAISettingsResolver(repository),
+        client=client,
+        clock=lambda: NOW,
+    )
+
+    degraded = await gateway.interpret(event())
+    assert degraded.degraded is True
+    assert requests == []
+    assert gateway.needs_interpretation("event-1", (degraded,)) is False
+
+    repository.save(AISettings(
+        base_url="https://provider.example/v1",
+        model="model-first",
+        api_key=SECRET,
+    ))
+    assert gateway.needs_interpretation("event-1", (degraded,)) is True
+    ready = await gateway.interpret(event())
+
+    assert ready.degraded is False
+    assert ready.provider == "openai-compatible"
+    assert ready.model == "model-first"
+    assert gateway.needs_interpretation("event-1", (degraded, ready)) is False
+    assert requests[0][0] == "https://provider.example/v1/chat/completions"
+    assert requests[0][1] == f"Bearer {SECRET}"
+    assert requests[0][2]["model"] == "model-first"
+    assert requests[0][2]["temperature"] == 0
+    assert requests[0][2]["response_format"] == {"type": "json_object"}
+    assert SECRET not in repr(gateway)
+
+    repository.save(AISettings(
+        base_url="https://provider.example/v1",
+        model="model-second",
+        api_key=SECRET,
+    ))
+    assert gateway.needs_interpretation("event-1", (degraded, ready)) is True
+    changed = await gateway.interpret(event())
+    assert changed.model == "model-second"
+    assert requests[-1][2]["model"] == "model-second"
+    await client.aclose()

@@ -108,6 +108,8 @@ class PremarketDecisionService:
             item for item in self.news_repository.interpretations()
             if item.generated_at <= window_end and any(item.event_id == event.event_id for event in events)
         )
+        identity = getattr(self.ai_gateway, "configuration_identity", None)
+        ai_configuration = identity() if callable(identity) else None
         required_ready = (
             candidates.history_available and candidates.board.as_of <= trading_date
             and candidates.captured_at <= window_end and compliance.available
@@ -122,6 +124,7 @@ class PremarketDecisionService:
             "risk": risk.model_dump(mode="json"),
             "events": [item.model_dump(mode="json") for item in events],
             "interpretations": [item.model_dump(mode="json") for item in interpretations],
+            "ai_configuration": ai_configuration,
         }
         input_hash = _canonical_hash(canonical)
         latest = self.decision_repository.latest(trading_date, "premarket")
@@ -300,6 +303,7 @@ class PremarketDecisionService:
 def _factor_evidence(snapshot: CandidateInputSnapshot, item: CandidateEntry) -> EvidenceReference:
     return EvidenceReference(
         evidence_id=f"factor-{snapshot.board.snapshot_id}-{item.horizon}-{item.symbol}",
+        evidence_kind="candidate_factor",
         source=item.factor_snapshot.source, snapshot_id=snapshot.board.snapshot_id or "candidate-board",
         summary=(
             f"候选因子：评分 {item.score}，5日涨跌 {item.factor_snapshot.return_5d:.2%}，"
@@ -311,7 +315,8 @@ def _factor_evidence(snapshot: CandidateInputSnapshot, item: CandidateEntry) -> 
 
 def _news_evidence(event) -> EvidenceReference:
     return EvidenceReference(
-        evidence_id=f"news-{event.event_id}", source=event.citations[0].publisher,
+        evidence_id=f"news-{event.event_id}", evidence_kind="verified_news",
+        source=event.citations[0].publisher,
         snapshot_id=event.event_id, summary=event.headline, observed_at=event.normalized_at,
     )
 

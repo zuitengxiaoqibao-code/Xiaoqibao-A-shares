@@ -4,7 +4,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from qibao_api.contracts.briefing import BriefingPhase
-from qibao_api.dependencies import get_backup_service, get_scheduler
+from qibao_api.contracts.source_health import SourceHealthResponse
+from qibao_api.dependencies import get_backup_service, get_operations_repository, get_scheduler
 from qibao_api.gongbu.backup_service import BackupRecord, BackupVerification
 
 
@@ -17,6 +18,18 @@ def operations_status(
     backups: Annotated[object, Depends(get_backup_service)],
 ):
     return {"scheduler": scheduler.status(), "backups": backups.backups()}
+
+
+@router.get("/source-health", response_model=SourceHealthResponse)
+def source_health(
+    repository: Annotated[object, Depends(get_operations_repository)],
+) -> SourceHealthResponse:
+    window_size = 20
+    return SourceHealthResponse(
+        generated_at=datetime.now(timezone.utc),
+        window_size=window_size,
+        sources=tuple(repository.source_health(window_size)),
+    )
 
 
 @router.post("/scheduler/{action}")

@@ -12,12 +12,12 @@ describe("backtest API", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await runBacktest("600519");
+    await runBacktest("600519", { strategy: "momentum_breakout", lookback_window: 30, initial_cash: 500_000 });
 
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
-      fast_window: 5,
-      slow_window: 20,
-      initial_cash: 1_000_000,
+      strategy: "momentum_breakout",
+      lookback_window: 30,
+      initial_cash: 500_000,
     });
   });
 });

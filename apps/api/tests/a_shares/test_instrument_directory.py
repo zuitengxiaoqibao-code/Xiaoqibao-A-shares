@@ -9,6 +9,7 @@ from qibao_api.a_shares.instrument_directory import (
     AShareInstrument,
     AShareInstrumentDirectory,
 )
+from qibao_api.contracts.market import AssetKind
 
 
 NOW = datetime(2026, 7, 15, 1, 30, tzinfo=timezone.utc)
@@ -66,6 +67,67 @@ def test_resolve_returns_latest_observation_without_deleting_history(tmp_path: P
             "SELECT count(*) FROM a_share_instrument_observations WHERE symbol = '600000'"
         ).fetchone()[0]
     assert count == 2
+
+
+def test_bulk_observations_report_the_latest_directory_time(tmp_path: Path) -> None:
+    directory = AShareInstrumentDirectory(tmp_path / "instruments.sqlite3")
+    directory.observe_many([instrument(observed_at=NOW), instrument(observed_at=NOW + timedelta(minutes=1))])
+
+    assert directory.latest_observed_at() == NOW + timedelta(minutes=1)
+    assert directory.latest_named_observed_at() == NOW + timedelta(minutes=1)
+    directory.close()
+
+
+def test_named_directory_time_ignores_code_only_seed(tmp_path: Path) -> None:
+    directory = AShareInstrumentDirectory(tmp_path / "instruments.sqlite3")
+    directory.observe(instrument(name="600000", observed_at=NOW + timedelta(days=1)))
+
+    assert directory.latest_observed_at() == NOW + timedelta(days=1)
+    assert directory.latest_named_observed_at() is None
+    assert directory.named_count() == 0
+    directory.close()
+
+
+def test_bulk_observation_replaces_current_universe_but_preserves_history(tmp_path: Path) -> None:
+    directory = AShareInstrumentDirectory(tmp_path / "instruments.sqlite3")
+    directory.observe_many([
+        instrument(symbol="600000", name="浦发银行"),
+        instrument(symbol="000001", name="平安银行"),
+    ])
+    directory.observe_many([instrument(symbol="600000", name="浦发银行")])
+
+    assert [item.symbol for item in directory.search("银行", 10)] == ["600000"]
+    assert directory.resolve("000001") is not None
+    directory.close()
+
+
+def test_active_symbols_exposes_only_the_current_a_share_universe(tmp_path: Path) -> None:
+    directory = AShareInstrumentDirectory(tmp_path / "instruments.sqlite3")
+    directory.observe_many([
+        instrument(symbol="600000", name="浦发银行"),
+        instrument(symbol="000001", name="平安银行"),
+    ])
+    directory.observe_many([instrument(symbol="600000", name="浦发银行")])
+
+    assert directory.active_symbols() == ("600000",)
+    directory.close()
+
+
+def test_empty_bulk_observation_clears_active_universe_but_preserves_history(
+    tmp_path: Path,
+) -> None:
+    directory = AShareInstrumentDirectory(tmp_path / "instruments.sqlite3")
+    directory.observe_many([
+        instrument(symbol="600000", name="浦发银行"),
+        instrument(symbol="000001", name="平安银行"),
+    ])
+
+    directory.observe_many([])
+
+    assert directory.active_symbols() == ()
+    assert directory.resolve("600000") is not None
+    assert directory.resolve("000001") is not None
+    directory.close()
 
 
 def test_resolve_at_never_returns_identity_observed_after_cutoff(tmp_path: Path) -> None:
@@ -130,3 +192,16 @@ def test_search_empty_query_and_invalid_limit_are_rejected(tmp_path: Path) -> No
         directory.search("  ", 10)
     with pytest.raises(ValueError, match="limit"):
         directory.search("银行", 0)
+
+
+def test_alias_map_uses_only_observed_nonempty_names(tmp_path: Path) -> None:
+    directory = AShareInstrumentDirectory(tmp_path / "instruments.sqlite3")
+    directory.observe_many([
+        instrument(symbol="600000", name="浦发银行"),
+        instrument(symbol="000001", name="000001"),
+    ])
+
+    assert directory.alias_map() == {
+        (AssetKind.A_SHARE, "600000"): ("浦发银行",),
+    }
+    directory.close()

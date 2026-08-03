@@ -32,3 +32,21 @@ def test_local_api_server_uses_loopback_and_stops_cleanly() -> None:
 
     server.wait()
     assert not server.is_alive
+
+
+def test_local_api_server_can_launch_before_waiting_for_health() -> None:
+    app = FastAPI()
+
+    @app.get("/health")
+    def health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    server = LocalApiServer(app=app, port=0, startup_timeout=5)
+    server.launch()
+    try:
+        assert server.is_alive
+        server.wait_until_ready()
+        with urlopen(f"{server.url}/health", timeout=2) as response:
+            assert response.status == 200
+    finally:
+        server.stop()

@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from fastapi import FastAPI
@@ -10,7 +10,18 @@ from qibao_api.contracts.news import (
     InterpretationStatement,
     NormalizedNewsEvent,
 )
-from qibao_api.dependencies import get_news_repository, get_news_service
+from qibao_api.dependencies import (
+    get_decision_calendar,
+    get_hotspot_service,
+    get_news_alert_service,
+    get_news_repository,
+    get_news_service,
+    get_server_time,
+)
+from qibao_api.contracts.news_alerts import (
+    BreakingNewsAlert,
+    BreakingNewsAlertResponse,
+)
 from qibao_api.routes.news import router
 from qibao_api.libu_compliance.repository import SourceAuthorizationError
 
@@ -19,8 +30,14 @@ NOW = datetime(2026, 7, 14, 1, 0, tzinfo=UTC)
 
 
 class Service:
+    synced_symbols = []
+
     async def sync(self):
         return {"fetched": 3, "inserted": 2, "clusters": 2, "events": 2}
+
+    async def sync_symbol(self, symbol):
+        self.synced_symbols.append(symbol)
+        return {"fetched": 1, "inserted": 1, "clusters": 1, "events": 1}
 
 
 class Repository:
@@ -65,12 +82,69 @@ class Repository:
         return list(self.saved_corrections)
 
 
+class AlertService:
+    calls = []
+
+    def current(self, cutoff, *, symbol=None, limit=30):
+        self.calls.append((cutoff, symbol, limit))
+        return BreakingNewsAlertResponse(
+            status="ready",
+            observed_at=cutoff,
+            alerts=(BreakingNewsAlert(
+                event_id="event-alert-1",
+                headline="公司发布经核验的重要公告",
+                occurred_at=NOW,
+                verification_state="multi_source_confirmed",
+                urgency="breaking",
+                association_kind="direct",
+                association_reasons=("company_alias:贵州茅台",),
+                affected_symbols=("600519",),
+                themes=("白酒",),
+                publishers=("上交所", "证券时报"),
+                source_urls=(
+                    "https://news.example/official",
+                    "https://news.example/media",
+                ),
+                source_count=2,
+                impact_direction="uncertain",
+                impact_confidence=None,
+                ai_degraded=True,
+            ),),
+            sources=("上交所", "证券时报"),
+        )
+
+
 def client() -> TestClient:
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[get_news_service] = lambda: Service()
     app.dependency_overrides[get_news_repository] = lambda: Repository()
+    app.dependency_overrides[get_news_alert_service] = lambda: AlertService()
+    app.dependency_overrides[get_server_time] = lambda: NOW
     return TestClient(app)
+
+
+def test_alert_route_filters_by_symbol_and_uses_server_cutoff() -> None:
+    AlertService.calls = []
+
+    with client() as test_client:
+        response = test_client.get("/api/v1/news/alerts?symbol=600519&limit=10")
+
+    assert response.status_code == 200
+    assert all(
+        "600519" in item["affected_symbols"]
+        for item in response.json()["alerts"]
+    )
+    assert AlertService.calls == [(NOW, "600519", 10)]
+
+
+def test_alert_route_rejects_invalid_symbol_and_limit() -> None:
+    with client() as test_client:
+        bad_symbol = test_client.get("/api/v1/news/alerts?symbol=519&limit=10")
+        bad_limit = test_client.get("/api/v1/news/alerts?limit=101")
+
+    assert bad_symbol.status_code == 422
+    assert bad_limit.status_code == 422
 
 
 def test_news_sync_and_event_routes_expose_auditable_results() -> None:
@@ -87,6 +161,27 @@ def test_news_sync_and_event_routes_expose_auditable_results() -> None:
     assert interpretations.json()[0]["degraded"] is True
 
 
+def test_news_sync_for_selected_a_share_delegates_to_symbol_source() -> None:
+    Service.synced_symbols = []
+
+    with client() as test_client:
+        synced = test_client.post("/api/v1/news/sync/600519")
+
+    assert synced.status_code == 200
+    assert synced.json()["inserted"] == 1
+    assert Service.synced_symbols == ["600519"]
+
+
+def test_news_sync_rejects_invalid_a_share_symbol() -> None:
+    Service.synced_symbols = []
+
+    with client() as test_client:
+        synced = test_client.post("/api/v1/news/sync/123")
+
+    assert synced.status_code == 422
+    assert Service.synced_symbols == []
+
+
 def test_news_sync_maps_missing_authorization_to_clear_403() -> None:
     class Unauthorized:
         async def sync(self):
@@ -100,6 +195,83 @@ def test_news_sync_maps_missing_authorization_to_clear_403() -> None:
 
     assert response.status_code == 403
     assert response.json()["detail"] == "A 股新闻数据源尚未授权：eastmoney"
+
+
+def test_hotspot_sync_defaults_to_china_date_and_accepts_explicit_trading_date() -> None:
+    class HotspotService:
+        calls = []
+
+        def sync(self, trading_date, *, fetched_at):
+            self.calls.append((trading_date, fetched_at))
+            return {"fetched": 2, "inserted": 2, "clusters": 2, "events": 2}
+
+    class Calendar:
+        def is_trading_day(self, value):
+            return value in {date(2026, 7, 16), date(2026, 7, 17)}
+
+    service = HotspotService()
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_hotspot_service] = lambda: service
+    app.dependency_overrides[get_decision_calendar] = lambda: Calendar()
+    app.dependency_overrides[get_server_time] = lambda: datetime(
+        2026, 7, 16, 23, 30, tzinfo=UTC
+    )
+
+    with TestClient(app) as test_client:
+        defaulted = test_client.post("/api/v1/news/hotspots/sync")
+        explicit = test_client.post(
+            "/api/v1/news/hotspots/sync?trading_date=2026-07-16"
+        )
+
+    assert defaulted.status_code == 200
+    assert explicit.status_code == 200
+    assert [call[0] for call in service.calls] == [
+        date(2026, 7, 17),
+        date(2026, 7, 16),
+    ]
+    assert all(call[1].tzinfo is not None for call in service.calls)
+
+
+def test_hotspot_sync_validates_dates_and_isolates_authorization_and_upstream_errors() -> None:
+    class Calendar:
+        def is_trading_day(self, value):
+            return value == date(2026, 7, 17)
+
+    class FailingService:
+        error = SourceAuthorizationError("tonghuashun")
+
+        def sync(self, trading_date, *, fetched_at):
+            raise self.error
+
+    service = FailingService()
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_hotspot_service] = lambda: service
+    app.dependency_overrides[get_decision_calendar] = lambda: Calendar()
+    app.dependency_overrides[get_server_time] = lambda: datetime(
+        2026, 7, 17, 2, 0, tzinfo=UTC
+    )
+
+    with TestClient(app) as test_client:
+        future = test_client.post(
+            "/api/v1/news/hotspots/sync?trading_date=2026-07-18"
+        )
+        closed = test_client.post(
+            "/api/v1/news/hotspots/sync?trading_date=2026-07-16"
+        )
+        unauthorized = test_client.post("/api/v1/news/hotspots/sync")
+        service.error = OSError("offline")
+        unavailable = test_client.post("/api/v1/news/hotspots/sync")
+
+    assert future.status_code == 422
+    assert future.json()["detail"]["code"] == "future_trading_date"
+    assert closed.status_code == 422
+    assert closed.json()["detail"]["code"] == "not_trading_day"
+    assert unauthorized.status_code == 403
+    assert "tonghuashun" in unauthorized.json()["detail"]
+    assert unavailable.status_code == 503
+    assert unavailable.json()["detail"]["code"] == "hotspot_upstream_unavailable"
 
 
 def test_news_quality_and_human_correction_routes() -> None:

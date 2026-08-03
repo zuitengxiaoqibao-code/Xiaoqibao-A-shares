@@ -5,7 +5,11 @@ export type PhaseExecution = {
   last_completed_at: string | null; last_attempt_at: string | null;
   attempts: number; error_code: string | null;
 };
-export type Evidence = { evidence_id: string; source: string; snapshot_id: string; summary: string; observed_at: string };
+export type Evidence = {
+  evidence_id: string;
+  evidence_kind?: "other" | "candidate_factor" | "live_quote" | "verified_news";
+  source: string; snapshot_id: string; summary: string; observed_at: string;
+};
 export type PhaseNewsEvent = {
   event_id: string; event_type: string; headline: string; occurred_at: string;
   industries: string[]; themes: string[]; affected_symbols: string[];
@@ -47,5 +51,5 @@ export type PhaseSlot = {
 export type DecisionResponse = {
   server_time: string; trading_date: string; current_phase: DecisionPhase; market_session: "open" | "closed";
   phases: Record<DecisionPhase, PhaseSlot>;
-  polling: { status?: "uninitialized" | "normal" | "degraded"; focus_interval_seconds: number | null; universe_interval_seconds: number | null; stale_after_seconds: number; next_check_seconds: number | null; consecutive_focus_failures?: number; consecutive_universe_failures?: number; last_focus_success_at?: string | null; last_universe_success_at?: string | null };
+  polling: { status?: "uninitialized" | "normal" | "degraded"; focus_interval_seconds: number | null; universe_interval_seconds: number | null; stale_after_seconds: number; next_check_seconds: number | null; consecutive_focus_failures?: number; consecutive_universe_failures?: number; focus_error_code?: string | null; universe_error_code?: string | null; last_focus_success_at?: string | null; last_universe_success_at?: string | null };
 };

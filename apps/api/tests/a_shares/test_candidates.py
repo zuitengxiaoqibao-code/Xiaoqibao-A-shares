@@ -3,7 +3,11 @@ from decimal import Decimal
 
 import pytest
 
-from qibao_api.a_shares.candidates import build_candidate_board, rank_candidates
+from qibao_api.a_shares.candidates import (
+    build_candidate_board,
+    rank_candidates,
+    score_candidates,
+)
 from qibao_api.a_shares.models import FactorSnapshot
 
 
@@ -105,6 +109,23 @@ def test_rank_candidates_exposes_both_horizons_and_rejects_unknown_horizon() -> 
     assert rank_candidates([item], "swing", 10)[0].horizon == "swing"
     with pytest.raises(ValueError, match="horizon"):
         rank_candidates([item], "intraday", 10)
+
+
+def test_score_candidates_keeps_every_eligible_symbol_before_board_limit() -> None:
+    items = [
+        snapshot(
+            f"600{index:03d}", return_5d=str(index / 100),
+            return_20d=str(index / 80), distance_ma20=str(index / 120),
+            volume_ratio=str(1 + index / 10), volatility="0.02", drawdown="-0.04",
+        )
+        for index in range(1, 5)
+    ]
+
+    scored = score_candidates(items, "short_term")
+    ranked = rank_candidates(items, "short_term", limit=2)
+
+    assert len(scored) == 4
+    assert ranked == scored[:2]
 
 
 def test_fixed_penalties_are_not_scaled_to_avoid_negative_scores() -> None:

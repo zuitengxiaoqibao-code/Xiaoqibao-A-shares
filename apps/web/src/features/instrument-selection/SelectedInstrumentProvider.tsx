@@ -1,7 +1,7 @@
 import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from "react";
 import { commitLocation, LOCATION_CHANGE_EVENT } from "./location";
 
-export type SelectionSource = "candidate" | "search" | "watchlist" | "url";
+export type SelectionSource = "candidate" | "search" | "watchlist" | "cache" | "url";
 
 type SelectedInstrument = {
   symbol: string | null;

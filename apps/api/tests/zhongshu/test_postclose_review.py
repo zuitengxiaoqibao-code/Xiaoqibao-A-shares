@@ -10,6 +10,7 @@ from qibao_api.contracts.decision import (
     EvidenceReference,
 )
 from qibao_api.contracts.market import AssetKind
+from qibao_api.zhongshu.decision_ai import DecisionAIResult
 from qibao_api.zhongshu.postclose_review import PostcloseReviewService
 
 
@@ -109,12 +110,34 @@ class Audit:
         return list(self.findings)
 
 
-def _service(advice, market, *, findings=()):
+class AI:
+    def __init__(self, *, ready=True) -> None:
+        self.ready = ready
+        self.identity = ("configured", "model-one", "revision-one")
+        self.requests = []
+
+    def configuration_identity(self):
+        return self.identity
+
+    def explain(self, request):
+        self.requests.append(request)
+        return DecisionAIResult(
+            status="ready" if self.ready else "unavailable",
+            explanation="模型只解释冻结的盘后结果。" if self.ready else None,
+            statements=(), provider="openai-compatible", model="model-one",
+            prompt_version="decision-v1", generated_at=request.generated_at,
+            evidence_ids=tuple(item.evidence_id for item in request.evidence),
+            invalid_output_count=0, provider_error_count=0 if self.ready else 1,
+        )
+
+
+def _service(advice, market, *, findings=(), ai=None):
     repository = Decisions([_cycle(item) for item in advice])
     service = PostcloseReviewService(
         decision_repository=repository,
         market_outcome_source=Outcomes(market),
         audit_repository=Audit(findings),
+        ai_gateway=ai,
     )
     return service, repository
 
@@ -168,6 +191,78 @@ def test_postclose_advice_explains_the_outcome_and_next_day_handling_in_plain_la
     )
 
 
+def test_ready_ai_appends_explanation_without_changing_frozen_outcome() -> None:
+    ai = AI()
+    advice = _advice("ai-ready", datetime(2026, 7, 14, 2, 0, tzinfo=UTC)).model_copy(
+        update={
+            "ai_interpretation_id": "premarket-ai-old",
+            "quantitative_result": {"ai_provider": "old-provider", "kept": "value"},
+        }
+    )
+    service, _ = _service((advice,), ({
+        "advice_id": "ai-ready", "observed_at": CLOSE,
+        "available": True, "direction": "favorable",
+        "invalidation_triggered": False,
+    },), ai=ai)
+
+    result = service.run(TRADING_DATE, NOW)
+    review = result.aggregate.advice[0]
+
+    assert result.aggregate.snapshot.ai_status == "ready"
+    assert result.aggregate.snapshot.status == "ready"
+    assert result.outcomes[0].status == "correct"
+    assert result.next_day_observations == ("ai-ready",)
+    assert review.action == "observe"
+    assert review.confidence == advice.confidence
+    assert review.plain_language_explanation == (
+        "盘前/盘中结论为“deterministic conclusion”。收盘后结果：判断成立。"
+        "次日继续观察，但仍需重新核验行情和风险。"
+        "模型补充：模型只解释冻结的盘后结果。"
+    )
+    assert review.ai_interpretation_id is not None
+    assert review.ai_interpretation_id != "premarket-ai-old"
+    assert review.quantitative_result["ai_provider"] == "openai-compatible"
+    assert review.quantitative_result["kept"] == "value"
+    assert len(ai.requests) == 1
+    assert ai.requests[0].generated_at == CLOSE
+    assert len(ai.requests[0].evidence) == 2
+
+
+def test_unavailable_ai_keeps_deterministic_postclose_result_ready() -> None:
+    ai = AI(ready=False)
+    advice = _advice("ai-unavailable", datetime(2026, 7, 14, 2, 0, tzinfo=UTC))
+    service, _ = _service((advice,), ({
+        "advice_id": "ai-unavailable", "observed_at": CLOSE,
+        "available": True, "direction": "favorable",
+        "invalidation_triggered": False,
+    },), ai=ai)
+
+    result = service.run(TRADING_DATE, NOW)
+    review = result.aggregate.advice[0]
+
+    assert result.aggregate.snapshot.ai_status == "unavailable"
+    assert result.aggregate.snapshot.status == "ready"
+    assert result.aggregate.snapshot.data_quality == "ready"
+    assert review.plain_language_explanation == (
+        "盘前/盘中结论为“deterministic conclusion”。收盘后结果：判断成立。"
+        "次日继续观察，但仍需重新核验行情和风险。"
+    )
+    assert review.ai_interpretation_id is None
+    assert review.quantitative_result["ai_provider_error_count"] == "1"
+
+
+def test_empty_postclose_review_does_not_call_ai() -> None:
+    ai = AI()
+    late = _advice("late-ai", datetime(2026, 7, 14, 7, 1, tzinfo=UTC))
+    service, _ = _service((late,), (), ai=ai)
+
+    result = service.run(TRADING_DATE, NOW)
+
+    assert result.aggregate.advice == ()
+    assert result.aggregate.snapshot.ai_status == "not_requested"
+    assert ai.requests == []
+
+
 def test_unavailable_market_data_is_unverifiable_and_can_remain_observed() -> None:
     advice = _advice("missing", datetime(2026, 7, 14, 2, 0, tzinfo=UTC))
     service, _ = _service((advice,), ())
@@ -195,6 +290,33 @@ def test_same_frozen_inputs_do_not_append_a_new_cycle_on_later_rerun() -> None:
 
     assert second.aggregate.snapshot.snapshot_id == first.aggregate.snapshot.snapshot_id
     assert len(repository.appended) == 1
+
+
+def test_ai_configuration_change_appends_a_new_postclose_snapshot() -> None:
+    ai = AI(ready=False)
+    advice = _advice("ai-revision", datetime(2026, 7, 14, 2, 0, tzinfo=UTC))
+    service, repository = _service((advice,), ({
+        "advice_id": "ai-revision", "observed_at": CLOSE,
+        "available": True, "direction": "favorable",
+        "invalidation_triggered": False,
+    },), ai=ai)
+
+    first = service.run(TRADING_DATE, NOW)
+    ai.ready = True
+    ai.identity = ("configured", "model-one", "revision-two")
+    second = service.run(TRADING_DATE, NOW)
+
+    assert first.aggregate.snapshot.sequence == 1
+    assert first.aggregate.snapshot.ai_status == "unavailable"
+    assert second.aggregate.snapshot.sequence == 2
+    assert second.aggregate.snapshot.previous_snapshot_id == first.aggregate.snapshot.snapshot_id
+    assert second.aggregate.snapshot.ai_status == "ready"
+    assert second.outcomes == first.outcomes
+    assert second.next_day_observations == first.next_day_observations
+    assert second.aggregate.advice[0].advice_id != first.aggregate.advice[0].advice_id
+    assert second.aggregate.advice[0].action == first.aggregate.advice[0].action
+    assert second.aggregate.advice[0].confidence == first.aggregate.advice[0].confidence
+    assert len(repository.appended) == 2
 
 
 def test_provider_order_does_not_change_latest_outcome_or_hash() -> None:

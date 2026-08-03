@@ -17,6 +17,7 @@ from qibao_api.contracts.market import AssetKind
 
 DecisionPhase = Literal["premarket", "intraday", "postclose"]
 AdviceAction = Literal["observe", "wait", "avoid", "invalidated"]
+EvidenceKind = Literal["other", "candidate_factor", "live_quote", "verified_news"]
 NonBlank = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
@@ -24,6 +25,7 @@ class EvidenceReference(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     evidence_id: NonBlank
+    evidence_kind: EvidenceKind = "other"
     source: NonBlank
     snapshot_id: NonBlank
     summary: NonBlank

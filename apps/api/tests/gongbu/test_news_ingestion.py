@@ -1,5 +1,8 @@
+import json
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
+import httpx
 import pytest
 
 from qibao_api.contracts.market import AssetKind
@@ -9,7 +12,15 @@ from qibao_api.gongbu.news_linking import DeterministicNewsLinker
 from qibao_api.gongbu.news_repository import NewsRepository
 from qibao_api.libu_compliance.repository import ComplianceRepository
 from qibao_api.contracts.risk import ComplianceRecord
-from qibao_api.zhongshu.news_ai import NewsAIGateway
+from qibao_api.settings_repository import (
+    AISettings,
+    AISettingsRepository,
+    EffectiveAISettingsResolver,
+)
+from qibao_api.zhongshu.news_ai import (
+    NewsAIGateway,
+    ReloadableNewsAIGateway,
+)
 
 
 NOW = datetime(2026, 7, 14, 1, 0, tzinfo=UTC)
@@ -72,6 +83,57 @@ class StockSource:
             content_hash=hashlib.sha256(raw).hexdigest(), raw_snapshot=raw,
             source_verified=True,
         )]
+
+
+class ManySource:
+    async def fetch(self):
+        import hashlib
+
+        topics = (
+            "600000 annual report profit expansion",
+            "600000 board member resignation",
+            "600000 factory capacity expansion",
+            "600000 product safety recall",
+            "600000 dividend distribution plan",
+            "600000 regulatory investigation notice",
+            "600000 patent approval milestone",
+            "600000 overseas contract signed",
+            "600000 shareholder reduction filing",
+            "600000 merger restructuring progress",
+            "600000 credit rating adjustment",
+        )
+        return [NewsArticle(
+            article_id=f"news-many-{index}",
+            canonical_url=f"https://news.example/many/{index}",
+            publisher="测试来源",
+            title=topics[index],
+            summary="先进制造专项政策。",
+            published_at=NOW,
+            fetched_at=NOW,
+            content_hash=hashlib.sha256(f"many-{index}".encode()).hexdigest(),
+            raw_snapshot=f"many-{index}".encode(),
+            source_verified=True,
+        ) for index in range(11)]
+
+
+def ai_response(request: httpx.Request) -> httpx.Response:
+    body = json.loads(request.content)
+    prompt = json.loads(body["messages"][1]["content"])
+    citation_id = prompt["allowed_citation_ids"][0]
+    content = json.dumps({
+        "statements": [{
+            "statement_id": f"statement-{citation_id}",
+            "kind": "fact",
+            "text": prompt["event"]["headline"],
+            "citation_ids": [citation_id],
+        }],
+        "impact_direction": "neutral",
+        "confidence": "0.70",
+        "contrary_citation_ids": [],
+    }, ensure_ascii=False)
+    return httpx.Response(200, json={
+        "choices": [{"message": {"content": content}}],
+    })
 
 
 def authorize(repository: ComplianceRepository) -> None:
@@ -192,13 +254,12 @@ async def test_ingestion_records_taxonomy_rule_changes_as_an_idempotent_correcti
 
 
 @pytest.mark.asyncio
-async def test_symbol_ingestion_requires_explicit_article_link_before_verification(tmp_path) -> None:
+async def test_symbol_ingestion_uses_query_context_for_verified_association(tmp_path) -> None:
     compliance = ComplianceRepository(tmp_path / "compliance.sqlite3")
     compliance.set_feature_sources("market_news", AssetKind.A_SHARE, ("eastmoney",))
     authorize(compliance)
     repository = NewsRepository(tmp_path / "news.sqlite3")
-    explicit = StockSource()
-    unrelated = StockSource(explicit=False)
+    explicit = StockSource(explicit=False)
     linker = DeterministicNewsLinker(
         instrument_aliases={}, industry_keywords={}, theme_keywords={}
     )
@@ -207,18 +268,123 @@ async def test_symbol_ingestion_requires_explicit_article_link_before_verificati
     )
 
     result = await service.sync_symbol("600519")
-    other = NewsIngestionService(
-        Source(), repository, linker, compliance, stock_source=unrelated
-    )
-    await other.sync_symbol("000001")
 
     assert result["fetched"] == 1
     assert explicit.symbols == ["600519"]
     assert repository.events_for_symbol("600519")[0].review_state == "verified"
-    unrelated_event = next(
-        item for item in repository.events() if item.event_id.startswith("event-stock-000001")
+    event = repository.events()[0]
+    assert event.affected_instruments == ((AssetKind.A_SHARE, "600519"),)
+    assert event.association_confidence == Decimal("0.85")
+    repository.close()
+    compliance.close()
+
+
+@pytest.mark.asyncio
+async def test_refetched_degraded_event_is_upgraded_once_after_ai_configuration(
+    tmp_path,
+) -> None:
+    compliance = ComplianceRepository(tmp_path / "compliance.sqlite3")
+    compliance.set_feature_sources("market_news", AssetKind.A_SHARE, ("eastmoney",))
+    authorize(compliance)
+    repository = NewsRepository(tmp_path / "news.sqlite3")
+    source = Source()
+    linker = DeterministicNewsLinker(
+        instrument_aliases={}, industry_keywords={}, theme_keywords={}
     )
-    assert unrelated_event.affected_instruments == ()
-    assert unrelated_event.review_state == "pending"
+    degraded_service = NewsIngestionService(
+        source,
+        repository,
+        linker,
+        compliance,
+        NewsAIGateway(
+            UnavailableProvider(), provider_name="unconfigured", model="none",
+            prompt_version="news-v1", clock=lambda: NOW,
+        ),
+    )
+    await degraded_service.sync()
+    assert repository.interpretations()[0].degraded is True
+
+    settings = AISettingsRepository(tmp_path / "settings")
+    settings.save(AISettings(
+        base_url="https://provider.example/v1",
+        model="configured-model",
+        api_key="secret-value",
+    ))
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return ai_response(request)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    configured_service = NewsIngestionService(
+        source,
+        repository,
+        linker,
+        compliance,
+        ReloadableNewsAIGateway(
+            EffectiveAISettingsResolver(settings), client=client, clock=lambda: NOW,
+        ),
+    )
+
+    second = await configured_service.sync()
+    third = await configured_service.sync()
+
+    assert second["inserted"] == 0
+    assert second["interpretations"] == 1
+    assert third["interpretations"] == 0
+    assert calls == 1
+    assert len(repository.interpretations()) == 2
+    assert repository.interpretations()[-1].degraded is False
+    await client.aclose()
+    repository.close()
+    compliance.close()
+
+
+@pytest.mark.asyncio
+async def test_ingestion_limits_configured_ai_interpretations_to_ten_per_sync(
+    tmp_path,
+) -> None:
+    compliance = ComplianceRepository(tmp_path / "compliance.sqlite3")
+    compliance.set_feature_sources("market_news", AssetKind.A_SHARE, ("eastmoney",))
+    authorize(compliance)
+    repository = NewsRepository(tmp_path / "news.sqlite3")
+    settings = AISettingsRepository(tmp_path / "settings")
+    settings.save(AISettings(
+        base_url="https://provider.example/v1",
+        model="configured-model",
+        api_key="secret-value",
+    ))
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return ai_response(request)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    service = NewsIngestionService(
+        ManySource(),
+        repository,
+        DeterministicNewsLinker(
+            instrument_aliases={}, industry_keywords={}, theme_keywords={}
+        ),
+        compliance,
+        ReloadableNewsAIGateway(
+            EffectiveAISettingsResolver(settings), client=client, clock=lambda: NOW,
+        ),
+        max_ai_interpretations_per_sync=10,
+    )
+
+    first = await service.sync()
+    second = await service.sync()
+
+    assert first["events"] == 11
+    assert first["interpretations"] == 10
+    assert second["interpretations"] == 1
+    assert calls == 11
+    assert len(repository.interpretations()) == 11
+    await client.aclose()
     repository.close()
     compliance.close()

@@ -1,0 +1,140 @@
+import type { BacktestResult } from "../backtest/types";
+import type { FirstLimitUpCandidate } from "../first-limit-up/types";
+import type { SignalMetric } from "./types";
+
+function numeric(value: string | number | null | undefined): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const result = Number(value);
+  return Number.isFinite(result) ? result : null;
+}
+
+function clamp(value: number): number {
+  return Math.max(0, Math.min(100, value));
+}
+
+function percent(value: number | null, digits = 1): string {
+  return value === null ? "--" : `${value.toFixed(digits)}%`;
+}
+
+export function signalMetrics(
+  candidate: FirstLimitUpCandidate | null,
+  backtest: BacktestResult | null,
+): SignalMetric[] {
+  const score = numeric(candidate?.score);
+  const hasTrades = (backtest?.metrics.closed_trade_count ?? 0) > 0;
+  const volatility = backtest ? numeric(backtest.metrics.annualized_volatility) : null;
+  const winRate = hasTrades && backtest ? numeric(backtest.metrics.win_rate) : null;
+  const odds = hasTrades && backtest ? numeric(backtest.metrics.profit_loss_ratio) : null;
+  const drawdown = backtest ? numeric(backtest.max_drawdown) : null;
+  const ev = winRate !== null && odds !== null
+    ? winRate * odds - (1 - winRate)
+    : null;
+
+  return [
+    {
+      key: "vol", label: "VOL",
+      value: percent(volatility === null ? null : volatility * 100),
+      detail: backtest ? "回测年化波动率" : "等待历史回测",
+      barValue: volatility === null ? 0 : clamp(volatility * 100),
+      tone: volatility === null ? "muted" : volatility > 0.35 ? "danger" : volatility > 0.2 ? "warning" : "positive",
+    },
+    {
+      key: "score", label: "SCORE",
+      value: score === null ? "--" : score.toFixed(1),
+      detail: candidate ? "首次涨停规则分" : "等待候选规则分",
+      barValue: score === null ? 0 : clamp(score),
+      tone: score === null ? "muted" : score >= 70 ? "positive" : score >= 50 ? "warning" : "danger",
+    },
+    {
+      key: "win_rate", label: "胜率",
+      value: percent(winRate === null ? null : winRate * 100),
+      detail: hasTrades ? `${backtest?.metrics.closed_trade_count} 笔已平仓样本` : "没有足够的已平仓样本",
+      barValue: winRate === null ? 0 : clamp(winRate * 100),
+      tone: winRate === null ? "muted" : winRate >= 0.55 ? "positive" : winRate >= 0.45 ? "warning" : "danger",
+    },
+    {
+      key: "odds", label: "赔率",
+      value: odds === null ? "--" : `${odds.toFixed(2)}x`,
+      detail: "历史平均盈利 / 平均亏损",
+      barValue: odds === null ? 0 : clamp(odds / 3 * 100),
+      tone: odds === null ? "muted" : odds >= 1.5 ? "positive" : odds >= 1 ? "warning" : "danger",
+    },
+    {
+      key: "risk", label: "风险",
+      value: percent(drawdown === null ? null : drawdown * 100),
+      detail: "历史最大回撤",
+      barValue: drawdown === null ? 0 : clamp(drawdown * 100),
+      tone: drawdown === null ? "muted" : drawdown > 0.2 ? "danger" : drawdown > 0.1 ? "warning" : "positive",
+    },
+    {
+      key: "position", label: "仓位", value: "--",
+      detail: "观察系统未连接券商账户",
+      barValue: 0, tone: "muted",
+    },
+    {
+      key: "ev", label: "EV",
+      value: ev === null ? "--" : `${ev >= 0 ? "+" : ""}${ev.toFixed(2)}R`,
+      detail: "胜率 × 赔率 − 失败概率",
+      barValue: ev === null ? 0 : clamp((ev + 1) * 50),
+      tone: ev === null ? "muted" : ev > 0 ? "positive" : ev > -0.2 ? "warning" : "danger",
+    },
+  ];
+}
+
+function distanceScore(value: string | null): number {
+  const result = numeric(value);
+  return result === null ? 0 : clamp(100 - result * 100);
+}
+
+function valuationScore(value: string | null): number {
+  const result = numeric(value);
+  if (result === null || result <= 0 || result > 50) return 0;
+  return clamp(100 - result);
+}
+
+function structureScore(candidate: FirstLimitUpCandidate): number {
+  return {
+    limit_up_day: 15,
+    waiting_pullback: 45,
+    pullback_window: 90,
+    risk_expanded: 5,
+    data_insufficient: 0,
+  }[candidate.stage];
+}
+
+export function factorRadar(candidate: FirstLimitUpCandidate) {
+  return {
+    indicators: ["估值", "周线底部", "月线底部", "回撤结构", "盘整", "规则总分"],
+    values: [
+      valuationScore(candidate.pe_ttm),
+      distanceScore(candidate.weekly_distance_to_low),
+      distanceScore(candidate.monthly_distance_to_low),
+      structureScore(candidate),
+      clamp(candidate.consolidation_days / 10 * 100),
+      clamp(numeric(candidate.score) ?? 0),
+    ],
+    verifiedCount: [
+      candidate.pe_ttm,
+      candidate.weekly_distance_to_low,
+      candidate.monthly_distance_to_low,
+    ].filter((value) => numeric(value) !== null).length + 3,
+  };
+}
+
+export function equityPoints(backtest: BacktestResult | null): Array<{
+  date: string;
+  equity: number;
+  drawdown: number;
+}> {
+  if (!backtest || !Array.isArray(backtest.equity_curve)) return [];
+  let peak = 0;
+  return backtest.equity_curve.flatMap((value) => {
+    if (!value || typeof value !== "object") return [];
+    const row = value as Record<string, unknown>;
+    const date = typeof row.trade_date === "string" ? row.trade_date : null;
+    const equity = numeric(row.equity as string | number | null | undefined);
+    if (!date || equity === null) return [];
+    peak = Math.max(peak, equity);
+    return [{ date, equity, drawdown: peak ? (equity / peak - 1) * 100 : 0 }];
+  });
+}

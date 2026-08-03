@@ -46,6 +46,8 @@ def test_linker_maps_explicit_aliases_and_taxonomy_with_verified_state() -> None
     assert event.industries == ("高端制造",)
     assert event.themes == ("政策支持",)
     assert event.association_confidence == 1
+    assert event.association_kind == "direct"
+    assert "company_alias:贵州茅台" in event.association_reasons
     assert event.review_state == "verified"
     assert event.citations[0].article_id == event.event_id.removeprefix("event-")
 
@@ -58,6 +60,7 @@ def test_linker_keeps_keyword_only_and_unverified_sources_pending() -> None:
 
     assert keyword_only.affected_instruments == ()
     assert keyword_only.association_confidence == Decimal("0.60")
+    assert keyword_only.association_kind == "theme"
     assert keyword_only.review_state == "pending"
     assert unverified.affected_instruments == (
         (AssetKind.CONVERTIBLE_BOND, "113065"),
@@ -72,6 +75,7 @@ def test_linker_does_not_guess_unconfigured_entities() -> None:
     assert event.industries == ()
     assert event.themes == ()
     assert event.association_confidence == 0
+    assert event.association_kind == "macro"
     assert event.review_state == "pending"
 
 
@@ -79,4 +83,37 @@ def test_linker_recognizes_explicit_supported_security_codes() -> None:
     event = linker().link(article("600000发布重要公告", "公司公告原文。"))
 
     assert event.affected_instruments == ((AssetKind.A_SHARE, "600000"),)
+    assert event.association_kind == "direct"
+    assert event.association_reasons == ("security_code:600000",)
     assert event.review_state == "verified"
+
+
+def test_linker_uses_valid_stock_query_context_without_guessing_other_assets() -> None:
+    event = linker().link(
+        article("个股公告披露", "搜索结果正文没有出现六位股票代码。"),
+        context_instruments=((AssetKind.A_SHARE, "600519"),),
+    )
+
+    assert event.affected_instruments == ((AssetKind.A_SHARE, "600519"),)
+    assert event.association_confidence == Decimal("0.85")
+    assert event.association_kind == "context"
+    assert event.association_reasons == ("source_context:600519",)
+    assert event.review_state == "verified"
+
+    unchanged = linker().link(article("个股公告披露", "搜索结果正文没有出现六位股票代码。"))
+    assert unchanged.affected_instruments == ()
+    assert unchanged.association_confidence == Decimal("0")
+    assert unchanged.association_kind == "macro"
+    assert unchanged.review_state == "pending"
+
+
+def test_linker_resolves_aliases_lazily() -> None:
+    aliases = {(AssetKind.A_SHARE, "600519"): ("贵州茅台",)}
+    event = DeterministicNewsLinker(
+        instrument_aliases=lambda: aliases,
+        industry_keywords={},
+        theme_keywords={},
+    ).link(article("贵州茅台发布业绩公告", "公司公告原文。"))
+
+    assert event.association_kind == "direct"
+    assert event.affected_instruments == ((AssetKind.A_SHARE, "600519"),)

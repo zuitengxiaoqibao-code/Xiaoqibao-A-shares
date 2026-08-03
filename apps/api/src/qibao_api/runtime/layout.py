@@ -8,7 +8,7 @@ class RuntimeLayout:
     web_dir: Path
     config_dir: Path
     data_dir: Path
-    legacy_data_dir: Path
+    previous_data_dir: Path
     news_dir: Path
     cache_dir: Path
     logs_dir: Path
@@ -25,7 +25,7 @@ class RuntimeLayout:
             web_dir=resolved / "web",
             config_dir=resolved / "config",
             data_dir=data_dir,
-            legacy_data_dir=data_dir / "legacy",
+            previous_data_dir=data_dir / "legacy",
             news_dir=resolved / "news",
             cache_dir=resolved / "cache",
             logs_dir=resolved / "logs",
@@ -39,7 +39,6 @@ class RuntimeLayout:
             "web": self.web_dir,
             "config": self.config_dir,
             "data": self.data_dir,
-            "legacy_data": self.legacy_data_dir,
             "news": self.news_dir,
             "cache": self.cache_dir,
             "logs": self.logs_dir,

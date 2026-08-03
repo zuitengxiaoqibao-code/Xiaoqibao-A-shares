@@ -6,6 +6,7 @@ import {
 
 import type { AShareDiagnosis, CandidateBoard, CandidateEntry, DiagnosisSection } from "./types";
 import { useOptionalSelectedInstrument } from "../instrument-selection/SelectedInstrumentProvider";
+import { TerminalPageHeader } from "../../shared/terminal/TerminalPrimitives";
 
 
 type Props = {
@@ -155,21 +156,24 @@ export function AShareResearchView({ loadCandidates, loadDiagnosis }: Props) {
   }
 
   return (
-    <main className="a-share-domain">
-      <header className="a-share-header">
-        <div><p className="eyebrow">A SHARE / 中书省研究域</p><h1>A 股研究工作区</h1><p>本地候选生成 · 确定性评分 · 八分区证据诊断</p></div>
-        <div className="research-freeze"><Target size={16} /><div><span>研究冻结日</span><b>{board?.as_of ?? "等待候选池"}</b></div></div>
-      </header>
+    <main className="terminal-page a-share-domain">
+      <TerminalPageHeader
+        className="a-share-header"
+        eyebrow="A SHARE / 中书省研究域"
+        title="A 股研究工作区"
+        description="本地候选生成 · 确定性评分 · 八分区证据诊断"
+        actions={<div className="research-freeze"><Target size={16} /><div><span>研究冻结日</span><b>{board?.as_of ?? "等待候选池"}</b></div></div>}
+      />
       {boardState === "error" && <div className="a-share-error" role="alert"><ShieldAlert size={17} /><span>{error}</span><button type="button" onClick={refresh}><RefreshCw size={14} />重试</button></div>}
       <div className="a-share-layout">
-        <section className="candidate-console">
+        <section className="terminal-panel candidate-console">
           <header><div><p className="eyebrow">ZHONGSHU / RANKING</p><h2>候选观察榜</h2></div><span>{entries.length.toString().padStart(2, "0")} / {board ? board.short_term.length + board.swing.length : "--"}</span></header>
           <div className="candidate-tabs" role="tablist" aria-label="A 股候选周期">
             <button ref={shortTabRef} id="a-share-short-term-tab" role="tab" aria-controls="a-share-candidate-panel" aria-selected={tab === "short_term"} tabIndex={tab === "short_term" ? 0 : -1} onKeyDown={(event) => handleTabKey(event.key)} onClick={() => selectTab("short_term")}>短线榜</button>
             <button ref={swingTabRef} id="a-share-swing-tab" role="tab" aria-controls="a-share-candidate-panel" aria-selected={tab === "swing"} tabIndex={tab === "swing" ? 0 : -1} onKeyDown={(event) => handleTabKey(event.key)} onClick={() => selectTab("swing")}>波段榜</button>
           </div>
           <div id="a-share-candidate-panel" role="tabpanel" aria-labelledby={tab === "short_term" ? "a-share-short-term-tab" : "a-share-swing-tab"}>
-            {boardState === "loading" && <div className="candidate-message"><LoaderCircle size={18} /><span>正在读取本地候选宇宙...</span></div>}
+            {boardState === "loading" && <div className="candidate-message" role="status" aria-busy="true"><LoaderCircle size={18} /><span>正在读取本地候选宇宙...</span></div>}
             {boardState === "ready" && entries.length === 0 && board?.universe_status === "empty" && <div className="candidate-message empty"><Database size={24} /><b>本地候选池为空</b><p>先到工部同步至少 60 根日线，再生成可重复候选榜。</p></div>}
             {boardState === "ready" && entries.length === 0 && board?.universe_status !== "empty" && <div className="candidate-message empty"><Database size={24} /><b>当前榜单暂无候选</b><p>本次确定性筛选没有标的进入该周期榜单。</p></div>}
             <div className="candidate-list">{entries.map((entry) => <CandidateRow key={entry.symbol} entry={entry} selected={selected === entry.symbol} onSelect={() => inspect(entry.symbol)} />)}</div>
@@ -178,10 +182,10 @@ export function AShareResearchView({ loadCandidates, loadDiagnosis }: Props) {
           </div>
         </section>
 
-        <section className="diagnosis-console">
+        <section className="terminal-panel diagnosis-console">
           <header><div><p className="eyebrow">EVIDENCE DIAGNOSIS</p><h2>{diagnosis ? `${diagnosis.sections.market.metrics.name ?? diagnosis.symbol} · ${diagnosis.symbol}` : "单股证据诊断"}</h2></div>{diagnosis && <span className={diagnosis.overall_status === "ready" ? "diagnosis-status ready" : "diagnosis-status partial"}>{diagnosis.overall_status === "ready" ? "数据完整" : "部分降级"}</span>}</header>
           {diagnosisState === "idle" && <div className="diagnosis-wait"><BarChart3 size={34} /><b>选择候选标的</b><p>查看量价、趋势、估值、基本面、事件、行业和风险证据。</p></div>}
-          {diagnosisState === "loading" && <div className="diagnosis-wait loading"><Activity size={22} /><b>正在冻结并核验诊断证据...</b></div>}
+          {diagnosisState === "loading" && <div className="diagnosis-wait loading" role="status" aria-busy="true"><Activity size={22} /><b>正在冻结并核验诊断证据...</b></div>}
           {diagnosisState === "error" && <div className="a-share-error" role="alert"><ShieldAlert size={17} /><span>{error}</span></div>}
           {diagnosisState === "ready" && diagnosis && <>
             <div className="diagnosis-summary"><div><TrendingUp size={15} /><span>结论</span><b>{diagnosis.action === "observe" ? "仅观察" : "已拦截"}</b></div><div><LineChart size={15} /><span>因子版本</span><b>{diagnosis.factor_version}</b></div><div><AlertTriangle size={15} /><span>缺失分区</span><b>{diagnosis.missing_data.length}</b></div></div>

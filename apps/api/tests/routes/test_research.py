@@ -18,18 +18,29 @@ from qibao_api.a_shares.diagnosis import (
     DiagnosisSection,
     DiagnosisUnavailableError,
 )
-from qibao_api.a_shares.models import CandidateBoard
+from qibao_api.a_shares.models import (
+    CandidateBoard,
+    CandidateScoreBoard,
+    CandidateScoreItem,
+)
 from qibao_api.a_shares.fundamentals import FundamentalSnapshot
 from qibao_api.a_shares.instrument_directory import AShareInstrument, AShareInstrumentDirectory
 from qibao_api.a_shares.repository import AShareResearchRepository, AShareResearchStoreError
+from qibao_api.a_shares.candidate_sentiment_repository import CandidateSentimentStoreError
+from qibao_api.a_shares.candidate_sentiment_service import (
+    CandidateSentimentInputError,
+    CandidateSnapshotNotFoundError,
+)
 from qibao_api.dependencies import (
     get_a_share_cockpit_service,
     get_a_share_diagnosis_service,
     get_a_share_instrument_directory,
     get_a_share_preparation_service,
     get_a_share_quote_source,
+    get_candidate_sentiment_service,
     get_pipeline,
     get_server_time,
+    get_stock_timeline_service,
 )
 from qibao_api.a_shares.cockpit import StockDecisionCockpitService, UnknownAShareError
 from qibao_api.a_shares.preparation import AStockPreparationService, PreparationSource, StockPreparation
@@ -47,7 +58,14 @@ from qibao_api.gongbu.news_repository import NewsRepository
 from qibao_api.storage.bar_repository import BarRepository
 from qibao_api.shangshu.decision_repository import DecisionRepository
 from qibao_api.contracts.news import EvidenceCitation, NewsArticle, NormalizedNewsEvent
+from qibao_api.contracts.stock_timeline import StockTimelineResponse
+from qibao_api.contracts.candidate_sentiment import (
+    CandidateSentimentBatch,
+    CandidateSentimentComponent,
+    CandidateSentimentSnapshot,
+)
 from qibao_api.gongbu.tencent_quotes import TencentMarketSnapshot, parse_tencent_quote
+from qibao_api.gongbu.market_feed import MarketFeedSnapshot
 from qibao_api.routes.research import router as research_router
 from qibao_api.libu_compliance.repository import SourceAuthorizationError
 
@@ -74,6 +92,143 @@ class FakePipeline:
 class UnexpectedPipeline:
     async def run(self, symbol: str) -> ResearchCard:
         raise AssertionError(f"pipeline must not receive invalid A-share code {symbol}")
+
+
+SENTIMENT_CUTOFF = datetime(2026, 7, 18, 6, 0, tzinfo=timezone.utc)
+
+
+def candidate_sentiment_batch(*, partial: bool = False) -> CandidateSentimentBatch:
+    components = (
+        CandidateSentimentComponent(
+            name="news",
+            status="unavailable" if partial else "ready",
+            score=None if partial else Decimal("65"),
+            weight=Decimal("40"),
+            summary="新闻数据不可用" if partial else "新闻偏积极",
+            observed_at=None if partial else SENTIMENT_CUTOFF,
+            evidence_ids=() if partial else ("news-1",),
+        ),
+        CandidateSentimentComponent(
+            name="hotspot", status="ready", score=Decimal("65"),
+            weight=Decimal("30"), summary="热点可用",
+            observed_at=SENTIMENT_CUTOFF, evidence_ids=("hotspot-1",),
+        ),
+        CandidateSentimentComponent(
+            name="fund_flow", status="ready", score=Decimal("65"),
+            weight=Decimal("30"), summary="资金可用",
+            observed_at=SENTIMENT_CUTOFF, evidence_ids=("fund-1",),
+        ),
+    )
+    item = CandidateSentimentSnapshot(
+        candidate_snapshot_id="candidate-1",
+        candidate_input_hash="a" * 64,
+        symbol="600000",
+        quality="partial" if partial else "ready",
+        freshness="current",
+        score=Decimal("65"),
+        band="positive",
+        coverage_percent=Decimal("60" if partial else "100"),
+        components=components,
+        primary_reason="热点与资金偏积极。",
+        primary_risk="部分分项不可用。" if partial else "情绪可能快速变化。",
+        beginner_guidance="继续观察。",
+        observed_at=SENTIMENT_CUTOFF,
+        generated_at=SENTIMENT_CUTOFF,
+        source_snapshot_ids=("hotspot-1", "fund-1") if partial else (
+            "news-1", "hotspot-1", "fund-1",
+        ),
+    )
+    return CandidateSentimentBatch(
+        candidate_snapshot_id="candidate-1",
+        candidate_input_hash="a" * 64,
+        as_of=date(2026, 7, 18),
+        cutoff=SENTIMENT_CUTOFF,
+        quality="partial" if partial else "ready",
+        items=(item,),
+        generated_at=SENTIMENT_CUTOFF,
+    )
+
+
+class FakeCandidateSentimentService:
+    def __init__(
+        self,
+        result: CandidateSentimentBatch | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self.result = result or candidate_sentiment_batch()
+        self.error = error
+        self.current_calls: list[tuple[str, datetime]] = []
+        self.refresh_calls: list[tuple[str, datetime]] = []
+
+    def current(self, snapshot_id: str, cutoff: datetime) -> CandidateSentimentBatch:
+        self.current_calls.append((snapshot_id, cutoff))
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+    async def refresh(
+        self, snapshot_id: str, cutoff: datetime
+    ) -> CandidateSentimentBatch:
+        self.refresh_calls.append((snapshot_id, cutoff))
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
+def candidate_sentiment_client(service: FakeCandidateSentimentService) -> TestClient:
+    application = FastAPI()
+    application.include_router(research_router)
+    application.dependency_overrides[get_candidate_sentiment_service] = lambda: service
+    application.dependency_overrides[get_server_time] = lambda: SENTIMENT_CUTOFF
+    return TestClient(application)
+
+
+def test_candidate_sentiment_current_and_refresh_return_candidate_order() -> None:
+    service = FakeCandidateSentimentService(candidate_sentiment_batch(partial=True))
+    with candidate_sentiment_client(service) as client:
+        current = client.post(
+            "/api/v1/a-shares/candidate-sentiment/batch",
+            json={"candidate_snapshot_id": "candidate-1"},
+        )
+        refreshed = client.post(
+            "/api/v1/a-shares/candidate-sentiment/batch/refresh",
+            json={"candidate_snapshot_id": "candidate-1"},
+        )
+
+    assert current.status_code == 200
+    assert refreshed.status_code == 200
+    assert [item["symbol"] for item in current.json()["items"]] == ["600000"]
+    assert current.json()["quality"] == "partial"
+    assert service.current_calls == [("candidate-1", SENTIMENT_CUTOFF)]
+    assert service.refresh_calls == [("candidate-1", SENTIMENT_CUTOFF)]
+
+
+@pytest.mark.parametrize(
+    ("error", "status_code", "error_code"),
+    [
+        (CandidateSnapshotNotFoundError("missing"), 404, "candidate_snapshot_not_found"),
+        (CandidateSentimentInputError("conflict"), 422, "candidate_sentiment_input_invalid"),
+        (
+            CandidateSentimentStoreError("sqlite:///secret-token"),
+            503,
+            "candidate_sentiment_store_error",
+        ),
+    ],
+)
+def test_candidate_sentiment_routes_map_errors_without_internal_details(
+    error: Exception,
+    status_code: int,
+    error_code: str,
+) -> None:
+    with candidate_sentiment_client(FakeCandidateSentimentService(error=error)) as client:
+        response = client.post(
+            "/api/v1/a-shares/candidate-sentiment/batch",
+            json={"candidate_snapshot_id": "candidate-1"},
+        )
+
+    assert response.status_code == status_code
+    assert response.json()["detail"]["code"] == error_code
+    assert "secret-token" not in response.text
 
 
 def make_client() -> TestClient:
@@ -138,6 +293,25 @@ class FakeDiagnosisService:
     def candidates(self, as_of: date, limit: int) -> CandidateBoard:
         return CandidateBoard(as_of=as_of, short_term=[], swing=[])
 
+    def candidate_scores(self, as_of, symbols, *, horizon):
+        return CandidateScoreBoard(
+            as_of=as_of,
+            horizon=horizon,
+            universe_size=8,
+            eligible_size=7,
+            latest_trade_date=as_of,
+            sources=("baidu",),
+            items=tuple(
+                CandidateScoreItem(
+                    symbol=symbol,
+                    status="ready",
+                    score=Decimal("42"),
+                    latest_trade_date=as_of,
+                )
+                for symbol in symbols
+            ),
+        )
+
     async def diagnose(self, symbol: str, as_of: date) -> AShareDiagnosis:
         sections = {
             name: DiagnosisSection(
@@ -188,6 +362,25 @@ def test_a_share_candidates_return_separate_empty_boards() -> None:
     assert response.json()["swing"] == []
     assert response.json()["factor_version"] == "a-share-factors-v1"
     assert response.json()["universe_status"] == "empty"
+
+
+def test_a_share_candidate_scores_preserve_requested_watchlist_order() -> None:
+    client = diagnosis_client()
+    try:
+        response = client.get(
+            "/api/v1/a-shares/candidate-scores"
+            "?symbols=600000&symbols=000001&horizon=short_term&as_of=2026-07-14"
+        )
+    finally:
+        client.close()
+
+    assert response.status_code == 200
+    assert response.json()["universe_size"] == 8
+    assert response.json()["eligible_size"] == 7
+    assert response.json()["sources"] == ["baidu"]
+    assert [item["symbol"] for item in response.json()["items"]] == [
+        "600000", "000001",
+    ]
 
 
 def test_a_share_diagnosis_returns_all_nine_sections() -> None:
@@ -330,7 +523,109 @@ async def test_prepare_posts_are_serialized_by_runtime_middleware() -> None:
     assert service.maximum == 1
 
 
+@pytest.mark.asyncio
+async def test_local_data_source_settings_read_does_not_wait_for_runtime_write() -> None:
+    application = FastAPI()
+    application.middleware("http")(serialize_runtime_access)
+    application.state.write_gate = asyncio.Lock()
+
+    @application.get("/api/v1/settings/data-sources")
+    async def local_sources():
+        return {"status": "ready"}
+
+    await application.state.write_gate.acquire()
+    transport = httpx.ASGITransport(app=application)
+    try:
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await asyncio.wait_for(
+                client.get("/api/v1/settings/data-sources"),
+                timeout=0.2,
+            )
+    finally:
+        application.state.write_gate.release()
+
+    assert response.status_code == 200
+
+
 SEARCH_NOW = datetime(2026, 7, 15, 2, 0, tzinfo=timezone.utc)
+
+
+class IntradayTickRepository:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def intraday_snapshots(self, symbol, trading_date, *, cutoff):
+        self.calls.append((symbol, trading_date, cutoff))
+        return (
+            MarketFeedSnapshot(
+                symbol=symbol, price=Decimal("10.12"), change=Decimal("0.12"),
+                change_percent=Decimal("1.2"), volume=Decimal("123400"),
+                source="fixture-feed", observed_at=SEARCH_NOW,
+                fetched_at=SEARCH_NOW, quality="ready",
+                source_snapshot_id="tick-600000-1",
+            ),
+        )
+
+
+def test_intraday_ticks_return_archived_points_for_requested_beijing_date() -> None:
+    repository = IntradayTickRepository()
+    application = FastAPI()
+    application.include_router(research_router)
+    application.state.poll_state_repository = repository
+    application.dependency_overrides[get_server_time] = lambda: SEARCH_NOW
+
+    response = TestClient(application).get(
+        "/api/v1/a-shares/600000/intraday-ticks?trading_date=2026-07-15"
+    )
+
+    assert response.status_code == 200
+    assert response.json()[0]["source_snapshot_id"] == "tick-600000-1"
+    assert response.json()[0]["price"] == "10.12"
+    assert repository.calls == [("600000", date(2026, 7, 15), SEARCH_NOW)]
+
+
+class TimelineService:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def get(self, symbol, as_of, cutoff):
+        self.calls.append((symbol, as_of, cutoff))
+        return StockTimelineResponse(
+            symbol=symbol,
+            as_of=as_of,
+            cutoff=cutoff,
+            status="ready",
+            bars=(DailyBar(
+                symbol=symbol,
+                trade_date=as_of,
+                open=Decimal("10"),
+                high=Decimal("10.5"),
+                low=Decimal("9.8"),
+                close=Decimal("10.2"),
+                volume=100,
+                amount=Decimal("1020"),
+                source="local-daily-bars",
+            ),),
+            events=(),
+            sources=("local-daily-bars", "verified-market-news"),
+        )
+
+
+def test_stock_timeline_delegates_to_local_read_only_service() -> None:
+    service = TimelineService()
+    application = FastAPI()
+    application.include_router(research_router)
+    application.dependency_overrides[get_stock_timeline_service] = lambda: service
+    application.dependency_overrides[get_server_time] = lambda: SEARCH_NOW
+
+    response = TestClient(application).get(
+        "/api/v1/a-shares/600000/timeline?as_of=2026-07-15"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["bars"][0]["close"] == "10.2"
+    assert response.json()["events"] == []
+    assert service.calls == [("600000", date(2026, 7, 15), SEARCH_NOW)]
 
 
 class SearchDirectory:
@@ -365,6 +660,15 @@ class NeverQuoteSource:
     async def fetch(self, symbol: str):
         request = httpx.Request("GET", "https://qt.gtimg.cn")
         raise httpx.ConnectError(f"unavailable {symbol}", request=request)
+
+
+class FailIfCalledQuoteSource:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def fetch(self, symbol: str):
+        self.calls.append(symbol)
+        raise AssertionError("named local instruments must not wait for a remote quote")
 
 
 class QuoteSource:
@@ -475,6 +779,21 @@ def test_exact_code_is_verified_and_observed() -> None:
     assert directory.resolve("600001") is not None
 
 
+def test_exact_code_returns_named_local_instrument_without_remote_quote() -> None:
+    directory = SearchDirectory()
+    source = FailIfCalledQuoteSource()
+
+    response = search_client(directory=directory, source=source).get(
+        "/api/v1/a-shares/search?q=600000"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["symbol"] == "600000"
+    assert response.json()["items"][0]["name"] == "浦发银行"
+    assert response.json()["items"][0]["quote_quality"] == "ready"
+    assert source.calls == []
+
+
 def test_exact_code_rejects_mismatched_upstream_symbol() -> None:
     directory = SearchDirectory()
     response = search_client(directory=directory, source=MismatchedQuoteSource()).get(
@@ -505,12 +824,12 @@ def test_exact_code_maps_malformed_tencent_numeric_payload_to_unavailable() -> N
 
 
 class UnknownCockpit:
-    async def get(self, symbol, as_of, cutoff):
+    async def get(self, symbol, as_of, cutoff, *, include_ai=True):
         raise UnknownAShareError(symbol)
 
 
 class CorruptCockpit:
-    async def get(self, symbol, as_of, cutoff):
+    async def get(self, symbol, as_of, cutoff, *, include_ai=True):
         raise DecisionIntegrityError("corrupt advice payload containing secret advice")
 
 

@@ -61,7 +61,7 @@ def filter_and_rank_candidates(
     selected: list[BondCandidate] = []
     filters = filters or BondCandidateFilter()
     for item in candidates:
-        if item.risk.outcome == "exclude":
+        if item.risk.outcome != "eligible":
             continue
         if filters.max_conversion_premium is not None and (
             item.conversion_premium is None or item.conversion_premium > filters.max_conversion_premium

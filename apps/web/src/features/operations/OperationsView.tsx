@@ -30,8 +30,8 @@ export function OperationsView(props: Props) {
   async function verify(backupId: string) { setActing(`verify:${backupId}`); setError(""); try { setVerification(await props.verifyBackup(backupId)); } catch (reason) { setError(reason instanceof Error ? reason.message : "备份验证失败"); } finally { setActing(""); } }
   async function manual(phase: "premarket" | "intraday" | "postclose") { setActing(`manual:${phase}`); setError(""); try { const result = await props.runManualJob(phase, tradingDate); setNotice(`补跑已归档 ${result.report_id}`); await reload(); } catch (reason) { setError(reason instanceof Error ? reason.message : "手动补跑失败"); } finally { setActing(""); } }
 
-  if (!status && !error) return <main className="operations-domain"><div className="operations-loading"><Clock3 size={18}/>正在读取运维状态...</div></main>;
-  return <main className="operations-domain">
+  if (!status && !error) return <main className="terminal-page operations-domain"><div className="operations-loading" role="status" aria-busy="true"><Clock3 size={18}/>正在读取运维状态...</div></main>;
+  return <main className="terminal-page operations-domain">
     <header className="operations-header"><div><p className="eyebrow">工部 / DATA OPERATIONS</p><h1>数据与运维中心</h1><p>本地任务调度、故障补跑、一致性备份与恢复验证</p></div><div className={`scheduler-switch ${status?.scheduler.paused ? "paused" : "running"}`}><span>{status?.scheduler.paused ? "PAUSED" : "RUNNING"}</span><button onClick={() => void toggleScheduler()} disabled={acting !== ""}>{status?.scheduler.paused ? <Play size={15}/> : <Pause size={15}/>} {status?.scheduler.paused ? "恢复调度" : "暂停调度"}</button></div></header>
     {error && <div className="operations-error" role="alert"><AlertTriangle size={17}/>{error}<button onClick={() => void reload()}>重试</button></div>}
     {notice && <div className="operations-notice" role="status"><CheckCircle2 size={16}/>{notice}</div>}

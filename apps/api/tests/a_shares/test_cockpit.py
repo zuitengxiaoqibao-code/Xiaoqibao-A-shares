@@ -1,3 +1,4 @@
+import asyncio
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
@@ -229,6 +230,20 @@ class ReadOnlyPreparation:
         raise AssertionError("cockpit GET must not mutate preparation sources")
 
 
+class PartialFundFlowPreparation(ReadOnlyPreparation):
+    async def inspect(self, symbol, *, as_of, cutoff=None):
+        result = await super().inspect(symbol, as_of=as_of, cutoff=cutoff)
+        sources = (
+            *result.sources,
+            PreparationSource(
+                name="fund_flow",
+                status="partial",
+                reason="Eastmoney daily and intraday endpoints unavailable",
+            ),
+        )
+        return result.model_copy(update={"status": "partial", "sources": sources})
+
+
 def service(
     diagnosis=None, decisions=None, clock=lambda: CUTOFF, preparation=None,
     calendar=None, operations=None,
@@ -252,6 +267,33 @@ async def test_cockpit_uses_read_only_preparation_inspection() -> None:
 
     assert result.preparation.refreshed is False
     assert preparation.inspections == [("600000", TRADE_DATE, None)]
+
+
+@pytest.mark.asyncio
+async def test_cockpit_starts_preparation_and_diagnosis_together() -> None:
+    diagnosis_started = asyncio.Event()
+
+    class ConcurrentDiagnosis(Diagnosis):
+        async def diagnose(self, symbol, as_of, *, persist=True, cutoff=None):
+            diagnosis_started.set()
+            return await super().diagnose(
+                symbol, as_of, persist=persist, cutoff=cutoff
+            )
+
+    class ConcurrentPreparation(ReadOnlyPreparation):
+        async def inspect(self, symbol, *, as_of, cutoff=None):
+            await asyncio.wait_for(diagnosis_started.wait(), timeout=0.2)
+            return await super().inspect(symbol, as_of=as_of, cutoff=cutoff)
+
+    result = await asyncio.wait_for(
+        service(
+            diagnosis=ConcurrentDiagnosis(),
+            preparation=ConcurrentPreparation(),
+        ).get("600000", TRADE_DATE, CUTOFF),
+        timeout=0.5,
+    )
+
+    assert result.symbol == "600000"
 
 
 @pytest.mark.asyncio
@@ -292,6 +334,31 @@ async def test_cockpit_exposes_ai_status_without_changing_assessment() -> None:
     assert result.ai_status == "invalid"
     assert result.ai_explanation is None
     assert result.assessment == plain.assessment
+
+
+@pytest.mark.asyncio
+async def test_cockpit_can_defer_ai_without_blocking_the_verified_snapshot() -> None:
+    class MustNotExplain:
+        def __init__(self):
+            self.calls = 0
+
+        async def explain(self, assessment, evidence):
+            self.calls += 1
+            raise AssertionError("deferred AI must not run on the initial cockpit request")
+
+    explainer = MustNotExplain()
+    cockpit = StockDecisionCockpitService(
+        Directory(), Diagnosis(), Decisions(), ReadOnlyPreparation(),
+        assessor_ai=explainer, clock=lambda: CUTOFF,
+    )
+
+    result = await cockpit.get(
+        "600000", TRADE_DATE, CUTOFF, include_ai=False
+    )
+
+    assert result.ai_status == "deferred"
+    assert result.ai_explanation is None
+    assert explainer.calls == 0
 
 
 @pytest.mark.asyncio
@@ -361,12 +428,49 @@ async def test_cockpit_maps_verified_fund_flow_section() -> None:
     )
 
     assert result.sections["funds"].source == "eastmoney-fund-flow"
+    assert result.sections["funds"].status == "ready"
+    assert result.sections["funds"].reason is None
     assert result.sections["funds"].payload["metrics"]["main_net_5d"] == Decimal(
         "350000000"
     )
     assert result.sections["funds"].payload["evidence_ids"] == (
         "fund-flow-" + "c" * 24,
     )
+
+
+@pytest.mark.asyncio
+async def test_cockpit_surfaces_current_fund_flow_refresh_failure_over_old_snapshot() -> None:
+    result = await service(
+        diagnosis=FundFlowDiagnosis(), preparation=PartialFundFlowPreparation()
+    ).get("600000", TRADE_DATE, CUTOFF)
+
+    assert result.preparation.sources[-1].status == "partial"
+    assert result.sections["funds"].status == "partial"
+    assert result.sections["funds"].reason == (
+        "Eastmoney daily and intraday endpoints unavailable"
+    )
+    assert result.overall_quality == "partial"
+
+
+@pytest.mark.asyncio
+async def test_cockpit_preserves_partial_fund_flow_reason() -> None:
+    class PartialFundFlowDiagnosis(FundFlowDiagnosis):
+        async def diagnose(self, symbol, as_of, *, persist=True, cutoff=None):
+            result = await super().diagnose(
+                symbol, as_of, persist=persist, cutoff=cutoff
+            )
+            section = result.sections["funds"].model_copy(update={
+                "status": "partial",
+                "reason": "fund_flow_intraday_unavailable",
+            })
+            return result.model_copy(update={"sections": {**result.sections, "funds": section}})
+
+    result = await service(diagnosis=PartialFundFlowDiagnosis()).get(
+        "600000", TRADE_DATE, CUTOFF
+    )
+
+    assert result.sections["funds"].status == "partial"
+    assert result.sections["funds"].reason == "fund_flow_intraday_unavailable"
 
 
 @pytest.mark.asyncio
@@ -470,6 +574,32 @@ class OtherStockDecisions:
         if phase != "intraday":
             return []
         return [aggregate((advice("600519"),))]
+
+
+class BlockedIntradayDecisions:
+    def cycles(self, trading_date=None, phase=None):
+        if phase != "intraday":
+            return []
+        blocked = aggregate((), sequence=2)
+        blocked = blocked.model_copy(update={
+            "snapshot": blocked.snapshot.model_copy(update={
+                "status": "blocked", "data_quality": "blocked",
+                "quality_reasons": ("live_quotes_stale",),
+            }),
+        })
+        return [aggregate((advice("600000"),)), blocked]
+
+
+@pytest.mark.asyncio
+async def test_cockpit_exposes_latest_blocked_phase_reason_and_keeps_prior_advice() -> None:
+    result = await service(decisions=BlockedIntradayDecisions()).get(
+        "600000", TRADE_DATE, CUTOFF
+    )
+
+    history = result.phases["intraday"]
+    assert len(history.advice) == 1
+    assert history.phase_status == "blocked"
+    assert history.quality_reasons == ("live_quotes_stale",)
 
 
 @pytest.mark.asyncio

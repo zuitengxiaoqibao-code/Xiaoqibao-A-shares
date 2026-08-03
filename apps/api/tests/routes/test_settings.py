@@ -4,6 +4,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from qibao_api.routes.settings import router
+from qibao_api.local_sources.discovery import LocalTerminalDiscovery
+from qibao_api.local_sources.repository import LocalSourceSettingsRepository
 from qibao_api.settings_repository import (
     AISettings,
     AISettingsRepository,
@@ -17,6 +19,12 @@ def client(tmp_path: Path, fallback: AISettings | None = None) -> TestClient:
     application.state.ai_settings_repository = repository
     application.state.effective_ai_settings = EffectiveAISettingsResolver(
         repository, fallback=fallback
+    )
+    application.state.local_source_settings_repository = (
+        LocalSourceSettingsRepository(tmp_path / "config" / "data-sources.json")
+    )
+    application.state.local_terminal_discovery = LocalTerminalDiscovery(
+        system_candidates=lambda: ()
     )
     application.include_router(router)
     return TestClient(application)
@@ -142,3 +150,92 @@ def test_put_never_echoes_secret_from_malformed_payload(tmp_path: Path) -> None:
 
     assert response.status_code == 422
     assert secret not in response.text
+
+
+def _create_tdx(root: Path) -> Path:
+    for exchange in ("sh", "sz"):
+        folder = root / "vipdoc" / exchange / "lday"
+        folder.mkdir(parents=True)
+        (folder / f"{exchange}600000.day").write_bytes(b"daily")
+    (root / "TdxW.exe").write_bytes(b"exe")
+    return root
+
+
+def test_data_source_settings_default_to_discovery_without_rpc(tmp_path: Path) -> None:
+    response = client(tmp_path).get("/api/v1/settings/data-sources")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["settings_state"] == "default"
+    assert body["settings"]["auto_discovery"] is True
+    assert body["settings"]["tdx_rpc_enabled"] is False
+    assert body["active_tdx_vipdoc"] is None
+    assert body["restart_required"] is False
+
+
+def test_detect_validates_draft_without_persisting_it(tmp_path: Path) -> None:
+    root = _create_tdx(tmp_path / "tdx")
+    subject = client(tmp_path)
+
+    response = subject.post("/api/v1/settings/data-sources/detect", json={
+        "auto_discovery": False,
+        "tdx_install_paths": [str(root)],
+        "ths_install_paths": [],
+        "tdx_rpc_enabled": False,
+        "tdx_rpc_url": None,
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["active_tdx_vipdoc"] == str(root / "vipdoc")
+    assert body["terminals"][0]["status"] == "ready"
+    assert body["terminals"][0]["sh_daily_count"] == 1
+    assert subject.get("/api/v1/settings/data-sources").json()["settings_state"] == "default"
+
+
+def test_put_saves_valid_paths_and_requires_restart(tmp_path: Path) -> None:
+    root = _create_tdx(tmp_path / "tdx")
+    subject = client(tmp_path)
+    payload = {
+        "auto_discovery": False,
+        "tdx_install_paths": [str(root)],
+        "ths_install_paths": [],
+        "tdx_rpc_enabled": False,
+        "tdx_rpc_url": None,
+    }
+
+    response = subject.put("/api/v1/settings/data-sources", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["restart_required"] is True
+    saved = subject.get("/api/v1/settings/data-sources").json()
+    assert saved["settings_state"] == "ready"
+    assert saved["settings"]["tdx_install_paths"] == [str(root)]
+
+
+def test_put_rejects_invalid_manual_tdx_directory(tmp_path: Path) -> None:
+    invalid = tmp_path / "empty"
+    invalid.mkdir()
+
+    response = client(tmp_path).put("/api/v1/settings/data-sources", json={
+        "auto_discovery": False,
+        "tdx_install_paths": [str(invalid)],
+        "ths_install_paths": [],
+        "tdx_rpc_enabled": False,
+        "tdx_rpc_url": None,
+    })
+
+    assert response.status_code == 422
+    assert "通达信目录无效" in response.json()["detail"]
+
+
+def test_put_rejects_non_loopback_rpc_address(tmp_path: Path) -> None:
+    response = client(tmp_path).put("/api/v1/settings/data-sources", json={
+        "auto_discovery": True,
+        "tdx_install_paths": [],
+        "ths_install_paths": [],
+        "tdx_rpc_enabled": True,
+        "tdx_rpc_url": "http://192.168.1.5:17709/",
+    })
+
+    assert response.status_code == 422

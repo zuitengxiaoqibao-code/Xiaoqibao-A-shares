@@ -2,6 +2,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from qibao_api.a_shares.models import (
@@ -10,6 +11,7 @@ from qibao_api.a_shares.models import (
     CandidateExclusion,
     FactorSnapshot,
 )
+from qibao_api.contracts.decision import EvidenceReference
 from qibao_api.gongbu.market_feed import MarketFeedSnapshot
 from qibao_api.shangshu.decision_runtime import (
     DecisionSymbolSource,
@@ -17,6 +19,7 @@ from qibao_api.shangshu.decision_runtime import (
     RepositoryCandidateFactorSource,
     RepositoryEvidenceSource,
     RepositoryRiskSource,
+    TencentPollingMarketFeed,
 )
 from qibao_api.shangshu.intraday_monitor import IntradayEvaluationContext
 from qibao_api.zhongshu.premarket_decision import (
@@ -27,6 +30,115 @@ from qibao_api.zhongshu.premarket_decision import (
 
 
 NOW = datetime(2026, 7, 15, 9, 20, tzinfo=timezone.utc)
+
+
+class Compliance:
+    def __init__(self):
+        self.calls = []
+
+    def require_feature_sources(self, feature, asset):
+        self.calls.append((feature, asset))
+
+
+def tencent_quote_line(symbol: str, *, price: str = "10.25") -> bytes:
+    fields = [""] * 50
+    fields[1] = "浦发银行" if symbol == "600000" else "平安银行"
+    fields[2] = symbol
+    fields[3] = price
+    fields[4] = "10.10"
+    fields[6] = "1000"
+    fields[30] = "20260715103000"
+    prefix = "sh" if symbol.startswith("6") else "sz"
+    return f'v_{prefix}{symbol}="{"~".join(fields)}";'.encode("gbk")
+
+
+def test_polling_feed_fetches_multiple_symbols_in_one_tencent_request():
+    requested_urls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_urls.append(str(request.url))
+        return httpx.Response(
+            200,
+            content=tencent_quote_line("000001") + b"\n" + tencent_quote_line("600000"),
+        )
+
+    compliance = Compliance()
+    cutoff = datetime(2026, 7, 15, 10, 31, tzinfo=timezone(timedelta(hours=8)))
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        snapshots = TencentPollingMarketFeed(client, compliance).snapshot_many(
+            ("600000", "000001"), cutoff=cutoff,
+        )
+
+    assert requested_urls == ["https://qt.gtimg.cn/q=sh600000,sz000001"]
+    assert [item.symbol for item in snapshots] == ["600000", "000001"]
+    assert compliance.calls == [("realtime_quotes", "a_share")]
+
+
+def test_polling_feed_retries_only_a_symbol_missing_from_the_batch():
+    requested_urls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_urls.append(str(request.url))
+        if len(requested_urls) == 1:
+            return httpx.Response(200, content=tencent_quote_line("600000"))
+        return httpx.Response(200, content=tencent_quote_line("000001"))
+
+    cutoff = datetime(2026, 7, 15, 10, 31, tzinfo=timezone(timedelta(hours=8)))
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        snapshots = TencentPollingMarketFeed(client, Compliance()).snapshot_many(
+            ("600000", "000001"), cutoff=cutoff,
+        )
+
+    assert requested_urls == [
+        "https://qt.gtimg.cn/q=sh600000,sz000001",
+        "https://qt.gtimg.cn/q=sz000001",
+    ]
+    assert [item.symbol for item in snapshots] == ["600000", "000001"]
+
+
+def test_polling_feed_retries_the_whole_batch_after_a_transport_failure():
+    requested_urls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_urls.append(str(request.url))
+        if len(requested_urls) == 1:
+            raise httpx.ReadTimeout("upstream timeout", request=request)
+        return httpx.Response(
+            200,
+            content=tencent_quote_line("600000") + b"\n" + tencent_quote_line("000001"),
+        )
+
+    cutoff = datetime(2026, 7, 15, 10, 31, tzinfo=timezone(timedelta(hours=8)))
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        snapshots = TencentPollingMarketFeed(client, Compliance()).snapshot_many(
+            ("600000", "000001"), cutoff=cutoff,
+        )
+
+    assert requested_urls == [
+        "https://qt.gtimg.cn/q=sh600000,sz000001",
+        "https://qt.gtimg.cn/q=sh600000,sz000001",
+    ]
+    assert [item.symbol for item in snapshots] == ["600000", "000001"]
+
+
+def test_polling_feed_rejects_a_batch_that_is_still_incomplete_after_retry():
+    requested_urls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_urls.append(str(request.url))
+        return httpx.Response(200, content=tencent_quote_line("600000"))
+
+    cutoff = datetime(2026, 7, 15, 10, 31, tzinfo=timezone(timedelta(hours=8)))
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ValueError, match="incomplete Tencent quote batch.*000001"):
+            TencentPollingMarketFeed(client, Compliance()).snapshot_many(
+                ("600000", "000001"), cutoff=cutoff,
+            )
+
+    assert requested_urls == [
+        "https://qt.gtimg.cn/q=sh600000,sz000001",
+        "https://qt.gtimg.cn/q=sz000001",
+    ]
 
 
 class Candidates:
@@ -298,6 +410,7 @@ def test_intraday_evaluator_seeds_observation_when_premarket_advice_is_empty():
     assert [item.symbol for item in result.advice] == ["600000"]
     assert result.advice[0].action == "observe"
     assert "premarket_snapshot_unavailable" in result.advice[0].risks
+    assert result.quality_reasons == ()
 
 
 @pytest.mark.parametrize(
@@ -340,6 +453,37 @@ def test_intraday_evaluator_turns_live_quote_change_into_a_beginner_friendly_sig
     assert any("盘中行情" in item.summary for item in result.advice[0].supporting_evidence)
 
 
+def test_intraday_evaluator_rounds_percent_only_in_human_facing_text():
+    local_now = datetime(2026, 7, 15, 13, 0, tzinfo=timezone(timedelta(hours=8)))
+    raw_change_percent = Decimal("-0.5305840395872882230994686217")
+    quote = MarketFeedSnapshot(
+        symbol="600000", price="9.20", change="-0.05", change_percent=raw_change_percent,
+        volume="1000", source="tencent", observed_at=local_now,
+        fetched_at=local_now.astimezone(timezone.utc), quality="ready",
+        source_snapshot_id="quote-live",
+    )
+    risk = MarketRiskInputSnapshot(
+        snapshot_id="risk-live", captured_at=local_now, available=True,
+        market_state="range", version="risk-v1", summary="range", risks=(),
+    )
+    compliance = ComplianceInputSnapshot(
+        snapshot_id="compliance-live", captured_at=local_now, available=True,
+        allowed=True, version="compliance-v1", risks=(),
+    )
+
+    result = DeterministicIntradayEvaluator().evaluate(IntradayEvaluationContext(
+        now=local_now, window_start=local_now.replace(hour=9, minute=25),
+        window_end=local_now, quotes=(quote,), current_advice=(),
+        candidate_factor_input=candidate_input(), risk_input=risk,
+        compliance_input=compliance, evidence_input=(),
+    ))
+
+    advice = result.advice[0]
+    assert "盘中涨跌 -0.53%" in advice.plain_language_explanation
+    assert "涨跌 -0.53%" in advice.supporting_evidence[-1].summary
+    assert advice.quantitative_result["change_percent"] == raw_change_percent
+
+
 def test_intraday_evaluator_attaches_verified_news_as_supporting_or_contrary_evidence():
     local_now = datetime(2026, 7, 15, 13, 0, tzinfo=timezone(timedelta(hours=8)))
     quote = MarketFeedSnapshot(
@@ -373,15 +517,15 @@ def test_intraday_evaluator_attaches_verified_news_as_supporting_or_contrary_evi
     advice = result.advice[0]
     assert [item.evidence_id for item in advice.contrary_evidence] == ["news-news-risk"]
     assert "风险新闻" in advice.risks
+    assert result.news_event_ids == ("news-risk",)
 
 
-@pytest.mark.parametrize("failure", ["stale_quote", "compliance_denied"])
-def test_intraday_evaluator_blocks_new_advice_when_live_gate_is_not_valid(failure):
+def test_intraday_evaluator_references_only_unique_related_news_inside_window():
     local_now = datetime(2026, 7, 15, 13, 0, tzinfo=timezone(timedelta(hours=8)))
-    observed_at = local_now - timedelta(minutes=4) if failure == "stale_quote" else local_now
+    window_start = local_now.replace(hour=9, minute=25)
     quote = MarketFeedSnapshot(
         symbol="600000", price="9.20", change="0.04", change_percent="0.44",
-        volume="1000", source="tencent", observed_at=observed_at,
+        volume="1000", source="tencent", observed_at=local_now,
         fetched_at=local_now.astimezone(timezone.utc), quality="ready",
         source_snapshot_id="quote-live",
     )
@@ -391,7 +535,172 @@ def test_intraday_evaluator_blocks_new_advice_when_live_gate_is_not_valid(failur
     )
     compliance = ComplianceInputSnapshot(
         snapshot_id="compliance-live", captured_at=local_now, available=True,
+        allowed=True, version="compliance-v1", risks=(),
+    )
+
+    def event(event_id, symbol, normalized_at):
+        return SimpleNamespace(
+            event_id=event_id, affected_instruments=(("a_share", symbol),),
+            event_type="company_update", themes=(), normalized_at=normalized_at,
+            citations=(), headline=event_id,
+        )
+
+    related_b = event("news-b", "600000", local_now)
+    related_a = event("news-a", "600000", local_now - timedelta(minutes=1))
+    unrelated = event("news-unrelated", "000001", local_now)
+    too_old = event("news-old", "600000", window_start - timedelta(seconds=1))
+    result = DeterministicIntradayEvaluator().evaluate(IntradayEvaluationContext(
+        now=local_now, window_start=window_start, window_end=local_now,
+        quotes=(quote,), current_advice=(), candidate_factor_input=candidate_input(),
+        risk_input=risk, compliance_input=compliance,
+        evidence_input=(related_b, unrelated, related_a, related_b, too_old),
+    ))
+
+    assert result.news_event_ids == ("news-a", "news-b")
+
+
+def test_intraday_evaluator_replaces_prior_live_quotes_and_preserves_baseline_evidence():
+    local_now = datetime(2026, 7, 15, 13, 0, tzinfo=timezone(timedelta(hours=8)))
+    window_start = local_now.replace(hour=9, minute=25)
+    quote = MarketFeedSnapshot(
+        symbol="600000", price="9.20", change="0.04", change_percent="0.44",
+        volume="1000", source="tencent", observed_at=local_now,
+        fetched_at=local_now.astimezone(timezone.utc), quality="ready",
+        source_snapshot_id="quote-current",
+    )
+    risk = MarketRiskInputSnapshot(
+        snapshot_id="risk-live", captured_at=local_now, available=True,
+        market_state="range", version="risk-v1", summary="range", risks=(),
+    )
+    compliance = ComplianceInputSnapshot(
+        snapshot_id="compliance-live", captured_at=local_now, available=True,
+        allowed=True, version="compliance-v1", risks=(),
+    )
+    baseline_factor = EvidenceReference(
+        evidence_id="factor-current", evidence_kind="candidate_factor",
+        source="baidu", snapshot_id="candidate-live", summary="候选因子",
+        observed_at=window_start - timedelta(minutes=5),
+    )
+    baseline_news = EvidenceReference(
+        evidence_id="news-baseline", evidence_kind="verified_news",
+        source="交易所", snapshot_id="event-baseline", summary="已核验事件",
+        observed_at=window_start - timedelta(minutes=3),
+    )
+    typed_old_quote = EvidenceReference(
+        evidence_id="provider-old", evidence_kind="live_quote",
+        source="provider", snapshot_id="provider-old", summary="旧盘中行情",
+        observed_at=local_now - timedelta(minutes=2),
+    )
+    legacy_old_quote = EvidenceReference(
+        evidence_id="tencent-legacy", source="tencent",
+        snapshot_id="tencent-legacy", summary="旧格式盘中行情",
+        observed_at=local_now - timedelta(minutes=1),
+    )
+    current = DeterministicIntradayEvaluator()._seed_advice(
+        SimpleNamespace(
+            candidate_factor_input=candidate_input(), now=local_now,
+            risk_input=risk, compliance_input=compliance,
+        ),
+        {"600000": quote},
+    )[0].model_copy(update={
+        "supporting_evidence": (
+            baseline_factor, baseline_news, typed_old_quote, legacy_old_quote,
+        ),
+    })
+
+    result = DeterministicIntradayEvaluator().evaluate(IntradayEvaluationContext(
+        now=local_now, window_start=window_start, window_end=local_now,
+        quotes=(quote,), current_advice=(current,),
+        candidate_factor_input=candidate_input(), risk_input=risk,
+        compliance_input=compliance, evidence_input=(),
+    ))
+
+    evidence = result.advice[0].supporting_evidence
+    assert [item.evidence_id for item in evidence] == [
+        "factor-current", "news-baseline", "quote-current",
+    ]
+    assert evidence[-1].evidence_kind == "live_quote"
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_reason"),
+    [
+        ("no_quotes", "live_quotes_unavailable"),
+        ("quote_quality", "live_quote_quality_blocked"),
+        ("future_quote", "live_quote_timestamp_invalid"),
+        ("stale_quote", "live_quotes_stale"),
+        ("risk_unavailable", "risk_unavailable"),
+        ("compliance_unavailable", "compliance_unavailable"),
+        ("compliance_denied", "compliance_not_allowed"),
+    ],
+)
+def test_intraday_evaluator_records_exact_reason_when_live_gate_is_not_valid(
+    failure, expected_reason,
+):
+    local_now = datetime(2026, 7, 15, 13, 0, tzinfo=timezone(timedelta(hours=8)))
+    observed_at = {
+        "future_quote": local_now + timedelta(seconds=1),
+        "stale_quote": local_now - timedelta(minutes=4),
+    }.get(failure, local_now)
+    quote = MarketFeedSnapshot(
+        symbol="600000", price="9.20", change="0.04", change_percent="0.44",
+        volume="1000", source="tencent", observed_at=observed_at,
+        fetched_at=max(local_now, observed_at).astimezone(timezone.utc),
+        quality="blocked" if failure == "quote_quality" else "ready",
+        source_snapshot_id="quote-live",
+    )
+    risk = MarketRiskInputSnapshot(
+        snapshot_id="risk-live", captured_at=local_now,
+        available=failure != "risk_unavailable",
+        market_state="range", version="risk-v1", summary="range", risks=(),
+    )
+    compliance = ComplianceInputSnapshot(
+        snapshot_id="compliance-live", captured_at=local_now,
+        available=failure != "compliance_unavailable",
         allowed=failure != "compliance_denied", version="compliance-v1", risks=(),
+    )
+
+    result = DeterministicIntradayEvaluator().evaluate(IntradayEvaluationContext(
+        now=local_now, window_start=local_now.replace(hour=9, minute=25),
+        window_end=local_now,
+        quotes=() if failure == "no_quotes" else (quote,), current_advice=(),
+        candidate_factor_input=candidate_input(), risk_input=risk,
+        compliance_input=compliance, evidence_input=(),
+    ))
+
+    assert result.advice == ()
+    assert result.status == "blocked"
+    assert result.data_quality == "blocked"
+    assert result.quality_reasons == (expected_reason,)
+
+
+@pytest.mark.parametrize(
+    ("now_time", "observed_time", "expected_status"),
+    [
+        ((11, 40, 0), (11, 30, 0), "ready"),
+        ((11, 40, 0), (11, 26, 59), "blocked"),
+        ((13, 0, 0), (11, 30, 0), "blocked"),
+    ],
+)
+def test_intraday_evaluator_uses_last_fresh_morning_quote_only_during_lunch_break(
+    now_time, observed_time, expected_status,
+):
+    china_tz = timezone(timedelta(hours=8))
+    local_now = datetime(2026, 7, 15, *now_time, tzinfo=china_tz)
+    observed_at = datetime(2026, 7, 15, *observed_time, tzinfo=china_tz)
+    quote = MarketFeedSnapshot(
+        symbol="600000", price="9.20", change="0.04", change_percent="0.44",
+        volume="1000", source="tencent", observed_at=observed_at,
+        fetched_at=local_now.astimezone(timezone.utc), quality="ready",
+        source_snapshot_id="quote-lunch-break",
+    )
+    risk = MarketRiskInputSnapshot(
+        snapshot_id="risk-live", captured_at=local_now, available=True,
+        market_state="range", version="risk-v1", summary="range", risks=(),
+    )
+    compliance = ComplianceInputSnapshot(
+        snapshot_id="compliance-live", captured_at=local_now, available=True,
+        allowed=True, version="compliance-v1", risks=(),
     )
 
     result = DeterministicIntradayEvaluator().evaluate(IntradayEvaluationContext(
@@ -401,9 +710,8 @@ def test_intraday_evaluator_blocks_new_advice_when_live_gate_is_not_valid(failur
         compliance_input=compliance, evidence_input=(),
     ))
 
-    assert result.advice == ()
-    assert result.status == "blocked"
-    assert result.data_quality == "blocked"
+    assert result.status == expected_status
+    assert result.data_quality == expected_status
 
 
 def test_intraday_evaluator_replaces_stale_advice_with_a_new_candidate():
@@ -444,7 +752,7 @@ def test_intraday_evaluator_replaces_stale_advice_with_a_new_candidate():
     assert {item.symbol for item in result.advice} == {"600519"}
 
 
-def test_intraday_evaluator_preserves_existing_advice_when_candidates_are_unavailable():
+def test_intraday_evaluator_blocks_current_result_when_risk_is_unavailable():
     local_now = datetime(2026, 7, 15, 13, 0, tzinfo=timezone(timedelta(hours=8)))
     available = candidate_input()
     unavailable = CandidateInputSnapshot(
@@ -485,10 +793,9 @@ def test_intraday_evaluator_preserves_existing_advice_when_candidates_are_unavai
         compliance_input=compliance, evidence_input=(),
     ))
 
-    assert {(item.symbol, item.horizon) for item in result.advice} == {
-        ("600000", "intraday")
-    }
+    assert result.advice == ()
     assert result.status == "blocked"
+    assert result.quality_reasons == ("risk_unavailable",)
 
 
 def test_intraday_evaluator_removes_existing_advice_after_a_computed_empty_board():

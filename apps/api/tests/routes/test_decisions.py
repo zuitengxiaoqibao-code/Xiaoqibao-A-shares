@@ -254,6 +254,8 @@ def test_polling_response_uses_persisted_backoff_and_failure_state():
         next_focus_due_at=now + timedelta(seconds=240),
         next_universe_due_at=now + timedelta(seconds=300), mode="degraded",
         last_error_code="timeout_error",
+        focus_error_code="timeout_error",
+        universe_error_code="incomplete_quote_batch_error",
     )
     api, _ = client(now=now, trading_days=(now.date(),), poll_state=state)
 
@@ -264,6 +266,8 @@ def test_polling_response_uses_persisted_backoff_and_failure_state():
     assert polling["universe_interval_seconds"] == 300
     assert polling["consecutive_focus_failures"] == 3
     assert polling["next_check_seconds"] == 240
+    assert polling["focus_error_code"] == "timeout_error"
+    assert polling["universe_error_code"] == "incomplete_quote_batch_error"
 
 
 def test_date_specific_today_is_closed_when_calendar_does_not_confirm_trading():
@@ -310,6 +314,97 @@ def test_intraday_slot_materializes_unchanged_symbols_and_keeps_latest_delta():
     assert slot["execution"]["status"] == "completed"
 
 
+def test_postclose_slot_materializes_latest_advice_per_symbol_and_horizon():
+    day = date(2026, 7, 15)
+
+    def snapshot(identity, *, phase, sequence=1, advice=()):
+        return {
+            "snapshot": {
+                "snapshot_id": identity,
+                "sequence": sequence,
+                "generated_at": f"2026-07-15T15:{30 + sequence:02d}:00+08:00",
+                "window_start": "2026-07-15T09:25:00+08:00",
+                "window_end": "2026-07-15T15:00:00+08:00",
+                "status": "ready",
+                "data_quality": "ready",
+                "ai_status": "not_requested",
+                "market_state": "range",
+                "news_event_ids": [],
+                "risk_event_ids": [],
+                "quality_reasons": [],
+            },
+            "advice": list(advice),
+        }
+
+    def advice_item(advice_id, *, symbol="600000", horizon="intraday", original=None):
+        return {
+            "advice_id": advice_id,
+            "snapshot_id": "postclose-1",
+            "asset": "a_share",
+            "symbol": symbol,
+            "horizon": horizon,
+            "action": "observe",
+            "conclusion": advice_id,
+            "confidence": "0.5",
+            "supporting_evidence": [],
+            "contrary_evidence": [],
+            "risks": [],
+            "invalidation_conditions": [],
+            "plain_language_explanation": advice_id,
+            "quantitative_result": (
+                {"original_advice_id": original} if original else {}
+            ),
+            "ai_interpretation_id": None,
+            "strategy_version": "v1",
+            "created_at": "2026-07-15T15:30:00+08:00",
+            "risk_decision_id": None,
+            "previous_advice_id": original,
+            "changed_fields": [],
+        }
+
+    old = advice_item("post-old", original="premarket-old")
+    latest = advice_item("post-latest", original="intraday-latest")
+    swing = advice_item("post-swing", horizon="swing", original="premarket-swing")
+    postclose = snapshot(
+        "postclose-1", phase="postclose", advice=(old, latest, swing)
+    )
+    premarket = snapshot(
+        "premarket-1", phase="premarket",
+        advice=(advice_item("premarket-old"), advice_item("premarket-swing", horizon="swing")),
+    )
+    intraday_old = snapshot(
+        "intraday-old", phase="intraday", sequence=1,
+        advice=(advice_item("intraday-old"),),
+    )
+    intraday_latest = snapshot(
+        "intraday-latest", phase="intraday", sequence=2,
+        advice=(advice_item("intraday-latest"),),
+    )
+    repository = Repository({
+        (day, "premarket"): premarket,
+        (day, "intraday"): intraday_latest,
+        (day, "intraday_cycles"): [intraday_old, intraday_latest],
+        (day, "postclose"): postclose,
+    })
+    api, _ = client(
+        now=datetime(2026, 7, 15, 16, tzinfo=CHINA_TZ),
+        repository=repository,
+        trading_days=(day,),
+    )
+
+    slot = api.get("/api/v1/decisions/current").json()["phases"]["postclose"]
+
+    assert {(item["symbol"], item["horizon"]) for item in slot["advice"]} == {
+        ("600000", "intraday"), ("600000", "swing"),
+    }
+    assert [item["advice_id"] for item in slot["advice"]] == [
+        "post-latest", "post-swing",
+    ]
+    assert [item["advice_id"] for item in slot["delta_advice"]] == [
+        "post-latest", "post-swing",
+    ]
+
+
 def test_phase_context_exposes_only_referenced_verified_news_and_missing_ids():
     day = date(2026, 7, 15)
     window_end = "2026-07-15T09:20:00+08:00"
@@ -323,7 +418,7 @@ def test_phase_context_exposes_only_referenced_verified_news_and_missing_ids():
             "quality_reasons": ["compliance_unavailable"],
             "pending_hot_topics": ["待核验主题"],
             "pending_industries": ["待核验行业"],
-            "news_event_ids": ["news-1", "news-pending", "news-missing"],
+            "news_event_ids": ["news-1", "news-old", "news-pending", "news-missing"],
             "risk_event_ids": ["market-risk-1"],
         },
         "advice": [], "plans": [],
@@ -335,6 +430,13 @@ def test_phase_context_exposes_only_referenced_verified_news_and_missing_ids():
             "affected_instruments": [["a_share", "600000"]], "industries": ["银行"],
             "themes": ["业绩"], "association_confidence": "0.92", "review_state": "verified",
             "citations": [{"publisher": "权威来源", "canonical_url": "https://example.com/news-1"}],
+        },
+        {
+            "event_id": "news-old", "event_type": "company_update", "headline": "窗口外历史事件",
+            "occurred_at": "2026-07-14T14:40:00+08:00", "normalized_at": "2026-07-14T14:45:00+08:00",
+            "affected_instruments": [["a_share", "600000"]], "industries": ["银行"],
+            "themes": ["历史"], "association_confidence": "0.88", "review_state": "verified",
+            "citations": [{"publisher": "权威来源", "canonical_url": "https://example.com/news-old"}],
         },
         {
             "event_id": "news-pending", "event_type": "market_update", "headline": "待核验事件",

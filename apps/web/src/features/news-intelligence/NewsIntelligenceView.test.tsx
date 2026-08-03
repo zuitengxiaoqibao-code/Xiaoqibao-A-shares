@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { NewsIntelligenceView } from "./NewsIntelligenceView";
@@ -33,6 +33,46 @@ const bundle: NewsIntelligenceBundle = {
 
 
 describe("NewsIntelligenceView", () => {
+  it("uses the shared terminal page shell", async () => {
+    render(<NewsIntelligenceView loadBundle={() => Promise.resolve(bundle)} syncNews={() => Promise.resolve({ fetched: 0 })} createCorrection={() => Promise.resolve()} />);
+
+    expect(screen.getByRole("main")).toHaveClass("terminal-page", "news-domain");
+    expect(screen.getByRole("heading", { name: "每日情报流" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "先进制造专项政策发布" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "新闻卡片流" })).toHaveClass("news-card-grid");
+    expect(screen.getByRole("button", { name: /政策监管/ })).toBeInTheDocument();
+    expect(screen.getByText("A股 600000")).toBeInTheDocument();
+  });
+
+  it("filters compact news cards by evidence-based categories", async () => {
+    const categorized: NewsIntelligenceBundle = {
+      ...bundle,
+      events: [
+        bundle.events[0],
+        { ...bundle.events[0], event_id: "event-risk", event_type: "risk_event", headline: "公司被立案调查", themes: ["监管风险"], affected_instruments: [["a_share", "000001"]] },
+      ],
+    };
+    render(<NewsIntelligenceView loadBundle={() => Promise.resolve(categorized)} syncNews={() => Promise.resolve({})} createCorrection={() => Promise.resolve()} />);
+
+    expect(await screen.findByRole("heading", { name: "公司被立案调查" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /风险事件/ }));
+    expect(screen.getByRole("heading", { name: "公司被立案调查" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "先进制造专项政策发布" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["600000", "600000"],
+    [null, undefined],
+  ])("syncs the selected A share when current symbol is %s", async (selectedSymbol, expected) => {
+    const syncNews = vi.fn(() => Promise.resolve({ fetched: 0 }));
+    render(<NewsIntelligenceView selectedSymbol={selectedSymbol} loadBundle={() => Promise.resolve(bundle)} syncNews={syncNews} createCorrection={() => Promise.resolve()} />);
+
+    await screen.findByRole("heading", { name: "先进制造专项政策发布" });
+    fireEvent.click(screen.getByRole("button", { name: "同步新闻" }));
+
+    await waitFor(() => expect(syncNews).toHaveBeenCalledWith(expected));
+  });
+
   it("defaults to the selected A-share and excludes events bound to another stock", async () => {
     const filteredBundle: NewsIntelligenceBundle = {
       ...bundle,
@@ -135,6 +175,87 @@ describe("NewsIntelligenceView", () => {
     expect(screen.getByText("1 个事件 · 1 条解释")).toBeInTheDocument();
     expect(screen.queryByText(snapshotHash)).not.toBeInTheDocument();
     expect(view.container.querySelector(".briefing-ledger code")).toBeNull();
+  });
+
+  it("syncs and explains verified market hotspots without invented quote data", async () => {
+    const hotspotEvent = {
+      ...bundle.events[0],
+      event_id: "market-hotspot-1",
+      event_type: "market_hotspot",
+      headline: "000722 湖南发展 题材热点：水力发电+中报预增+湖南国资",
+      occurred_at: "2026-07-17T02:31:00Z",
+      normalized_at: "2026-07-17T02:31:00Z",
+      affected_instruments: [["a_share", "000722"]] as Array<["a_share", string]>,
+      industries: [],
+      themes: ["水力发电", "中报预增", "湖南国资"],
+      citations: [{
+        ...bundle.events[0].citations[0],
+        citation_id: "hotspot-citation-1",
+        article_id: "hotspot-article-1",
+        publisher: "同花顺",
+        published_at: "2026-07-17T02:31:00Z",
+        quoted_text: "水力发电+中报预增+湖南国资",
+      }],
+    };
+    const hotspotBundle: NewsIntelligenceBundle = {
+      ...bundle,
+      events: [hotspotEvent],
+      interpretations: [],
+    };
+    const syncHotspots = vi.fn().mockResolvedValue({
+      fetched: 1, inserted: 1, clusters: 1, events: 1,
+    });
+    render(<NewsIntelligenceView
+      loadBundle={() => Promise.resolve(hotspotBundle)}
+      syncNews={() => Promise.resolve({})}
+      syncHotspots={syncHotspots}
+      createCorrection={() => Promise.resolve()}
+    />);
+
+    expect(await screen.findByRole("heading", { name: hotspotEvent.headline })).toBeInTheDocument();
+    expect(screen.getByText("题材热点 · 已复核")).toBeInTheDocument();
+    expect(screen.getByText(/同花顺热点 · 来源时间/)).toBeInTheDocument();
+    expect(screen.getByText("中报预增")).toBeInTheDocument();
+    expect(screen.queryByText(/价格|涨幅|成交额|换手率/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "同步热点" }));
+    await waitFor(() => expect(syncHotspots).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("tab", { name: "数据状态" }));
+    expect(screen.getByText("已核验热点数").parentElement).toHaveTextContent("已核验热点数1");
+  });
+
+  it("keeps loaded evidence visible when hotspot sync fails", async () => {
+    const syncHotspots = vi.fn().mockRejectedValue(new Error("provider secret"));
+    render(<NewsIntelligenceView
+      loadBundle={() => Promise.resolve(bundle)}
+      syncNews={() => Promise.resolve({})}
+      syncHotspots={syncHotspots}
+      createCorrection={() => Promise.resolve()}
+    />);
+
+    expect(await screen.findByRole("heading", { name: "先进制造专项政策发布" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "同步热点" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("热点数据暂不可用，请稍后重试。");
+    expect(screen.getByRole("heading", { name: "先进制造专项政策发布" })).toBeInTheDocument();
+    expect(screen.queryByText(/provider|secret/)).not.toBeInTheDocument();
+  });
+
+  it("opens data settings when the independent hotspot source is not authorized", async () => {
+    const openNewsCompliance = vi.fn();
+    render(<NewsIntelligenceView
+      loadBundle={() => Promise.resolve(bundle)}
+      syncNews={() => Promise.resolve({})}
+      syncHotspots={() => Promise.reject(new Error("tonghuashun unauthorized"))}
+      createCorrection={() => Promise.resolve()}
+      openNewsCompliance={openNewsCompliance}
+    />);
+
+    await screen.findByRole("heading", { name: "先进制造专项政策发布" });
+    fireEvent.click(screen.getByRole("button", { name: "同步热点" }));
+    const settingsButton = await screen.findByRole("button", { name: "打开数据设置" });
+    fireEvent.click(settingsButton);
+
+    expect(openNewsCompliance).toHaveBeenCalledTimes(1);
   });
 
   it("sanitizes hostile news errors", async () => {

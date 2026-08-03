@@ -57,15 +57,12 @@ def _percentiles(
     return result
 
 
-def rank_candidates(
+def score_candidates(
     snapshots: Sequence[FactorSnapshot],
     horizon: Literal["short_term", "swing"],
-    limit: int = 20,
 ) -> list[CandidateEntry]:
     if horizon not in {"short_term", "swing"}:
         raise ValueError("horizon must be short_term or swing")
-    if limit < 1 or limit > 100:
-        raise ValueError("limit must be between 1 and 100")
     if not snapshots:
         return []
     return_5d = _percentiles(snapshots, lambda item: item.return_5d)
@@ -101,7 +98,17 @@ def rank_candidates(
             score_breakdown=breakdown,
             factor_snapshot=item,
         ))
-    return sorted(entries, key=lambda entry: (-entry.score, entry.symbol))[:limit]
+    return sorted(entries, key=lambda entry: (-entry.score, entry.symbol))
+
+
+def rank_candidates(
+    snapshots: Sequence[FactorSnapshot],
+    horizon: Literal["short_term", "swing"],
+    limit: int = 20,
+) -> list[CandidateEntry]:
+    if limit < 1 or limit > 100:
+        raise ValueError("limit must be between 1 and 100")
+    return score_candidates(snapshots, horizon)[:limit]
 
 
 def build_candidate_board(
@@ -133,6 +140,13 @@ def build_candidate_board(
     swing = rank_candidates(eligible, "swing", limit)
     return CandidateBoard(
         as_of=as_of,
+        universe_size=len(snapshots),
+        eligible_size=len(eligible),
+        latest_trade_date=max(
+            (item.latest_trade_date for item in snapshots if item.latest_trade_date),
+            default=None,
+        ),
+        sources=tuple(sorted({item.source for item in snapshots})),
         short_term=short_term,
         swing=swing,
         exclusions=sorted(exclusions, key=lambda item: item.symbol),

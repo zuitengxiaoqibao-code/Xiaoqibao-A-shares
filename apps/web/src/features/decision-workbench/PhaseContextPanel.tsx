@@ -1,4 +1,5 @@
-import { ExternalLink, Newspaper, ShieldAlert } from "lucide-react";
+import { ChevronDown, ChevronUp, ExternalLink, Newspaper, ShieldAlert } from "lucide-react";
+import { useState } from "react";
 
 import type { PhaseContext, PhaseNewsEvent } from "./types";
 
@@ -10,6 +11,10 @@ const marketStateNames: Record<NonNullable<PhaseContext["market_state"]>, string
 };
 
 const qualityReasonNames: Record<string, string> = {
+  live_quotes_unavailable: "盘中行情暂未返回",
+  live_quote_quality_blocked: "盘中行情质量未通过",
+  live_quote_timestamp_invalid: "盘中行情时间晚于本次评估",
+  live_quotes_stale: "盘中行情已超过有效时间",
   candidate_history_unavailable: "候选股历史行情不足",
   candidate_history_stale: "候选历史行情未更新至上一交易日，仅作观察参考",
   candidate_as_of_after_trading_date: "候选池日期晚于本交易日",
@@ -23,6 +28,12 @@ const qualityReasonNames: Record<string, string> = {
   ai_unavailable: "AI 补充解释不可用，确定性结果仍保留",
   block_reason_unrecorded: "该历史快照未记录具体拦截原因",
 };
+
+const DEFAULT_VISIBLE_NEWS = 3;
+
+export function qualityReasonLabel(reason: string): string {
+  return qualityReasonNames[reason] ?? `已记录的数据质量问题：${reason}`;
+}
 
 function eventTags(event: PhaseNewsEvent): string {
   return [...event.industries, ...event.themes].join(" · ") || "行业与主题未标注";
@@ -54,12 +65,22 @@ function newsStatus(context: PhaseContext) {
 }
 
 export function PhaseContextPanel({ context }: { context?: PhaseContext }) {
+  const [expandedContext, setExpandedContext] = useState<string | null>(null);
   if (!context) return null;
   const marketState = context.market_state ? marketStateNames[context.market_state] : "状态未记录";
   const overview = context.market_overview;
   const flow = overview?.fund_flow;
   const pendingTopics = overview?.pending_hot_topics ?? [];
   const pendingIndustries = overview?.pending_industries ?? [];
+  const events = [...context.news.events].sort((left, right) => {
+    const timeDifference = Date.parse(right.occurred_at) - Date.parse(left.occurred_at);
+    return Number.isFinite(timeDifference) && timeDifference !== 0
+      ? timeDifference
+      : left.event_id.localeCompare(right.event_id);
+  });
+  const contextIdentity = `${context.window_end ?? "no-window"}:${events.map((event) => event.event_id).join(",")}`;
+  const expanded = expandedContext === contextIdentity;
+  const visibleEvents = expanded ? events : events.slice(0, DEFAULT_VISIBLE_NEWS);
   return <section className="phase-context" aria-label="阶段依据">
     <header>
       <div>
@@ -69,7 +90,7 @@ export function PhaseContextPanel({ context }: { context?: PhaseContext }) {
       <div className="phase-context-metrics">
         <span>{context.candidate_snapshot_id ? "候选池已冻结" : "候选池未引用"}</span>
         <span>{context.risk_event_count} 项风险证据</span>
-        <span>{context.news.events.length} 条已验证新闻</span>
+        <span>{events.length > 0 ? `显示 ${visibleEvents.length} / 共 ${events.length} 条相关已验证新闻` : "0 条相关已验证新闻"}</span>
       </div>
     </header>
     {overview && <section className="market-overview" aria-label="市场热点与资金概览">
@@ -87,10 +108,10 @@ export function PhaseContextPanel({ context }: { context?: PhaseContext }) {
     </section>}
     {context.quality_reasons.length > 0 && <section className="phase-quality-reasons">
       <h3>为什么当前没有完整建议</h3>
-      <ul>{context.quality_reasons.map((reason) => <li key={reason}>{qualityReasonNames[reason] ?? `已记录的数据质量问题：${reason}`}</li>)}</ul>
+      <ul>{context.quality_reasons.map((reason) => <li key={reason}>{qualityReasonLabel(reason)}</li>)}</ul>
     </section>}
-    {context.news.events.length > 0 && <div className="phase-event-list">
-      {context.news.events.map((event) => <article key={event.event_id}>
+    {events.length > 0 && <div className="phase-event-list">
+      {visibleEvents.map((event) => <article key={event.event_id}>
         <div className="phase-event-heading">
           <Newspaper size={16} />
           <div><span>{eventTags(event)}</span><h3>{event.headline}</h3></div>
@@ -102,6 +123,12 @@ export function PhaseContextPanel({ context }: { context?: PhaseContext }) {
           {event.source_url && event.publisher && <a href={event.source_url} target="_blank" rel="noreferrer" aria-label={event.publisher}>{event.publisher}<ExternalLink size={13} /></a>}
         </div>
       </article>)}
+      {events.length > DEFAULT_VISIBLE_NEWS && <div className="phase-event-disclosure">
+        <button type="button" aria-expanded={expanded} onClick={() => setExpandedContext(expanded ? null : contextIdentity)}>
+          {expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+          {expanded ? "收起新闻证据" : `查看其余 ${events.length - DEFAULT_VISIBLE_NEWS} 条`}
+        </button>
+      </div>}
     </div>}
     {newsStatus(context)}
     {context.window_end && <footer>证据窗口截至 {new Date(context.window_end).toLocaleString("zh-CN")}</footer>}

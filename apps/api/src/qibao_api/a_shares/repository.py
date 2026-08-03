@@ -94,6 +94,14 @@ class AShareResearchRepository:
         )
         try:
             with self._lock, self.connection:
+                existing = self.connection.execute(
+                    """SELECT snapshot_id FROM candidate_snapshots
+                    WHERE as_of=? AND input_snapshot_hash=?
+                    ORDER BY sequence DESC LIMIT 1""",
+                    (stored.as_of.isoformat(), input_hash),
+                ).fetchone()
+                if existing is not None:
+                    return existing["snapshot_id"]
                 self.connection.execute(
                     """INSERT INTO candidate_snapshots(
                     snapshot_id,as_of,input_snapshot_hash,input_payload,

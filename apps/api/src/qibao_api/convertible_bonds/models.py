@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
@@ -32,6 +32,48 @@ class BondQuote(BaseModel):
     @field_validator("observed_at")
     @classmethod
     def require_aware_time(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("observed_at must include a timezone")
+        return value
+
+
+class BondUniverseItem(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    bond_code: str
+    name: str
+    linked_stock_code: str | None = None
+    listing_date: date | None = None
+    maturity: date | None = None
+    status: Literal["active"] = "active"
+    observed_at: datetime
+    source: str
+    raw_identity: str
+
+    @field_validator("bond_code")
+    @classmethod
+    def validate_bond_code(cls, value: str) -> str:
+        return validate_convertible_bond_code(value)
+
+    @field_validator("observed_at")
+    @classmethod
+    def require_aware_observed_at(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("observed_at must include a timezone")
+        return value
+
+
+class BondUniverseSnapshot(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    observed_at: datetime
+    source: str
+    raw_identity: str
+    items: tuple[BondUniverseItem, ...]
+
+    @field_validator("observed_at")
+    @classmethod
+    def require_aware_snapshot_time(cls, value: datetime) -> datetime:
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("observed_at must include a timezone")
         return value

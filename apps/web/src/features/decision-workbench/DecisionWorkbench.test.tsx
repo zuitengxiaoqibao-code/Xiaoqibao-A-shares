@@ -43,6 +43,154 @@ describe("DecisionWorkbench", () => {
     expect(screen.queryByText(/模拟操作计划|行情门禁|仓位/)).not.toBeInTheDocument();
   });
 
+  it("shows baseline evidence and only the latest quote in current intraday advice", async () => {
+    const item = advice({
+      supporting_evidence: [
+        { evidence_id: "factor-1", evidence_kind: "candidate_factor", source: "baidu", snapshot_id: "candidate-1", summary: "候选因子有效", observed_at: "2026-07-15T09:20:00+08:00" },
+        { evidence_id: "tencent-old", source: "tencent", snapshot_id: "tencent-old", summary: "旧行情 10.10", observed_at: "2026-07-15T10:10:00+08:00" },
+        { evidence_id: "tencent-latest", source: "tencent", snapshot_id: "tencent-latest", summary: "最新行情 10.30", observed_at: "2026-07-15T10:29:00+08:00" },
+      ],
+    });
+    const slot: PhaseSlot = {
+      ...emptySlot, phase_status: "ready", quality: "ready", aggregate_version: "s1",
+      advice: [item], evidence: item.supporting_evidence,
+    };
+    render(<DecisionWorkbench loadCurrent={() => Promise.resolve(response({
+      phases: { premarket: emptySlot, intraday: slot, postclose: emptySlot },
+    }))} />);
+
+    expect(await screen.findByText("候选因子有效")).toBeInTheDocument();
+    expect(screen.getByText("最新行情 10.30")).toBeInTheDocument();
+    expect(screen.queryByText("旧行情 10.10")).not.toBeInTheDocument();
+  });
+
+  it("does not mark unchanged market-wide advice stale after a recent universe poll", async () => {
+    const item = advice();
+    const slot: PhaseSlot = {
+      ...emptySlot, phase_status: "ready", quality: "ready", aggregate_version: "s1",
+      generated_at: "2026-07-15T10:00:00+08:00", advice: [item], evidence: item.supporting_evidence,
+    };
+    render(<DecisionWorkbench loadCurrent={() => Promise.resolve(response({
+      phases: { premarket: emptySlot, intraday: slot, postclose: emptySlot },
+      polling: {
+        status: "normal", focus_interval_seconds: 60, universe_interval_seconds: 240,
+        stale_after_seconds: 180, next_check_seconds: 60,
+        last_focus_success_at: "2026-07-15T10:29:55+08:00",
+        last_universe_success_at: "2026-07-15T10:29:00+08:00",
+      },
+    }))} />);
+
+    expect(await screen.findByText("600000 · 保持观察")).toBeInTheDocument();
+    expect(screen.queryByText("聚合数据已过期")).not.toBeInTheDocument();
+    expect(screen.queryByText("行情更新已超过有效时间")).not.toBeInTheDocument();
+  });
+
+  it("uses the focus poll for selected-stock freshness", async () => {
+    const item = advice();
+    const slot: PhaseSlot = {
+      ...emptySlot, phase_status: "ready", quality: "ready", aggregate_version: "s1",
+      generated_at: "2026-07-15T10:00:00+08:00", advice: [item], evidence: item.supporting_evidence,
+    };
+    render(<DecisionWorkbench selectedSymbol="600000" loadCurrent={() => Promise.resolve(response({
+      phases: { premarket: emptySlot, intraday: slot, postclose: emptySlot },
+      polling: {
+        status: "normal", focus_interval_seconds: 60, universe_interval_seconds: 240,
+        stale_after_seconds: 180, next_check_seconds: 60,
+        last_focus_success_at: "2026-07-15T10:29:30+08:00",
+        last_universe_success_at: "2026-07-15T10:00:00+08:00",
+      },
+    }))} />);
+
+    expect(await screen.findByText("600000 · 保持观察")).toBeInTheDocument();
+    expect(screen.queryByText("聚合数据已过期")).not.toBeInTheDocument();
+    expect(screen.queryByText("行情更新已超过有效时间")).not.toBeInTheDocument();
+  });
+
+  it("warns when the relevant live quote poll exceeds its effective threshold", async () => {
+    const item = advice();
+    const slot: PhaseSlot = {
+      ...emptySlot, phase_status: "ready", quality: "ready", aggregate_version: "s1",
+      generated_at: "2026-07-15T10:25:00+08:00", advice: [item], evidence: item.supporting_evidence,
+    };
+    render(<DecisionWorkbench selectedSymbol="600000" loadCurrent={() => Promise.resolve(response({
+      phases: { premarket: emptySlot, intraday: slot, postclose: emptySlot },
+      polling: {
+        status: "degraded", focus_interval_seconds: 60, universe_interval_seconds: 240,
+        stale_after_seconds: 180, next_check_seconds: 60,
+        last_focus_success_at: "2026-07-15T10:26:00+08:00",
+        last_universe_success_at: "2026-07-15T10:29:30+08:00",
+      },
+    }))} />);
+
+    expect(await screen.findByText("行情更新已超过有效时间")).toBeInTheDocument();
+    expect(screen.getByText(/焦点行情最近成功于/)).toHaveTextContent("2026/7/15 10:26:00");
+    expect(screen.queryByText("聚合数据已过期")).not.toBeInTheDocument();
+  });
+
+  it("explains a selected stock polling failure in beginner language", async () => {
+    const item = advice();
+    const slot: PhaseSlot = {
+      ...emptySlot, phase_status: "ready", quality: "ready", aggregate_version: "s1",
+      generated_at: "2026-07-15T10:29:00+08:00", advice: [item], evidence: item.supporting_evidence,
+    };
+    render(<DecisionWorkbench selectedSymbol="600000" loadCurrent={() => Promise.resolve(response({
+      phases: { premarket: emptySlot, intraday: slot, postclose: emptySlot },
+      polling: {
+        status: "degraded", focus_interval_seconds: 120, universe_interval_seconds: 240,
+        stale_after_seconds: 180, next_check_seconds: 120,
+        consecutive_focus_failures: 2, consecutive_universe_failures: 0,
+        focus_error_code: "incomplete_quote_batch_error", universe_error_code: null,
+        last_focus_success_at: "2026-07-15T10:29:00+08:00",
+        last_universe_success_at: "2026-07-15T10:29:00+08:00",
+      },
+    }))} />);
+
+    expect(await screen.findByText("焦点行情更新暂时失败")).toBeInTheDocument();
+    expect(screen.getByText(/已连续失败 2 次/)).toBeInTheDocument();
+    expect(screen.getByText(/部分股票行情缺失，完整性检查未通过/)).toBeInTheDocument();
+    expect(screen.getByText("焦点行情异常 · 2 次")).toBeInTheDocument();
+  });
+
+  it("does not attribute a focus failure to the market-wide view", async () => {
+    const item = advice();
+    const slot: PhaseSlot = {
+      ...emptySlot, phase_status: "ready", quality: "ready", aggregate_version: "s1",
+      generated_at: "2026-07-15T10:29:00+08:00", advice: [item], evidence: item.supporting_evidence,
+    };
+    render(<DecisionWorkbench loadCurrent={() => Promise.resolve(response({
+      phases: { premarket: emptySlot, intraday: slot, postclose: emptySlot },
+      polling: {
+        status: "degraded", focus_interval_seconds: 120, universe_interval_seconds: 240,
+        stale_after_seconds: 180, next_check_seconds: 120,
+        consecutive_focus_failures: 2, consecutive_universe_failures: 0,
+        focus_error_code: "timeout_error", universe_error_code: null,
+        last_focus_success_at: "2026-07-15T10:29:00+08:00",
+        last_universe_success_at: "2026-07-15T10:29:00+08:00",
+      },
+    }))} />);
+
+    expect(await screen.findByText("全市场行情正常")).toBeInTheDocument();
+    expect(screen.queryByText("焦点行情更新暂时失败")).not.toBeInTheDocument();
+    expect(screen.queryByText("轮询 degraded")).not.toBeInTheDocument();
+  });
+
+  it("does not show a live freshness warning for a frozen premarket phase", async () => {
+    const item = advice({ horizon: "swing" });
+    const slot: PhaseSlot = {
+      ...emptySlot, phase_status: "ready", quality: "ready", aggregate_version: "s1",
+      generated_at: "2026-07-15T09:20:00+08:00", advice: [item], evidence: item.supporting_evidence,
+    };
+    render(<DecisionWorkbench loadCurrent={() => Promise.resolve(response({
+      current_phase: "premarket",
+      phases: { premarket: slot, intraday: emptySlot, postclose: emptySlot },
+    }))} />);
+
+    expect(await screen.findByText("600000 · 保持观察")).toBeInTheDocument();
+    expect(screen.getByText("当前阶段不检查实时行情")).toBeInTheDocument();
+    expect(screen.queryByText("聚合数据已过期")).not.toBeInTheDocument();
+    expect(screen.queryByText("行情更新已超过有效时间")).not.toBeInTheDocument();
+  });
+
   it("explains that an empty premarket phase is scheduled rather than broken", async () => {
     const scheduled = {
       ...emptySlot,
@@ -112,6 +260,39 @@ describe("DecisionWorkbench", () => {
     expect(await screen.findByText("600000 · 保持观察")).toBeInTheDocument();
     expect(screen.queryByText("其他股票")).not.toBeInTheDocument();
     expect(screen.getByText(/变化版本 #1/)).toBeInTheDocument();
+  });
+
+  it("shows the newest three collapsed change versions and discloses older history", async () => {
+    const versions = [1, 5, 2, 4, 3].map((sequence) => ({
+      snapshot_id: `s${sequence}`, sequence,
+      generated_at: `2026-07-15T10:3${sequence}:00+08:00`,
+      delta_advice: [advice({ advice_id: `a${sequence}`, snapshot_id: `s${sequence}` })],
+    }));
+    const item = advice({ snapshot_id: "s5" });
+    const slot: PhaseSlot = {
+      ...emptySlot, phase_status: "ready", quality: "ready", aggregate_version: "s5",
+      advice: [item], evidence: item.supporting_evidence, change_stream: versions,
+    };
+    render(<DecisionWorkbench loadCurrent={() => Promise.resolve(response({
+      phases: { premarket: emptySlot, intraday: slot, postclose: emptySlot },
+    }))} />);
+
+    expect(await screen.findByText(/变化版本 #5/)).toBeInTheDocument();
+    expect(screen.getByText(/变化版本 #4/)).toBeInTheDocument();
+    expect(screen.getByText(/变化版本 #3/)).toBeInTheDocument();
+    expect(screen.queryByText(/变化版本 #2/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/变化版本 #1/)).not.toBeInTheDocument();
+    expect(Array.from(document.querySelectorAll(".change-stream details"))).toHaveLength(3);
+    expect(Array.from(document.querySelectorAll(".change-stream details")).every(
+      (details) => !details.hasAttribute("open"),
+    )).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "查看更早 2 个版本" }));
+    expect(screen.getByText(/变化版本 #2/)).toBeInTheDocument();
+    expect(screen.getByText(/变化版本 #1/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "收起早期版本" }));
+    expect(screen.queryByText(/变化版本 #2/)).not.toBeInTheDocument();
   });
 
   it("renders verified market, industry, news and risk context from the phase snapshot", async () => {

@@ -20,14 +20,56 @@ def settings() -> AISettings:
     )
 
 
+class FakeProtector:
+    def protect(self, value: str) -> str:
+        return f"fixture:{value[::-1]}"
+
+    def unprotect(self, value: str) -> str:
+        if not value.startswith("fixture:"):
+            raise ValueError("unsupported protected value")
+        return value.removeprefix("fixture:")[::-1]
+
+
 def test_repository_round_trips_settings_without_leaving_temporary_file(tmp_path: Path) -> None:
-    repository = AISettingsRepository(tmp_path)
+    repository = AISettingsRepository(tmp_path, protector=FakeProtector())
 
     repository.save(settings())
 
     assert repository.load() == settings()
-    assert json.loads((tmp_path / "ai-settings.json").read_text(encoding="utf-8"))["api_key"] == "secret-value"
+    stored = json.loads((tmp_path / "ai-settings.json").read_text(encoding="utf-8"))
+    assert "api_key" not in stored
+    assert stored["api_key_protected"].startswith("fixture:")
+    assert "secret-value" not in (tmp_path / "ai-settings.json").read_text(encoding="utf-8")
     assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_repository_rotates_a_non_secret_revision_on_each_save(tmp_path: Path) -> None:
+    repository = AISettingsRepository(tmp_path)
+
+    repository.save(settings())
+    first = repository.revision()
+    repository.save(settings())
+    second = repository.revision()
+
+    assert first is not None and len(first) == 32
+    assert second is not None and len(second) == 32
+    int(first, 16)
+    int(second, 16)
+    assert first != second
+    assert settings().api_key not in first
+    assert settings().api_key not in second
+    assert repository.load() == settings()
+
+
+def test_repository_migrates_legacy_plaintext_settings_after_successful_load(tmp_path: Path) -> None:
+    repository = AISettingsRepository(tmp_path, protector=FakeProtector())
+    repository.path.write_text(json.dumps(settings().model_dump()), encoding="utf-8")
+
+    assert repository.load() == settings()
+    stored = json.loads(repository.path.read_text(encoding="utf-8"))
+    assert "api_key" not in stored
+    assert stored["api_key_protected"].startswith("fixture:")
+    assert repository.revision() is not None
 
 
 def test_repository_returns_typed_unconfigured_state_for_corrupt_file(tmp_path: Path) -> None:

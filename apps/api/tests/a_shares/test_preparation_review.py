@@ -336,6 +336,22 @@ async def test_connection_level_fund_flow_failure_is_temporarily_cooled_down(tmp
 
 
 @pytest.mark.asyncio
+async def test_fund_flow_failure_reason_survives_follow_up_inspection(tmp_path):
+    fund_flow = FundFlow(
+        fail_once=True,
+        error_message="Server disconnected without sending a response.",
+    )
+    service = subject(tmp_path, fund_flow=fund_flow)
+
+    await service.prepare("600519", as_of=FRIDAY)
+    inspected = await service.inspect("600519", as_of=FRIDAY)
+
+    source = next(item for item in inspected.sources if item.name == "fund_flow")
+    assert source.status == "partial"
+    assert source.reason == "Server disconnected without sending a response."
+
+
+@pytest.mark.asyncio
 async def test_auxiliary_failures_are_reported_and_successful_retry_clears_reason(tmp_path):
     classification = Classification(fail_once=True)
     fund_flow = FundFlow(fail_once=True)

@@ -3,10 +3,12 @@ import sqlite3
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
+import httpx
 import pytest
 
 from qibao_api.gongbu.fund_flow import (
     EASTMONEY_FUND_FLOW_DAILY_URL,
+    EASTMONEY_FUND_FLOW_DAILY_FALLBACK_URL,
     EASTMONEY_FUND_FLOW_MINUTE_URL,
     EastmoneyFundFlowSource,
     FundFlowHttpResponse,
@@ -106,6 +108,70 @@ async def test_source_fetches_daily_and_minute_fund_flow_serially() -> None:
 
 
 @pytest.mark.asyncio
+async def test_source_records_validated_attempts_without_leaking_observer_failures() -> None:
+    events = []
+
+    async def transport(url, _params, _headers):
+        if url == EASTMONEY_FUND_FLOW_DAILY_URL:
+            return response(daily_payload())
+        return response(minute_payload())
+
+    def observer(event) -> None:
+        events.append(event)
+        raise RuntimeError("telemetry must not break fund-flow data")
+
+    snapshot = await EastmoneyFundFlowSource(
+        transport=transport,
+        observer=observer,
+        clock=lambda: OBSERVED,
+        minimum_interval=0,
+    ).fetch("600519")
+
+    assert snapshot.daily_sample_count == 20
+    assert [(item.source, item.operation, item.target, item.status) for item in events] == [
+        ("eastmoney-fund-flow", "daily", EASTMONEY_FUND_FLOW_DAILY_URL, "ready"),
+        ("eastmoney-fund-flow", "minute", EASTMONEY_FUND_FLOW_MINUTE_URL, "ready"),
+    ]
+    daily_event, minute_event = events
+    assert daily_event.metadata == {
+        "field_count": 6,
+        "latest_trade_date": "2026-06-21",
+        "row_count": 20,
+        "validation": "schema_fund_flow",
+    }
+    assert minute_event.metadata == {
+        "field_count": 6,
+        "row_count": 2,
+        "validation": "schema_fund_flow",
+    }
+    assert all(item.latency_ms >= 0 for item in events)
+
+
+@pytest.mark.asyncio
+async def test_source_records_minute_failure_while_preserving_daily_snapshot() -> None:
+    events = []
+
+    async def transport(url, _params, _headers):
+        if url == EASTMONEY_FUND_FLOW_DAILY_URL:
+            return response(daily_payload())
+        raise OSError("minute endpoint disconnected")
+
+    snapshot = await EastmoneyFundFlowSource(
+        transport=transport,
+        observer=events.append,
+        clock=lambda: OBSERVED,
+        minimum_interval=0,
+    ).fetch("600519")
+
+    assert snapshot.intraday_main_net is None
+    assert [(item.operation, item.status, item.error_code) for item in events] == [
+        ("daily", "ready", None),
+        ("minute", "error", "OSError"),
+        ("minute", "error", "OSError"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_source_retries_one_transient_response() -> None:
     calls = []
     replies = [
@@ -131,30 +197,106 @@ async def test_source_retries_one_transient_response() -> None:
 
 
 @pytest.mark.asyncio
+async def test_source_uses_same_provider_daily_fallback_after_primary_failure() -> None:
+    calls = []
+
+    async def transport(url, _params, _headers):
+        calls.append(url)
+        if url == EASTMONEY_FUND_FLOW_DAILY_URL:
+            return FundFlowHttpResponse(status_code=503, body=b"unavailable")
+        if url == EASTMONEY_FUND_FLOW_DAILY_FALLBACK_URL:
+            return response(daily_payload())
+        if url == EASTMONEY_FUND_FLOW_MINUTE_URL:
+            return response(minute_payload())
+        raise AssertionError(url)
+
+    snapshot = await EastmoneyFundFlowSource(
+        transport=transport, minimum_interval=0
+    ).fetch("600519")
+
+    assert calls == [
+        EASTMONEY_FUND_FLOW_DAILY_URL,
+        EASTMONEY_FUND_FLOW_DAILY_URL,
+        EASTMONEY_FUND_FLOW_DAILY_FALLBACK_URL,
+        EASTMONEY_FUND_FLOW_MINUTE_URL,
+    ]
+    assert snapshot.daily_endpoint == "push2/stock/fflow/kline"
+    assert snapshot.minute_error is None
+
+
+@pytest.mark.asyncio
+async def test_source_uses_daily_fallback_after_transport_disconnect() -> None:
+    calls = []
+
+    async def transport(url, _params, _headers):
+        calls.append(url)
+        if url == EASTMONEY_FUND_FLOW_DAILY_URL:
+            raise httpx.ReadError(
+                "primary disconnected", request=httpx.Request("GET", url)
+            )
+        if url == EASTMONEY_FUND_FLOW_DAILY_FALLBACK_URL:
+            return response(daily_payload())
+        return response(minute_payload())
+
+    snapshot = await EastmoneyFundFlowSource(
+        transport=transport, minimum_interval=0
+    ).fetch("600519")
+
+    assert snapshot.daily_endpoint == "push2/stock/fflow/kline"
+    assert calls[:3] == [
+        EASTMONEY_FUND_FLOW_DAILY_URL,
+        EASTMONEY_FUND_FLOW_DAILY_URL,
+        EASTMONEY_FUND_FLOW_DAILY_FALLBACK_URL,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_source_keeps_daily_snapshot_when_intraday_endpoint_is_unavailable() -> None:
+    calls = []
+
+    async def transport(url, _params, _headers):
+        calls.append(url)
+        if url == EASTMONEY_FUND_FLOW_DAILY_URL:
+            return response(daily_payload())
+        if url == EASTMONEY_FUND_FLOW_MINUTE_URL:
+            raise OSError("minute endpoint disconnected")
+        raise AssertionError(url)
+
+    snapshot = await EastmoneyFundFlowSource(
+        transport=transport, minimum_interval=0
+    ).fetch("600519")
+
+    assert snapshot.daily_sample_count == 20
+    assert snapshot.intraday_main_net is None
+    assert snapshot.intraday_sample_count == 0
+    assert "minute endpoint disconnected" in (snapshot.minute_error or "")
+    assert calls == [
+        EASTMONEY_FUND_FLOW_DAILY_URL,
+        EASTMONEY_FUND_FLOW_MINUTE_URL,
+        EASTMONEY_FUND_FLOW_MINUTE_URL,
+    ]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "daily,minute",
+    "daily",
     [
-        ({"data": {"code": "600519", "klines": []}}, minute_payload()),
-        (daily_payload("000001"), minute_payload()),
+        {"data": {"code": "600519", "klines": []}},
+        daily_payload("000001"),
         (
             {"data": {"code": "600519", "klines": [
                 "2026-07-16,-,1,2,3,4"
             ]}},
-            minute_payload(),
-        ),
-        (
-            daily_payload(),
-            {"data": {"code": "000001", "klines": []}},
         ),
     ],
 )
 async def test_source_rejects_empty_mismatched_or_missing_values(
-    daily, minute
+    daily
 ) -> None:
-    replies = [response(daily), response(minute)]
-
-    async def transport(_url, _params, _headers):
-        return replies.pop(0)
+    async def transport(url, _params, _headers):
+        if url in {EASTMONEY_FUND_FLOW_DAILY_URL, EASTMONEY_FUND_FLOW_DAILY_FALLBACK_URL}:
+            return response(daily)
+        return response(minute_payload())
 
     with pytest.raises(ValueError):
         await EastmoneyFundFlowSource(

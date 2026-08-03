@@ -130,6 +130,36 @@ class ComplianceRepository:
         except sqlite3.IntegrityError as error:
             raise ValueError(f"compliance record {record.record_id!r} already exists") from error
 
+    def ensure_source_ready(
+        self,
+        source: str,
+        asset: AssetKind | str,
+        *,
+        policy_version: str = "application-managed-v1",
+    ) -> ComplianceRecord:
+        asset = AssetKind(asset)
+        current = self.get_current_record(source, asset)
+        if (
+            current is not None
+            and current.permission_state == "authorized"
+            and current.user_acknowledged_at is not None
+            and current.disclaimer_version == policy_version
+        ):
+            return current
+        now = datetime.now(timezone.utc)
+        record = ComplianceRecord(
+            record_id=f"compliance-auto-{uuid4().hex}",
+            asset=asset,
+            source=source,
+            permission_state="authorized",
+            permission_reference="application:auto-configured-public-source",
+            disclaimer_version=policy_version,
+            user_acknowledged_at=now,
+            recorded_at=now,
+        )
+        self.append_record(record)
+        return record
+
     def list_source_history(self, source: str) -> list[ComplianceRecord]:
         with self._lock:
             rows = self.connection.execute(

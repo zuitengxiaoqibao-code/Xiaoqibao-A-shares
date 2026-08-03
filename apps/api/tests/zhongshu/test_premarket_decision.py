@@ -157,6 +157,15 @@ class AI:
         )
 
 
+class ConfigurableAI(AI):
+    def __init__(self) -> None:
+        super().__init__(ready=False)
+        self.identity = ("unconfigured", "decision-v1")
+
+    def configuration_identity(self):
+        return self.identity
+
+
 def service(tmp_path, *, candidates=None, events=(), ai=None, compliance=None, risk=None, calendar=None):
     tmp_path.mkdir(parents=True, exist_ok=True)
     repository = DecisionRepository(tmp_path / "decisions.sqlite3")
@@ -256,6 +265,8 @@ def test_adverse_risk_event_is_contrary_and_downgrades_observation(tmp_path) -> 
     advice = next(item for item in result.advice if item.symbol == "600000")
     assert advice.action == "wait"
     assert [item.evidence_id for item in advice.contrary_evidence] == ["news-news-1"]
+    assert advice.supporting_evidence[0].evidence_kind == "candidate_factor"
+    assert advice.contrary_evidence[0].evidence_kind == "verified_news"
     assert all(item.evidence_id != "news-news-1" for item in advice.supporting_evidence)
 
 
@@ -384,4 +395,27 @@ def test_identical_input_is_idempotent_and_changed_input_appends(tmp_path) -> No
     second = subject.run(TRADE_DATE, NOW)
     assert second.snapshot.sequence == 2
     assert second.snapshot.previous_snapshot_id == first.snapshot.snapshot_id
+    assert len(repository.cycles()) == 2
+
+
+def test_ai_configuration_change_appends_without_changing_deterministic_advice(
+    tmp_path,
+) -> None:
+    ai = ConfigurableAI()
+    subject, repository = service(tmp_path, events=(news(),), ai=ai)
+
+    first = subject.run(TRADE_DATE, NOW)
+    ai.ready = True
+    ai.identity = ("configured", "openai-compatible", "model-ready", "revision-2")
+    second = subject.run(TRADE_DATE, NOW)
+
+    assert first.snapshot.sequence == 1
+    assert first.snapshot.ai_status == "unavailable"
+    assert second.snapshot.sequence == 2
+    assert second.snapshot.previous_snapshot_id == first.snapshot.snapshot_id
+    assert second.snapshot.ai_status == "ready"
+    assert [(item.action, item.confidence) for item in second.advice] == [
+        (item.action, item.confidence) for item in first.advice
+    ]
+    assert all(item.plain_language_explanation == "通俗解释" for item in second.advice)
     assert len(repository.cycles()) == 2

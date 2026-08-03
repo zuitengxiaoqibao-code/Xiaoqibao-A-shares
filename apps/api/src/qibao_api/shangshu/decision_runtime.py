@@ -296,6 +296,10 @@ class DecisionSymbolSource:
         return tuple(symbols)
 
 
+class IncompleteQuoteBatchError(ValueError):
+    pass
+
+
 class TencentPollingMarketFeed:
     capabilities = frozenset({"snapshot", "snapshot_many"})
 
@@ -307,29 +311,84 @@ class TencentPollingMarketFeed:
         self.compliance_repository.require_feature_sources("realtime_quotes", AssetKind.A_SHARE)
         if len(symbols) != len(set(symbols)):
             raise ValueError("requested symbols must be unique")
-        snapshots = []
+        if not symbols:
+            return ()
+        try:
+            payloads = self._request_payloads(symbols)
+        except (httpx.HTTPError, UnicodeError):
+            payloads = {}
+        snapshots = self._valid_snapshots(symbols, payloads, cutoff=cutoff)
+        retry_symbols = tuple(symbol for symbol in symbols if symbol not in snapshots)
+        if retry_symbols:
+            retry_payloads = self._request_payloads(retry_symbols)
+            snapshots.update(
+                self._valid_snapshots(retry_symbols, retry_payloads, cutoff=cutoff)
+            )
+        missing = tuple(symbol for symbol in symbols if symbol not in snapshots)
+        if missing:
+            raise IncompleteQuoteBatchError(
+                f"incomplete Tencent quote batch: {','.join(missing)}"
+            )
+        return tuple(snapshots[symbol] for symbol in symbols)
+
+    def _request_payloads(self, symbols: tuple[str, ...]) -> dict[str, str]:
+        instruments = tuple(f"{market_prefix(symbol)}{symbol}" for symbol in symbols)
+        response = self.client.get(
+            f"https://qt.gtimg.cn/q={','.join(instruments)}"
+        )
+        response.raise_for_status()
+        raw = response.content.decode("gbk", errors="strict")
+        expected = dict(zip(instruments, symbols, strict=True))
+        payloads = {}
+        for statement in raw.split(";"):
+            statement = statement.strip()
+            if not statement.startswith("v_") or '="' not in statement:
+                continue
+            key, payload = statement.split('="', 1)
+            if not payload.endswith('"'):
+                continue
+            symbol = expected.get(key.removeprefix("v_"))
+            if symbol is not None:
+                payloads[symbol] = payload[:-1]
+        return payloads
+
+    def _valid_snapshots(
+        self, symbols: tuple[str, ...], payloads: dict[str, str],
+        *, cutoff: datetime | None,
+    ) -> dict[str, MarketFeedSnapshot]:
+        snapshots = {}
         for symbol in symbols:
-            response = self.client.get(f"https://qt.gtimg.cn/q={market_prefix(symbol)}{symbol}")
-            response.raise_for_status()
-            raw = response.content.decode("gbk", errors="strict")
-            if '="' not in raw:
-                raise ValueError("Tencent quote response has no payload")
-            payload = raw.split('="', 1)[1].rsplit('"', 1)[0]
-            item = parse_tencent_snapshot(payload, "tencent")
-            if item.volume is None:
-                raise ValueError("Tencent quote payload has no volume")
-            observed_at = item.observed_at.replace(tzinfo=CHINA_TZ)
-            fetched_at = datetime.now(timezone.utc)
-            if cutoff is not None and observed_at > cutoff:
-                raise ValueError("Tencent observation is after decision cutoff")
-            change = item.price - item.previous_close
-            snapshots.append(MarketFeedSnapshot(
-                symbol=item.symbol, price=item.price, change=change,
-                change_percent=change / item.previous_close * Decimal("100"), volume=item.volume,
-                source="tencent", observed_at=observed_at, fetched_at=fetched_at,
-                quality="ready", source_snapshot_id=_identity("tencent", payload),
-            ))
-        return tuple(snapshots)
+            payload = payloads.get(symbol)
+            if payload is None:
+                continue
+            try:
+                snapshots[symbol] = self._snapshot_from_payload(
+                    symbol, payload, cutoff=cutoff,
+                )
+            except (ArithmeticError, TypeError, ValueError):
+                continue
+        return snapshots
+
+    @staticmethod
+    def _snapshot_from_payload(
+        symbol: str, payload: str, *, cutoff: datetime | None,
+    ) -> MarketFeedSnapshot:
+        item = parse_tencent_snapshot(payload, "tencent")
+        if item.symbol != symbol:
+            raise ValueError("Tencent quote symbol does not match request")
+        if item.volume is None:
+            raise ValueError("Tencent quote payload has no volume")
+        observed_at = item.observed_at.astimezone(CHINA_TZ)
+        if cutoff is not None and observed_at > cutoff:
+            raise ValueError("Tencent observation is after decision cutoff")
+        change = item.price - item.previous_close
+        return MarketFeedSnapshot(
+            symbol=item.symbol, price=item.price, change=change,
+            change_percent=change / item.previous_close * Decimal("100"), volume=item.volume,
+            source="tencent", observed_at=observed_at,
+            fetched_at=datetime.now(timezone.utc), quality="ready",
+            source_snapshot_id=_identity("tencent", payload),
+        )
 
     def snapshot(self, symbol: str, *, cutoff: datetime | None = None):
         return self.snapshot_many((symbol,), cutoff=cutoff)[0]
@@ -341,6 +400,7 @@ class DeterministicIntradayEvaluator:
     def evaluate(self, context) -> IntradayEvaluationResult:
         by_symbol = {item.symbol: item for item in context.quotes}
         advice = []
+        referenced_event_ids = set()
         candidate_keys = {
             (item.symbol, horizon)
             for horizon, entries in (
@@ -365,7 +425,8 @@ class DeterministicIntradayEvaluator:
             if quote is None:
                 continue
             evidence = EvidenceReference(
-                evidence_id=quote.source_snapshot_id, source=quote.source,
+                evidence_id=quote.source_snapshot_id, evidence_kind="live_quote",
+                source=quote.source,
                 snapshot_id=quote.source_snapshot_id,
                 summary=self._quote_summary(quote),
                 observed_at=quote.observed_at,
@@ -375,12 +436,16 @@ class DeterministicIntradayEvaluator:
                 if self._event_matches(item, current.symbol)
                 and context.window_start <= item.normalized_at <= context.window_end
             )
+            referenced_event_ids.update(
+                item.event_id for item in related_events if item.event_id
+            )
             news_supporting = ()
             news_contrary = tuple(
                 self._event_evidence(item) for item in related_events
                 if self._risk_event(item)
             )
             action, conclusion, observation_state, confidence = self._signal_for_quote(quote)
+            display_change_percent = self._format_percent(quote.change_percent)
             risks = tuple(dict.fromkeys((
                 *current.risks,
                 *getattr(context.risk_input, "risks", ()),
@@ -389,7 +454,8 @@ class DeterministicIntradayEvaluator:
             ))) or ("盘中变化仍需后续行情确认",)
             advice.append(current.model_copy(update={
                 "supporting_evidence": tuple(dict.fromkeys((
-                    *current.supporting_evidence, evidence, *news_supporting,
+                    *self._stable_supporting_evidence(current.supporting_evidence),
+                    evidence, *news_supporting,
                 ))),
                 "contrary_evidence": news_contrary,
                 "action": action, "observation_state": observation_state,
@@ -400,7 +466,7 @@ class DeterministicIntradayEvaluator:
                     "membership": current.quantitative_result.get("membership"),
                 },
                 "plain_language_explanation": (
-                    f"最新价 {quote.price}，盘中涨跌 {quote.change_percent}%。"
+                    f"最新价 {quote.price}，盘中涨跌 {display_change_percent}%。"
                     f"当前建议是{conclusion}，不是立即交易指令。"
                 ),
             }))
@@ -408,15 +474,36 @@ class DeterministicIntradayEvaluator:
             context.candidate_factor_input, context.risk_input,
             context.compliance_input, context.evidence_input,
         )
-        quote_ready = bool(context.quotes) and all(
-            getattr(item, "quality", "ready") == "ready"
-            and 0 <= (context.now - item.observed_at).total_seconds() <= 180
+        quote_quality_blocked = any(
+            getattr(item, "quality", "ready") != "ready"
             for item in context.quotes
         )
+        quote_timestamp_invalid = any(
+            item.observed_at > context.now for item in context.quotes
+        )
+        quote_stale = any(
+            getattr(item, "quality", "ready") == "ready"
+            and item.observed_at <= context.now
+            and not self._quote_is_fresh(item, context.now)
+            for item in context.quotes
+        )
+        quote_ready = bool(context.quotes) and not (
+            quote_quality_blocked or quote_timestamp_invalid or quote_stale
+        )
+        risk_available = getattr(context.risk_input, "available", True)
+        compliance_available = getattr(context.compliance_input, "available", True)
         compliance_allowed = getattr(context.compliance_input, "allowed", True)
-        available = all(getattr(item, "available", True) for item in inputs)
-        available = available and quote_ready and compliance_allowed
-        if not quote_ready or not compliance_allowed:
+        quality_reasons = tuple(reason for reason, blocked in (
+            ("live_quotes_unavailable", not context.quotes),
+            ("live_quote_quality_blocked", quote_quality_blocked),
+            ("live_quote_timestamp_invalid", quote_timestamp_invalid),
+            ("live_quotes_stale", quote_stale),
+            ("risk_unavailable", not risk_available),
+            ("compliance_unavailable", not compliance_available),
+            ("compliance_not_allowed", not compliance_allowed),
+        ) if blocked)
+        available = not quality_reasons and quote_ready
+        if not available:
             advice = []
         market_state = self._market_state(context.quotes)
         return IntradayEvaluationResult(
@@ -424,12 +511,13 @@ class DeterministicIntradayEvaluator:
             source_content={
                 "input_ids": [getattr(item, "snapshot_id", None) for item in inputs],
                 "quote_ids": [item.source_snapshot_id for item in context.quotes],
+                "news_event_ids": sorted(referenced_event_ids),
             },
             market_state=market_state, data_quality="ready" if available else "blocked",
             status="ready" if available else "blocked",
             candidate_snapshot_id=getattr(context.candidate_factor_input.board, "snapshot_id", None),
-            news_event_ids=tuple(getattr(item, "event_id", "") for item in context.evidence_input),
-            risk_event_ids=(),
+            news_event_ids=tuple(sorted(referenced_event_ids)),
+            risk_event_ids=(), quality_reasons=quality_reasons,
         )
 
     @classmethod
@@ -461,7 +549,31 @@ class DeterministicIntradayEvaluator:
 
     @staticmethod
     def _quote_summary(quote):
-        return f"盘中行情：最新价 {quote.price}，涨跌 {quote.change_percent}%（{quote.source}）"
+        display_change_percent = DeterministicIntradayEvaluator._format_percent(
+            quote.change_percent
+        )
+        return f"盘中行情：最新价 {quote.price}，涨跌 {display_change_percent}%（{quote.source}）"
+
+    @staticmethod
+    def _format_percent(value) -> str:
+        return f"{Decimal(str(value)):.2f}"
+
+    @staticmethod
+    def _quote_is_fresh(quote, now: datetime) -> bool:
+        if getattr(quote, "quality", "ready") != "ready":
+            return False
+        age_seconds = (now - quote.observed_at).total_seconds()
+        if age_seconds < 0:
+            return False
+        if age_seconds <= 180:
+            return True
+        local_now = now.astimezone(CHINA_TZ)
+        local_observed = quote.observed_at.astimezone(CHINA_TZ)
+        return (
+            time(11, 30) <= local_now.time() < time(13)
+            and local_observed.date() == local_now.date()
+            and local_observed.time() >= time(11, 27)
+        )
 
     @staticmethod
     def _event_matches(event, symbol):
@@ -480,9 +592,27 @@ class DeterministicIntradayEvaluator:
         citations = getattr(event, "citations", ())
         publisher = citations[0].publisher if citations else "verified-news"
         return EvidenceReference(
-            evidence_id=f"news-{event.event_id}", source=publisher,
+            evidence_id=f"news-{event.event_id}", evidence_kind="verified_news",
+            source=publisher,
             snapshot_id=event.event_id, summary=event.headline,
             observed_at=event.normalized_at,
+        )
+
+    @staticmethod
+    def _stable_supporting_evidence(evidence):
+        return tuple(
+            item for item in evidence
+            if not DeterministicIntradayEvaluator._is_live_quote_evidence(item)
+        )
+
+    @staticmethod
+    def _is_live_quote_evidence(evidence) -> bool:
+        if getattr(evidence, "evidence_kind", "other") == "live_quote":
+            return True
+        return (
+            getattr(evidence, "evidence_kind", "other") == "other"
+            and evidence.evidence_id == evidence.snapshot_id
+            and evidence.evidence_id.startswith(f"{evidence.source}-")
         )
 
     @staticmethod
@@ -501,6 +631,7 @@ class DeterministicIntradayEvaluator:
                     evidence_id=(
                         f"factor-{candidate_input.board.snapshot_id}-{entry.horizon}-{entry.symbol}"
                     ),
+                    evidence_kind="candidate_factor",
                     source=entry.factor_snapshot.source,
                     snapshot_id=candidate_input.board.snapshot_id or "candidate-board",
                     summary=(

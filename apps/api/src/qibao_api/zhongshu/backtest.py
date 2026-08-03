@@ -21,8 +21,9 @@ LIMIT_THRESHOLD = Decimal("0.098")
 class BacktestEngine:
     def run(self, request: BacktestRequest, bars: list[DailyBar]) -> BacktestResult:
         ordered = sorted(bars, key=lambda bar: bar.trade_date)
-        if len(ordered) <= request.slow_window:
-            raise ValueError("not enough bars for selected slow window")
+        required_bars = self._required_bars(request)
+        if len(ordered) <= required_bars:
+            raise ValueError("not enough bars for selected strategy parameters")
 
         result = self._run_core(request, ordered)
         train, validation, out_of_sample = split_bars(
@@ -33,7 +34,7 @@ class BacktestEngine:
             ("validation", validation),
             ("out_of_sample", out_of_sample),
         )
-        if all(len(segment_bars) > request.slow_window for _, segment_bars in named_segments):
+        if all(len(segment_bars) > required_bars for _, segment_bars in named_segments):
             result.segments = [
                 self._attribute_segment(name, segment_bars, result.equity_curve)
                 for name, segment_bars in named_segments
@@ -48,9 +49,14 @@ class BacktestEngine:
         shares = 0
         trades: list[Trade] = []
         points: list[EquityPoint] = []
-        warnings: list[str] = []
+        warnings: list[str] = [
+            "corporate_actions_not_adjusted",
+            "benchmark_not_available",
+            "survivorship_bias_not_eliminated",
+        ]
         total_cost = Decimal("0")
         pending: tuple[str, object] | None = None
+        entry_price: Decimal | None = None
 
         for index, bar in enumerate(ordered):
             if pending and index > 0:
@@ -69,6 +75,7 @@ class BacktestEngine:
                             fees = gross * request.commission_rate
                             cash -= gross + fees
                             shares = quantity
+                            entry_price = price
                             total_cost += fees + (price - bar.open) * quantity
                             trades.append(Trade(side="buy", signal_date=signal_date,
                                 trade_date=bar.trade_date, price=price, shares=quantity,
@@ -86,22 +93,16 @@ class BacktestEngine:
                             trade_date=bar.trade_date, price=price, shares=shares,
                             gross_amount=gross, fees=fees))
                         shares = 0
+                        entry_price = None
                 pending = None
 
             market_value = bar.close * shares
             points.append(EquityPoint(trade_date=bar.trade_date, equity=cash + market_value,
                 cash=cash, shares=shares, market_value=market_value))
 
-            if index >= request.slow_window - 1:
-                current_fast = self._average(ordered, index, request.fast_window)
-                current_slow = self._average(ordered, index, request.slow_window)
-                if index >= request.slow_window:
-                    previous_fast = self._average(ordered, index - 1, request.fast_window)
-                    previous_slow = self._average(ordered, index - 1, request.slow_window)
-                    if previous_fast <= previous_slow and current_fast > current_slow:
-                        pending = ("buy", bar.trade_date)
-                    elif previous_fast >= previous_slow and current_fast < current_slow:
-                        pending = ("sell", bar.trade_date)
+            signal = self._signal(request, ordered, index, shares, entry_price)
+            if signal is not None:
+                pending = (signal, bar.trade_date)
 
         ending_equity = points[-1].equity
         total_return = ending_equity / request.initial_cash - Decimal("1")
@@ -154,3 +155,64 @@ class BacktestEngine:
     def _average(bars: list[DailyBar], index: int, window: int) -> Decimal:
         closes = [bar.close for bar in bars[index - window + 1:index + 1]]
         return sum(closes, Decimal("0")) / Decimal(window)
+
+    @staticmethod
+    def _volume_average(bars: list[DailyBar], index: int, window: int) -> Decimal:
+        values = [Decimal(bar.volume) for bar in bars[index - window + 1:index + 1]]
+        return sum(values, Decimal("0")) / Decimal(window)
+
+    @staticmethod
+    def _required_bars(request: BacktestRequest) -> int:
+        if request.strategy == "momentum_breakout":
+            return max(request.lookback_window, request.exit_window)
+        if request.strategy == "low_volume_pullback":
+            return max(request.slow_window, request.fast_window, request.volume_window)
+        return request.slow_window
+
+    def _signal(
+        self,
+        request: BacktestRequest,
+        bars: list[DailyBar],
+        index: int,
+        shares: int,
+        entry_price: Decimal | None,
+    ) -> str | None:
+        bar = bars[index]
+        if shares > 0 and entry_price is not None:
+            return_since_entry = bar.close / entry_price - Decimal("1")
+            if return_since_entry <= -request.stop_loss_percent or return_since_entry >= request.take_profit_percent:
+                return "sell"
+
+        if request.strategy == "sma_cross":
+            if index < request.slow_window:
+                return None
+            current_fast = self._average(bars, index, request.fast_window)
+            current_slow = self._average(bars, index, request.slow_window)
+            previous_fast = self._average(bars, index - 1, request.fast_window)
+            previous_slow = self._average(bars, index - 1, request.slow_window)
+            if shares == 0 and previous_fast <= previous_slow and current_fast > current_slow:
+                return "buy"
+            if shares > 0 and previous_fast >= previous_slow and current_fast < current_slow:
+                return "sell"
+            return None
+
+        if request.strategy == "momentum_breakout":
+            if index < request.lookback_window:
+                return None
+            prior_closes = [item.close for item in bars[index - request.lookback_window:index]]
+            if shares == 0 and bar.close > max(prior_closes):
+                return "buy"
+            if shares > 0 and bar.close < self._average(bars, index, request.exit_window):
+                return "sell"
+            return None
+
+        if index < max(request.slow_window, request.volume_window):
+            return None
+        fast = self._average(bars, index, request.fast_window)
+        slow = self._average(bars, index, request.slow_window)
+        average_volume = self._volume_average(bars, index - 1, request.volume_window)
+        if shares == 0 and bar.close > slow and bar.close <= fast and Decimal(bar.volume) <= average_volume * request.volume_ratio:
+            return "buy"
+        if shares > 0 and bar.close < slow:
+            return "sell"
+        return None

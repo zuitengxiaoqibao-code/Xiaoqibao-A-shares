@@ -1,10 +1,15 @@
-from datetime import datetime
+from datetime import date, datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
 
 from qibao_api.contracts.bars import DataSourceState, SyncReport
-from qibao_api.dependencies import get_market_data_service
+from qibao_api.contracts.history_sync import HistoryCoverageSummary, HistorySyncJob
+from qibao_api.dependencies import (
+    get_full_market_history_service,
+    get_history_sync_executor,
+    get_market_data_service,
+)
 from qibao_api.main import app
 
 
@@ -41,9 +46,96 @@ class UnexpectedMarketDataService:
         raise AssertionError(f"service must not receive invalid A-share code {symbol}")
 
 
+def make_history_job(
+    *,
+    mode: str = "backfill",
+    target_date: date = date(2026, 7, 27),
+    state: str = "pending",
+) -> HistorySyncJob:
+    observed_at = datetime(2026, 7, 27, 9, 30, tzinfo=timezone.utc)
+    return HistorySyncJob(
+        job_id="history-sync-test",
+        mode=mode,
+        target_date=target_date,
+        state=state,
+        total_count=5980,
+        ready_count=12,
+        failed_count=0,
+        skipped_count=0,
+        pending_count=5968,
+        tdx_ready_count=10,
+        baidu_ready_count=2,
+        created_at=observed_at,
+        updated_at=observed_at,
+    )
+
+
+class RecordingFullMarketHistoryService:
+    def __init__(self) -> None:
+        self.current = None
+        self.run_calls: list[str] = []
+        self.incremental_dates: list[date] = []
+        self.pause_calls: list[str] = []
+
+    def create_backfill(self) -> HistorySyncJob:
+        self.current = make_history_job()
+        return self.current
+
+    def create_incremental(self, target_date: date) -> HistorySyncJob:
+        self.incremental_dates.append(target_date)
+        self.current = make_history_job(mode="incremental", target_date=target_date)
+        return self.current
+
+    def current_job(self) -> HistorySyncJob | None:
+        return self.current
+
+    def coverage(self, target_date: date) -> HistoryCoverageSummary:
+        return HistoryCoverageSummary(
+            target_date=target_date,
+            universe_count=5980,
+            backfill_complete_count=12,
+            eligible_count=13,
+            target_date_count=7,
+        )
+
+    def pause(self, job_id: str) -> HistorySyncJob:
+        self.pause_calls.append(job_id)
+        return make_history_job(state="paused")
+
+    def resume(self, job_id: str) -> HistorySyncJob:
+        self.current = make_history_job(state="pending")
+        return self.current
+
+    def run(self, job_id: str) -> HistorySyncJob:
+        self.run_calls.append(job_id)
+        return make_history_job(state="completed")
+
+
+class RecordingExecutor:
+    def __init__(self) -> None:
+        self.submissions = []
+
+    def submit(self, function, *args):
+        self.submissions.append((function, args))
+        return object()
+
+
 def make_client() -> TestClient:
     app.dependency_overrides[get_market_data_service] = lambda: FakeMarketDataService()
     return TestClient(app)
+
+
+def make_history_client(service, executor) -> TestClient:
+    app.dependency_overrides[get_full_market_history_service] = lambda: service
+    app.dependency_overrides[get_history_sync_executor] = lambda: executor
+    return TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def clear_dependency_overrides():
+    app.dependency_overrides.clear()
+    yield
+    app.dependency_overrides.clear()
 
 
 def test_sync_endpoint_returns_actual_source() -> None:
@@ -76,3 +168,85 @@ def test_history_routes_reject_bond_code_before_downstream_call(
         response = getattr(client, method)(f"/api/v1/a-shares/{symbol}{suffix}")
 
     assert response.status_code == 422
+
+
+def test_backfill_route_returns_before_background_work_finishes() -> None:
+    service = RecordingFullMarketHistoryService()
+    executor = RecordingExecutor()
+
+    with make_history_client(service, executor) as client:
+        response = client.post("/api/v1/a-shares/history-sync/backfill")
+
+    assert response.status_code == 202
+    assert response.json()["state"] == "pending"
+    assert service.run_calls == []
+    assert executor.submissions[0][1] == ("history-sync-test",)
+
+
+def test_incremental_route_uses_requested_target_date() -> None:
+    service = RecordingFullMarketHistoryService()
+    executor = RecordingExecutor()
+
+    with make_history_client(service, executor) as client:
+        response = client.post(
+            "/api/v1/a-shares/history-sync/incremental?target_date=2026-07-24"
+        )
+
+    assert response.status_code == 202
+    assert response.json()["mode"] == "incremental"
+    assert service.incremental_dates == [date(2026, 7, 24)]
+
+
+def test_current_history_sync_route_returns_latest_job() -> None:
+    service = RecordingFullMarketHistoryService()
+    service.current = make_history_job(state="running")
+
+    with make_history_client(service, RecordingExecutor()) as client:
+        response = client.get("/api/v1/a-shares/history-sync/current")
+
+    assert response.status_code == 200
+    assert response.json()["job_id"] == "history-sync-test"
+    assert response.json()["state"] == "running"
+
+
+def test_history_coverage_route_returns_verified_counts() -> None:
+    service = RecordingFullMarketHistoryService()
+
+    with make_history_client(service, RecordingExecutor()) as client:
+        response = client.get(
+            "/api/v1/a-shares/history-sync/coverage?target_date=2026-07-24"
+        )
+
+    assert response.status_code == 200
+    assert response.json()["universe_count"] == 5980
+    assert response.json()["eligible_count"] == 13
+    assert response.json()["target_date_count"] == 7
+
+
+def test_pause_history_sync_route_requests_a_safe_stop() -> None:
+    service = RecordingFullMarketHistoryService()
+
+    with make_history_client(service, RecordingExecutor()) as client:
+        response = client.post(
+            "/api/v1/a-shares/history-sync/history-sync-test/pause"
+        )
+
+    assert response.status_code == 200
+    assert response.json()["state"] == "paused"
+    assert service.pause_calls == ["history-sync-test"]
+
+
+def test_resume_history_sync_route_submits_the_paused_job() -> None:
+    service = RecordingFullMarketHistoryService()
+    service.current = make_history_job(state="paused")
+    executor = RecordingExecutor()
+
+    with make_history_client(service, executor) as client:
+        response = client.post(
+            "/api/v1/a-shares/history-sync/history-sync-test/resume"
+        )
+
+    assert response.status_code == 202
+    assert response.json()["state"] == "pending"
+    assert service.run_calls == []
+    assert executor.submissions[0][1] == ("history-sync-test",)

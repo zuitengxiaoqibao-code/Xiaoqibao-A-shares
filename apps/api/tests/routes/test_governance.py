@@ -122,8 +122,13 @@ def test_audit_store_unavailable_is_explicit() -> None:
 def test_xingbu_status_exposes_research_risk_limits(tmp_path) -> None:
     client, _, _ = make_client(tmp_path)
     response = client.get("/api/v1/xingbu/status")
-    assert response.json()["rule_version"] == "research-risk-v1"
+    assert response.json()["rule_version"] == "research-risk-v2"
     assert "recent_rejections" not in response.json()
+    assert response.json()["overall_level"] in {"low", "medium", "high", "unavailable"}
+    assert {item["id"] for item in response.json()["dimensions"]} >= {
+        "market_sentiment", "data_freshness", "evidence_coverage", "news_events"
+    }
+    assert isinstance(response.json()["alerts"], list)
 
 
 def test_dongchang_audit_run_generates_and_persists_findings(tmp_path) -> None:

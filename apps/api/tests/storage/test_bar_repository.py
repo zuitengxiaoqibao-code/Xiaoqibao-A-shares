@@ -100,6 +100,69 @@ def test_latest_many_respects_as_of_and_returns_chronological_bars(tmp_path) -> 
     assert result["600000"][-1].trade_date == as_of
 
 
+def test_append_missing_ignores_existing_and_duplicate_symbol_dates(tmp_path) -> None:
+    repository = BarRepository(tmp_path / "market.duckdb", tmp_path / "parquet")
+    first, second = make_history("600000", 2)
+    repository.upsert([first])
+
+    inserted = repository.append_missing([first, second, second])
+
+    assert inserted == 1
+    assert [bar.trade_date for bar in repository.latest("600000", 10)] == [
+        second.trade_date,
+        first.trade_date,
+    ]
+    with duckdb.connect(str(repository.database_path)) as connection:
+        assert connection.execute("SELECT count(*) FROM daily_bars").fetchone()[0] == 2
+
+
+def test_coverage_includes_missing_symbols_and_respects_target_date(tmp_path) -> None:
+    repository = BarRepository(tmp_path / "market.duckdb", tmp_path / "parquet")
+    history = make_history("600000", 3)
+    repository.upsert(history)
+
+    coverage = repository.coverage(
+        ["600000", "000001"], target_date=history[-2].trade_date
+    )
+
+    assert coverage["600000"].bar_count == 2
+    assert coverage["600000"].latest_trade_date == history[-2].trade_date
+    assert coverage["000001"].bar_count == 0
+    assert coverage["000001"].latest_trade_date is None
+
+
+def test_latest_many_keeps_full_window_after_same_day_revisions(tmp_path) -> None:
+    repository = BarRepository(tmp_path / "market.duckdb", tmp_path / "parquet")
+    bars = make_history("600000", 80)
+    repository.upsert(bars)
+
+    revised = [
+        DailyBar(
+            symbol=bar.symbol,
+            trade_date=bar.trade_date,
+            open=bar.open,
+            high=bar.high + Decimal("0.05"),
+            low=bar.low,
+            close=bar.close + Decimal("0.05"),
+            volume=bar.volume + 1,
+            amount=bar.amount + Decimal("5"),
+            source="revision",
+        )
+        for bar in bars[::2]
+    ]
+    repository.upsert(revised)
+    as_of = bars[-1].trade_date
+
+    result = repository.latest_many(["600000"], limit=60, as_of=as_of)
+    returned = result["600000"]
+
+    assert len(returned) == 60
+    assert len({bar.trade_date for bar in returned}) == 60
+    assert returned[0].trade_date < returned[-1].trade_date
+    assert returned[-1].trade_date == as_of
+    assert returned[-2].source == "revision"
+
+
 def test_latest_many_rejects_non_a_share_symbols(tmp_path) -> None:
     repository = BarRepository(tmp_path / "market.duckdb", tmp_path / "parquet")
 

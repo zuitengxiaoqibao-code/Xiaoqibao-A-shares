@@ -1,17 +1,24 @@
 import asyncio
 from collections.abc import Callable
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Literal, Protocol
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from qibao_api.a_shares.candidates import build_candidate_board
+from qibao_api.a_shares.candidates import (
+    MINIMUM_AVERAGE_AMOUNT,
+    build_candidate_board,
+    score_candidates,
+)
 from qibao_api.a_shares.factors import InsufficientHistoryError, build_factor_snapshot
 from qibao_api.a_shares.fundamentals import FundamentalSnapshot
 from qibao_api.a_shares.models import (
     CandidateBoard,
     CandidateExclusion,
+    CandidateScoreBoard,
+    CandidateScoreItem,
     FACTOR_VERSION,
 )
 from qibao_api.contracts.bars import DailyBar
@@ -39,6 +46,7 @@ class DiagnosisSection(BaseModel):
     status: Literal["ready", "partial", "unavailable"]
     observed_at: datetime | date | None = None
     source: str
+    reason: str | None = None
     metrics: dict[str, Decimal | int | str | None] = Field(default_factory=dict)
     evidence_ids: tuple[str, ...] = ()
     explanation: str
@@ -127,6 +135,7 @@ class AShareDiagnosisService:
         clock: Callable[[], datetime] = datetime.now,
         classification_repository: ClassificationRepositoryPort | None = None,
         fund_flow_repository: FundFlowRepositoryPort | None = None,
+        trading_calendar=None,
     ) -> None:
         self.bar_repository = bar_repository
         self.market_source = market_source
@@ -136,21 +145,156 @@ class AShareDiagnosisService:
         self.clock = clock
         self.classification_repository = classification_repository
         self.fund_flow_repository = fund_flow_repository
+        self.trading_calendar = trading_calendar
 
     async def inspect_sources(
         self, symbol: str, as_of: date, *, cutoff: datetime | None = None
     ) -> dict[str, tuple[object | None, str | None]]:
-        market = await self._market(
-            symbol, as_of, cutoff=cutoff, degrade_authorization=True
-        )
-        finance = await self._finance(
-            symbol, as_of, cutoff=cutoff, degrade_authorization=True
+        market, finance = await asyncio.gather(
+            self._market(
+                symbol, as_of, cutoff=cutoff, degrade_authorization=True
+            ),
+            self._finance(
+                symbol, as_of, cutoff=cutoff, degrade_authorization=True
+            ),
         )
         return {"quote": market, "finance": finance}
 
     def candidates(
         self, as_of: date, limit: int = 20, *, cutoff: datetime | None = None,
     ) -> CandidateBoard:
+        factor_as_of = self._candidate_as_of(as_of, cutoff)
+        symbols, histories, snapshots, exclusions = self._candidate_inputs(
+            factor_as_of, cutoff=cutoff
+        )
+        sources = tuple(sorted({item.source for item in snapshots}))
+        latest_trade_date = max(
+            (item.latest_trade_date for item in snapshots if item.latest_trade_date),
+            default=None,
+        )
+        eligible_size = sum(
+            item.liquidity_amount_20d >= MINIMUM_AVERAGE_AMOUNT
+            for item in snapshots
+        )
+        if not snapshots:
+            board = CandidateBoard(
+                as_of=factor_as_of, universe_size=len(symbols), eligible_size=0,
+                latest_trade_date=latest_trade_date, sources=sources,
+                short_term=[], swing=[], exclusions=exclusions,
+            )
+        else:
+            board = build_candidate_board(snapshots, limit)
+            board = board.model_copy(update={
+                "universe_size": len(symbols),
+                "eligible_size": eligible_size,
+                "latest_trade_date": latest_trade_date,
+                "sources": sources,
+                "exclusions": sorted(
+                    [*exclusions, *board.exclusions], key=lambda item: item.symbol
+                ),
+            })
+        if self.research_repository is None:
+            return board
+        input_payload = {
+            "as_of": factor_as_of.isoformat(),
+            "factor_version": FACTOR_VERSION,
+            "histories": {
+                symbol: [bar.model_dump(mode="json") for bar in histories.get(symbol, [])]
+                for symbol in symbols
+            },
+        }
+        snapshot_id = self.research_repository.append_candidate_board(
+            board, input_payload=input_payload
+        )
+        return self.research_repository.get_candidate_board(snapshot_id)
+
+    def candidate_scores(
+        self,
+        as_of: date,
+        symbols: tuple[str, ...],
+        *,
+        horizon: Literal["short_term", "swing"] = "short_term",
+        cutoff: datetime | None = None,
+    ) -> CandidateScoreBoard:
+        factor_as_of = self._candidate_as_of(as_of, cutoff)
+        universe, _, snapshots, exclusions = self._candidate_inputs(
+            factor_as_of, cutoff=cutoff
+        )
+        eligible = [
+            item for item in snapshots
+            if item.liquidity_amount_20d >= MINIMUM_AVERAGE_AMOUNT
+        ]
+        scored = {
+            item.symbol: item for item in score_candidates(eligible, horizon)
+        }
+        excluded = {item.symbol: item for item in exclusions}
+        for item in snapshots:
+            if item.liquidity_amount_20d < MINIMUM_AVERAGE_AMOUNT:
+                excluded[item.symbol] = CandidateExclusion(
+                    symbol=item.symbol,
+                    reason_code="insufficient_liquidity",
+                    observed_value=item.liquidity_amount_20d,
+                    threshold=MINIMUM_AVERAGE_AMOUNT,
+                )
+        items = []
+        for symbol in dict.fromkeys(symbols):
+            entry = scored.get(symbol)
+            exclusion = excluded.get(symbol)
+            if entry is not None:
+                items.append(CandidateScoreItem(
+                    symbol=symbol, status="ready", score=entry.score,
+                    latest_trade_date=entry.factor_snapshot.latest_trade_date,
+                ))
+            elif exclusion is not None and exclusion.reason_code == "insufficient_liquidity":
+                items.append(CandidateScoreItem(
+                    symbol=symbol, status="insufficient_liquidity",
+                    reason="liquidity_below_threshold",
+                ))
+            elif exclusion is not None and exclusion.reason_code == "stale_history":
+                items.append(CandidateScoreItem(
+                    symbol=symbol, status="stale_history",
+                    reason="history_not_through_confirmed_day",
+                ))
+            elif exclusion is not None:
+                items.append(CandidateScoreItem(
+                    symbol=symbol, status="invalid_history", reason="history_invalid",
+                ))
+            else:
+                items.append(CandidateScoreItem(
+                    symbol=symbol, status="insufficient_history",
+                    reason="history_requires_60_bars",
+                ))
+        return CandidateScoreBoard(
+            as_of=factor_as_of,
+            horizon=horizon,
+            universe_size=len(universe),
+            eligible_size=len(eligible),
+            latest_trade_date=max(
+                (item.latest_trade_date for item in snapshots if item.latest_trade_date),
+                default=None,
+            ),
+            sources=tuple(sorted({item.source for item in snapshots})),
+            items=tuple(items),
+        )
+
+    def _candidate_as_of(
+        self, requested: date, cutoff: datetime | None,
+    ) -> date:
+        if self.trading_calendar is None:
+            return requested
+        reference = cutoff or self.clock()
+        if reference.tzinfo is None:
+            reference = reference.replace(tzinfo=ZoneInfo("Asia/Shanghai"))
+        local = reference.astimezone(ZoneInfo("Asia/Shanghai"))
+        if not self.trading_calendar.is_trading_day(requested):
+            return self.trading_calendar.previous_trading_day(requested)
+        if requested == local.date() and local.time() < time(15, 0):
+            return self.trading_calendar.previous_trading_day(requested)
+        return requested
+
+    def _candidate_inputs(
+        self, as_of: date, *, cutoff: datetime | None = None,
+    ):
         if cutoff is None:
             symbols = self.bar_repository.symbols_with_history(60, as_of)
             histories = self.bar_repository.latest_many(symbols, 60, as_of)
@@ -163,36 +307,23 @@ class AShareDiagnosisService:
         exclusions = []
         for symbol in symbols:
             try:
-                snapshots.append(build_factor_snapshot(histories.get(symbol, []), as_of))
+                snapshot = build_factor_snapshot(histories.get(symbol, []), as_of)
+                if (
+                    self.trading_calendar is not None
+                    and snapshot.latest_trade_date != as_of
+                ):
+                    exclusions.append(CandidateExclusion(
+                        symbol=symbol,
+                        reason_code="stale_history",
+                        detail="history does not reach the confirmed factor date",
+                    ))
+                    continue
+                snapshots.append(snapshot)
             except (InsufficientHistoryError, ValueError) as error:
                 exclusions.append(CandidateExclusion(
                     symbol=symbol, reason_code="invalid_history", detail=str(error)
                 ))
-        if not snapshots:
-            board = CandidateBoard(
-                as_of=as_of, short_term=[], swing=[], exclusions=exclusions
-            )
-        else:
-            board = build_candidate_board(snapshots, limit)
-            board = board.model_copy(update={
-                "exclusions": sorted(
-                    [*exclusions, *board.exclusions], key=lambda item: item.symbol
-                )
-            })
-        if self.research_repository is None:
-            return board
-        input_payload = {
-            "as_of": as_of.isoformat(),
-            "factor_version": FACTOR_VERSION,
-            "histories": {
-                symbol: [bar.model_dump(mode="json") for bar in histories.get(symbol, [])]
-                for symbol in symbols
-            },
-        }
-        snapshot_id = self.research_repository.append_candidate_board(
-            board, input_payload=input_payload
-        )
-        return self.research_repository.get_candidate_board(snapshot_id)
+        return symbols, histories, snapshots, exclusions
 
     async def diagnose(
         self, symbol: str, as_of: date, *, persist: bool = True,
@@ -203,16 +334,20 @@ class AShareDiagnosisService:
             if cutoff is not None
             else self.bar_repository.latest_many([symbol], 120, as_of)
         ).get(symbol, [])
-        market, market_error = await self._market(
-            symbol, as_of, cutoff=cutoff, degrade_authorization=not persist
+        market_result, finance_result = await asyncio.gather(
+            self._market(
+                symbol, as_of, cutoff=cutoff, degrade_authorization=not persist
+            ),
+            self._finance(
+                symbol, as_of, cutoff=cutoff, degrade_authorization=not persist
+            ),
         )
+        market, market_error = market_result
         if not bars and market is None and persist:
             raise DiagnosisUnavailableError(
                 f"market and local history are unavailable: {market_error}"
             )
-        finance, finance_error = await self._finance(
-            symbol, as_of, cutoff=cutoff, degrade_authorization=not persist
-        )
+        finance, finance_error = finance_result
         events, news_error = self._events(symbol, as_of, cutoff=cutoff)
         classification, classification_error = self._classification(
             symbol, as_of, cutoff=cutoff
@@ -564,10 +699,12 @@ class AShareDiagnosisService:
                 "资金流数据不可用："
                 f"{error or '未配置资金流仓储'}",
             )
+        status = "partial" if snapshot.minute_error else "ready"
         return DiagnosisSection(
-            status="ready",
+            status=status,
             observed_at=snapshot.observed_at,
             source=snapshot.source,
+            reason=("fund_flow_intraday_unavailable" if snapshot.minute_error else None),
             metrics={
                 "latest_trade_date": snapshot.latest_trade_date.isoformat(),
                 "latest_main_net": snapshot.latest_main_net,
@@ -584,6 +721,10 @@ class AShareDiagnosisService:
             explanation=(
                 "资金流来自东方财富冻结快照，仅作为观察证据，"
                 "不单独改变动作或置信度。"
+                + (
+                    f"盘中分钟资金流不可用：{snapshot.minute_error}"
+                    if snapshot.minute_error else ""
+                )
             ),
         )
 

@@ -88,6 +88,42 @@ def test_normalized_event_keeps_asset_links_and_evidence() -> None:
 
     assert event.citations[0].article_id == article().article_id
     assert event.affected_instruments == ((AssetKind.A_SHARE, "600000"),)
+    assert event.association_kind == "context"
+    assert event.association_reasons == ("legacy_confidence_migration",)
+
+
+def test_event_requires_reason_for_direct_association() -> None:
+    with pytest.raises(ValidationError, match="association reasons"):
+        NormalizedNewsEvent(
+            event_id="event-direct",
+            event_type="company_news",
+            headline="公司公告",
+            occurred_at=PUBLISHED_AT,
+            normalized_at=FETCHED_AT,
+            affected_instruments=((AssetKind.A_SHARE, "600519"),),
+            citations=(citation(),),
+            association_confidence="1",
+            association_kind="direct",
+            association_reasons=(),
+            review_state="verified",
+        )
+
+
+def test_macro_event_cannot_claim_instruments() -> None:
+    with pytest.raises(ValidationError, match="macro event"):
+        NormalizedNewsEvent(
+            event_id="event-macro",
+            event_type="macro_news",
+            headline="海外宏观新闻",
+            occurred_at=PUBLISHED_AT,
+            normalized_at=FETCHED_AT,
+            affected_instruments=((AssetKind.A_SHARE, "600519"),),
+            citations=(citation(),),
+            association_confidence="0",
+            association_kind="macro",
+            association_reasons=("global_market",),
+            review_state="verified",
+        )
 
 
 def test_ai_interpretation_requires_fact_citations_and_explicit_interpretation_labels() -> None:

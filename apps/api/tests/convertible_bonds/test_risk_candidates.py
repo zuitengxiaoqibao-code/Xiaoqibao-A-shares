@@ -353,6 +353,17 @@ def test_candidate_filter_and_ranking_use_only_bond_metrics_and_risk() -> None:
     assert [item.bond_code for item in ranked] == ["113001", "118040"]
 
 
+def test_observe_only_risk_is_not_presented_as_a_candidate() -> None:
+    evidence = clause(bond_code="113004")
+    risk = evaluate_bond_risk(
+        risk_input(bond_code="113004", turnover_amount=None, strong_redemption=evidence), BondRiskPolicy()
+    )
+    item = candidate("113004", turnover_amount=None, strong_redemption=evidence, risk=risk)
+
+    assert item.risk.outcome == "observe_only"
+    assert filter_and_rank_candidates([item]) == []
+
+
 def test_empty_candidate_input_returns_empty_output() -> None:
     assert filter_and_rank_candidates([], BondCandidateFilter()) == []
 

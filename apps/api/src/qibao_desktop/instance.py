@@ -4,10 +4,36 @@ from ctypes import wintypes
 
 
 ERROR_ALREADY_EXISTS = 183
+SW_RESTORE = 9
 
 
 class AlreadyRunningError(RuntimeError):
     pass
+
+
+def _user32():
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.FindWindowW.argtypes = (wintypes.LPCWSTR, wintypes.LPCWSTR)
+    user32.FindWindowW.restype = wintypes.HWND
+    user32.ShowWindow.argtypes = (wintypes.HWND, ctypes.c_int)
+    user32.ShowWindow.restype = wintypes.BOOL
+    user32.BringWindowToTop.argtypes = (wintypes.HWND,)
+    user32.BringWindowToTop.restype = wintypes.BOOL
+    user32.SetForegroundWindow.argtypes = (wintypes.HWND,)
+    user32.SetForegroundWindow.restype = wintypes.BOOL
+    return user32
+
+
+def activate_existing_window(title: str) -> bool:
+    if sys.platform != "win32":
+        return False
+    user32 = _user32()
+    window = user32.FindWindowW(None, title)
+    if not window:
+        return False
+    user32.ShowWindow(window, SW_RESTORE)
+    user32.BringWindowToTop(window)
+    return bool(user32.SetForegroundWindow(window))
 
 
 class SingleInstance:

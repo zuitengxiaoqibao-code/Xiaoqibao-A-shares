@@ -1,0 +1,50 @@
+export type StockTimelineBar = {
+  symbol: string;
+  trade_date: string;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  volume: number;
+  amount: string;
+  source: string;
+};
+
+export type StockTimelineEvent = {
+  event_id: string;
+  event_type: "market_news";
+  occurred_at: string;
+  mapped_trade_date: string | null;
+  label: string;
+  headline: string;
+  direction: "positive" | "negative" | "neutral" | "uncertain";
+  confidence: string | null;
+  themes: string[];
+  industries: string[];
+  publisher: string;
+  source_url: string;
+  association_confidence: string;
+  association_kind: "direct" | "context" | "theme" | "macro";
+  association_reasons: string[];
+  verification_state: "verified" | "multi_source_confirmed" | "pending" | "unverified";
+  source_count: number;
+  urgency: "breaking" | "tracking" | "normal";
+  review_state: "verified";
+};
+
+export type StockTimelineResponse = {
+  symbol: string;
+  as_of: string;
+  cutoff: string;
+  status: "ready" | "unavailable";
+  bars: StockTimelineBar[];
+  events: StockTimelineEvent[];
+  sources: string[];
+  warnings: string[];
+};
+
+export type StockTimelineLoader = (
+  symbol: string,
+  asOf?: string,
+  signal?: AbortSignal,
+) => Promise<StockTimelineResponse>;

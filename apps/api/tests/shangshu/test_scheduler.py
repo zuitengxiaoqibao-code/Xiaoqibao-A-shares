@@ -1,4 +1,5 @@
 from datetime import UTC, date, datetime, timedelta, timezone
+from types import SimpleNamespace
 
 from qibao_api.shangshu.operations_repository import OperationsRepository
 from qibao_api.shangshu.scheduler import DailyBriefingScheduler
@@ -52,6 +53,92 @@ class Monitor:
 class NotDueMonitor(Monitor):
     def due(self, now):
         return frozenset()
+
+
+class HotspotService:
+    def __init__(self, *, fail=False, calls=None):
+        self.calls = []
+        self.fail = fail
+        self.timeline = calls
+
+    def sync(self, trading_date, *, fetched_at):
+        self.calls.append((trading_date, fetched_at))
+        if self.timeline is not None:
+            self.timeline.append(("hotspots", trading_date, fetched_at))
+        if self.fail:
+            raise OSError("hotspot unavailable")
+        return {"events": 1}
+
+
+class MarketSentimentService:
+    def __init__(self, *, fail=False, timeline=None):
+        self.calls = []
+        self.fail = fail
+        self.timeline = timeline
+
+    def refresh(self, now):
+        self.calls.append(now)
+        if self.timeline is not None:
+            self.timeline.append(("sentiment", now))
+        if self.fail:
+            raise OSError("sentiment unavailable")
+        return type("Snapshot", (), {"snapshot_id": f"sentiment-{len(self.calls)}"})()
+
+
+class FirstLimitUpService:
+    def __init__(self, *, fail=False, timeline=None):
+        self.calls = []
+        self.fail = fail
+        self.timeline = timeline
+
+    async def refresh(self, trading_date):
+        self.calls.append(trading_date)
+        if self.timeline is not None:
+            self.timeline.append(("first-limit-up", trading_date))
+        if self.fail:
+            raise OSError("first limit-up unavailable")
+        return type("Board", (), {"rule_version": "first-limit-up-v1"})()
+
+
+class FullMarketHistoryService:
+    def __init__(self, *, eligible=2, universe=2, timeline=None):
+        self.state = "pending"
+        self.eligible = eligible
+        self.universe = universe
+        self.timeline = timeline
+        self.calls = []
+        self.backfill_calls = 0
+        self.created = False
+
+    def create_incremental(self, trading_date):
+        self.created = True
+        self.calls.append(trading_date)
+        if self.timeline is not None:
+            self.timeline.append(("history", trading_date))
+        return SimpleNamespace(job_id="history-sync-postclose", state=self.state)
+
+    def create_backfill(self):
+        self.created = True
+        self.backfill_calls += 1
+        if self.timeline is not None:
+            self.timeline.append(("history-backfill",))
+        return SimpleNamespace(job_id="history-sync-backfill", state=self.state)
+
+    def current_job(self):
+        if not self.created:
+            return None
+        return SimpleNamespace(job_id="history-sync-current", state=self.state)
+
+    def coverage(self, trading_date):
+        return SimpleNamespace(
+            target_date=trading_date,
+            universe_count=self.universe,
+            eligible_count=self.eligible,
+            target_date_count=self.eligible,
+        )
+
+    def run(self, job_id):
+        raise AssertionError(f"scheduler must submit {job_id} without blocking")
 
 
 def test_scheduler_runs_due_slots_once_and_survives_restart(tmp_path) -> None:
@@ -365,4 +452,354 @@ def test_background_monitor_tick_skips_when_no_poll_scope_is_due(tmp_path) -> No
 
     assert monitor.calls == []
     assert repository.jobs() == []
+    repository.close()
+
+
+def test_fixed_intraday_slot_refreshes_hotspots_before_briefing_and_decision(
+    tmp_path,
+) -> None:
+    timeline = []
+
+    class TimedWorkflow(Workflow):
+        def run(self, phase, trading_date, *, now):
+            timeline.append(("briefing", phase, now))
+            return super().run(phase, trading_date, now=now)
+
+    class TimedDecision(DecisionWorkflow):
+        def run(self, phase, trading_date, *, now):
+            timeline.append(("decision", phase, now))
+            return super().run(phase, trading_date, now=now)
+
+    repository = OperationsRepository(tmp_path / "operations.sqlite3")
+    hotspots = HotspotService(calls=timeline)
+    scheduler = DailyBriefingScheduler(
+        TimedWorkflow(),
+        Calendar(),
+        repository,
+        decision_workflow=TimedDecision(),
+        hotspot_service=hotspots,
+    )
+    now = datetime(2026, 7, 14, 2, 31, tzinfo=UTC)
+
+    scheduler.tick(now)
+
+    hotspot_index = next(
+        index for index, item in enumerate(timeline) if item[0] == "hotspots"
+    )
+    briefing_index = next(
+        index
+        for index, item in enumerate(timeline)
+        if item[0:2] == ("briefing", "intraday")
+    )
+    decision_index = next(
+        index
+        for index, item in enumerate(timeline)
+        if item[0:2] == ("decision", "intraday")
+    )
+    assert hotspot_index < briefing_index < decision_index
+    assert hotspots.calls == [(TRADE_DATE, now)]
+    job = next(
+        item
+        for item in repository.jobs()
+        if item["job_key"] == "2026-07-14:intraday:1030:hotspots"
+    )
+    assert job["status"] == "completed"
+    repository.close()
+
+
+def test_fixed_slot_refreshes_sentiment_after_hotspots_and_before_decision(
+    tmp_path,
+) -> None:
+    timeline = []
+
+    class TimedWorkflow(Workflow):
+        def run(self, phase, trading_date, *, now):
+            timeline.append(("briefing", phase, now))
+            return super().run(phase, trading_date, now=now)
+
+    class TimedDecision(DecisionWorkflow):
+        def run(self, phase, trading_date, *, now):
+            timeline.append(("decision", phase, now))
+            return super().run(phase, trading_date, now=now)
+
+    repository = OperationsRepository(tmp_path / "operations.sqlite3")
+    sentiment = MarketSentimentService(timeline=timeline)
+    scheduler = DailyBriefingScheduler(
+        TimedWorkflow(),
+        Calendar(),
+        repository,
+        decision_workflow=TimedDecision(),
+        hotspot_service=HotspotService(calls=timeline),
+        market_sentiment_service=sentiment,
+    )
+    now = datetime(2026, 7, 14, 2, 31, tzinfo=UTC)
+
+    scheduler.tick(now)
+
+    labels = [item[0] for item in timeline]
+    intraday_briefing = next(
+        index
+        for index, item in enumerate(timeline)
+        if item[0:2] == ("briefing", "intraday")
+    )
+    intraday_decision = next(
+        index
+        for index, item in enumerate(timeline)
+        if item[0:2] == ("decision", "intraday")
+    )
+    assert labels.index("hotspots") < labels.index("sentiment")
+    assert labels.index("sentiment") < intraday_briefing < intraday_decision
+    sentiment_job = next(
+        item
+        for item in repository.jobs()
+        if item["job_key"] == "2026-07-14:intraday:1030:sentiment"
+    )
+    assert sentiment_job["status"] == "completed"
+    repository.close()
+
+
+def test_sentiment_failure_is_audited_without_blocking_briefing_or_decision(
+    tmp_path,
+) -> None:
+    repository = OperationsRepository(tmp_path / "operations.sqlite3")
+    decisions = DecisionWorkflow()
+    scheduler = DailyBriefingScheduler(
+        Workflow(),
+        Calendar(),
+        repository,
+        decision_workflow=decisions,
+        market_sentiment_service=MarketSentimentService(fail=True),
+    )
+
+    scheduler.tick(datetime(2026, 7, 14, 2, 31, tzinfo=UTC))
+
+    jobs = {item["job_key"]: item for item in repository.jobs()}
+    sentiment = jobs["2026-07-14:intraday:1030:sentiment"]
+    assert sentiment["status"] == "failed"
+    assert sentiment["error_code"] == "o_s_error"
+    assert jobs["2026-07-14:intraday:1030"]["status"] == "completed"
+    assert jobs["2026-07-14:intraday:1030:decision"]["status"] == "completed"
+    assert [call[0] for call in decisions.calls] == ["premarket", "intraday"]
+    repository.close()
+
+
+def test_completed_sentiment_job_survives_restart_without_refetch(tmp_path) -> None:
+    database = tmp_path / "operations.sqlite3"
+    now = datetime(2026, 7, 14, 2, 31, tzinfo=UTC)
+    first = MarketSentimentService()
+    repository = OperationsRepository(database)
+    DailyBriefingScheduler(
+        Workflow(),
+        Calendar(),
+        repository,
+        market_sentiment_service=first,
+    ).tick(now)
+    repository.close()
+
+    second = MarketSentimentService()
+    reopened = OperationsRepository(database)
+    DailyBriefingScheduler(
+        Workflow(),
+        Calendar(),
+        reopened,
+        market_sentiment_service=second,
+    ).tick(now)
+
+    assert first.calls == [now]
+    assert second.calls == []
+    reopened.close()
+
+
+def test_completed_hotspot_job_survives_restart_without_refetch(tmp_path) -> None:
+    database = tmp_path / "operations.sqlite3"
+    repository = OperationsRepository(database)
+    hotspots = HotspotService()
+    now = datetime(2026, 7, 14, 2, 31, tzinfo=UTC)
+    DailyBriefingScheduler(
+        Workflow(), Calendar(), repository, hotspot_service=hotspots
+    ).tick(now)
+    repository.close()
+
+    reopened = OperationsRepository(database)
+    DailyBriefingScheduler(
+        Workflow(), Calendar(), reopened, hotspot_service=hotspots
+    ).tick(now)
+
+    assert len(hotspots.calls) == 1
+    reopened.close()
+
+
+def test_hotspot_failure_retries_independently_without_blocking_decision(
+    tmp_path,
+) -> None:
+    repository = OperationsRepository(tmp_path / "operations.sqlite3")
+    workflow = Workflow()
+    decisions = DecisionWorkflow()
+    hotspots = HotspotService(fail=True)
+    scheduler = DailyBriefingScheduler(
+        workflow,
+        Calendar(),
+        repository,
+        max_attempts=3,
+        decision_workflow=decisions,
+        hotspot_service=hotspots,
+    )
+    now = datetime(2026, 7, 14, 2, 31, tzinfo=UTC)
+
+    for _ in range(5):
+        scheduler.tick(now)
+
+    hotspot_job = next(
+        item
+        for item in repository.jobs()
+        if item["job_key"] == "2026-07-14:intraday:1030:hotspots"
+    )
+    assert len(hotspots.calls) == 3
+    assert hotspot_job["status"] == "failed"
+    assert hotspot_job["attempts"] == 3
+    assert hotspot_job["error_code"] == "o_s_error"
+    assert [call[0] for call in workflow.calls] == ["premarket", "intraday"]
+    assert [call[0] for call in decisions.calls] == ["premarket", "intraday"]
+    repository.close()
+
+
+def test_manual_intraday_refreshes_hotspots_but_background_poll_does_not(
+    tmp_path,
+) -> None:
+    repository = OperationsRepository(tmp_path / "operations.sqlite3")
+    hotspots = HotspotService()
+    monitor = Monitor()
+    scheduler = DailyBriefingScheduler(
+        Workflow(),
+        Calendar(),
+        repository,
+        intraday_monitor=monitor,
+        hotspot_service=hotspots,
+    )
+    now = datetime(2026, 7, 14, 2, 31, tzinfo=UTC)
+
+    scheduler.run_manual("intraday", TRADE_DATE, now)
+    scheduler.tick_intraday(now)
+
+    assert hotspots.calls == [(TRADE_DATE, now)]
+    assert monitor.calls == [now]
+    repository.close()
+
+
+def test_postclose_runs_first_limit_up_scan_once_and_audits_it(tmp_path) -> None:
+    repository = OperationsRepository(tmp_path / "operations.sqlite3")
+    first_limit_up = FirstLimitUpService()
+    scheduler = DailyBriefingScheduler(
+        Workflow(), Calendar(), repository, first_limit_up_service=first_limit_up
+    )
+    now = datetime(2026, 7, 14, 8, 0, tzinfo=UTC)
+
+    scheduler.tick(now)
+    scheduler.tick(now)
+
+    assert first_limit_up.calls == [TRADE_DATE]
+    job = next(
+        item for item in repository.jobs()
+        if item["job_key"] == "2026-07-14:postclose:1530:first-limit-up"
+    )
+    assert job["status"] == "completed"
+    repository.close()
+
+
+def test_first_limit_up_failure_does_not_block_postclose_workflow(tmp_path) -> None:
+    repository = OperationsRepository(tmp_path / "operations.sqlite3")
+    workflow = Workflow()
+    scheduler = DailyBriefingScheduler(
+        workflow,
+        Calendar(),
+        repository,
+        first_limit_up_service=FirstLimitUpService(fail=True),
+    )
+
+    scheduler.tick(datetime(2026, 7, 14, 8, 0, tzinfo=UTC))
+
+    jobs = {item["job_key"]: item for item in repository.jobs()}
+    assert jobs["2026-07-14:postclose:1530:first-limit-up"]["status"] == "failed"
+    assert jobs["2026-07-14:postclose:1530"]["status"] == "completed"
+    assert [call[0] for call in workflow.calls][-1] == "postclose"
+    repository.close()
+
+
+def test_postclose_starts_history_sync_before_first_limit_up(tmp_path) -> None:
+    timeline = []
+    repository = OperationsRepository(tmp_path / "operations.sqlite3")
+    history = FullMarketHistoryService(timeline=timeline)
+    first_limit_up = FirstLimitUpService(timeline=timeline)
+    submissions = []
+    scheduler = DailyBriefingScheduler(
+        Workflow(),
+        Calendar(),
+        repository,
+        full_market_history_service=history,
+        history_sync_submitter=lambda function, job_id: submissions.append(
+            (function, job_id)
+        ),
+        first_limit_up_service=first_limit_up,
+    )
+    now = datetime(2026, 7, 14, 8, 0, tzinfo=UTC)
+
+    scheduler.tick(now)
+
+    assert timeline[0] == ("history", TRADE_DATE)
+    assert first_limit_up.calls == []
+    assert len(submissions) == 1
+
+    history.state = "completed"
+    scheduler.tick(now)
+
+    assert first_limit_up.calls == [TRADE_DATE]
+    repository.close()
+
+
+def test_postclose_defers_first_limit_up_when_history_coverage_is_too_small(
+    tmp_path,
+) -> None:
+    repository = OperationsRepository(tmp_path / "operations.sqlite3")
+    history = FullMarketHistoryService(eligible=13, universe=5980)
+    history.state = "completed"
+    first_limit_up = FirstLimitUpService()
+    scheduler = DailyBriefingScheduler(
+        Workflow(),
+        Calendar(),
+        repository,
+        full_market_history_service=history,
+        history_sync_submitter=lambda *_args: None,
+        first_limit_up_service=first_limit_up,
+    )
+
+    scheduler.tick(datetime(2026, 7, 14, 8, 0, tzinfo=UTC))
+
+    assert first_limit_up.calls == []
+    assert history.backfill_calls == 1
+    assert history.calls == []
+    repository.close()
+
+
+def test_catchup_schedules_history_only_for_latest_due_postclose(tmp_path) -> None:
+    previous_date = TRADE_DATE - timedelta(days=1)
+
+    class TwoDayCalendar:
+        def is_trading_day(self, value):
+            return value in {previous_date, TRADE_DATE}
+
+    repository = OperationsRepository(tmp_path / "operations.sqlite3")
+    history = FullMarketHistoryService()
+    scheduler = DailyBriefingScheduler(
+        Workflow(),
+        TwoDayCalendar(),
+        repository,
+        catchup_days=1,
+        full_market_history_service=history,
+        history_sync_submitter=lambda *_args: None,
+        first_limit_up_service=FirstLimitUpService(),
+    )
+
+    scheduler.tick(datetime(2026, 7, 14, 8, 0, tzinfo=UTC))
+
+    assert history.calls == [TRADE_DATE]
     repository.close()

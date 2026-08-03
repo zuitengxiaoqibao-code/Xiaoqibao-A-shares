@@ -1,19 +1,25 @@
-from datetime import UTC, date, datetime, timedelta
 import hashlib
+from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 
-from qibao_api.shangshu.intraday_monitor import (
-    AdviceChangeDetector, IntradayEvaluationResult, IntradayMonitor,
-    PollState, PollStateRepository,
-)
+from qibao_api.a_shares.models import CandidateBoard
 from qibao_api.contracts.decision import (
     AdviceCard, DecisionCycleAggregate, DecisionCycleSnapshot, EvidenceReference,
 )
 from qibao_api.contracts.market import AssetKind
-from decimal import Decimal
 from qibao_api.gongbu.market_feed import MarketFeedSnapshot
+from qibao_api.shangshu.decision_runtime import DeterministicIntradayEvaluator
+from qibao_api.shangshu.intraday_monitor import (
+    AdviceChangeDetector, IntradayEvaluationResult, IntradayMonitor,
+    PollState, PollStateRepository,
+)
 from qibao_api.shangshu.decision_repository import DecisionRepository
+from qibao_api.zhongshu.decision_ai import DecisionAIResult
+from qibao_api.zhongshu.premarket_decision import (
+    CandidateInputSnapshot, ComplianceInputSnapshot, MarketRiskInputSnapshot,
+)
 
 
 NOW = datetime(2026, 7, 14, 2, 30, tzinfo=UTC)
@@ -76,6 +82,40 @@ def test_failure_backoff_caps_and_success_resets(tmp_path) -> None:
     assert value.state.focus_interval_seconds == 60
 
 
+def test_focus_and_universe_keep_independent_error_codes_during_recovery(tmp_path) -> None:
+    class ScopeFeed:
+        def __init__(self):
+            self.focus_error = TimeoutError("focus timeout")
+            self.universe_error = ValueError("universe incomplete")
+
+        def snapshot_many(self, symbols, *, cutoff=None):
+            error = self.focus_error if symbols == ("000001",) else self.universe_error
+            if error is not None:
+                raise error
+            return tuple(
+                type("Quote", (), {"symbol": symbol, "observed_at": cutoff})()
+                for symbol in symbols
+            )
+
+    feed = ScopeFeed()
+    value = monitor(tmp_path, feed=feed)
+
+    value.check(NOW, scopes=frozenset({"focus", "universe"}))
+
+    assert value.state.focus_error_code == "timeout_error"
+    assert value.state.universe_error_code == "value_error"
+    assert value.state.consecutive_focus_failures == 1
+    assert value.state.consecutive_universe_failures == 1
+
+    feed.focus_error = None
+    value.check(NOW + timedelta(seconds=60), scopes=frozenset({"focus"}))
+
+    assert value.state.focus_error_code is None
+    assert value.state.universe_error_code == "value_error"
+    assert value.state.mode == "degraded"
+    assert value.state.last_error_code == "value_error"
+
+
 def test_no_poll_outside_window_or_unconfirmed_day(tmp_path) -> None:
     feed = Feed()
     value = monitor(tmp_path, feed=feed)
@@ -125,8 +165,21 @@ def test_advice_change_sets_previous_id_and_exact_sorted_fields() -> None:
 
 def test_removed_candidate_is_invalidated_once_and_future_evidence_rejected() -> None:
     detector = AdviceChangeDetector()
-    invalidated = detector.removed(advice(), "candidate_removed", NOW)
+    previous = advice(
+        ai_interpretation_id="premarket-ai-old",
+        plain_language_explanation="旧模型解释。",
+        quantitative_result={
+            "membership": "short_term", "ai_provider": "old", "kept": "value",
+        },
+    )
+    invalidated = detector.removed(previous, "candidate_removed", NOW)
     assert invalidated is not None and invalidated.action == "invalidated"
+    assert invalidated.ai_interpretation_id is None
+    assert invalidated.plain_language_explanation == (
+        "候选状态发生变化：candidate_removed。原建议已失效，等待重新核验。"
+    )
+    assert invalidated.quantitative_result["kept"] == "value"
+    assert "ai_provider" not in invalidated.quantitative_result
     assert detector.removed(invalidated, "candidate_removed", NOW) is None
     future = advice("future", supporting_evidence=(
         EvidenceReference(
@@ -212,6 +265,50 @@ def test_due_executions_advance_state_but_persist_only_changed_quote_content(tmp
     latest = {item.symbol: item for item in reopened.latest_snapshots(NOW + timedelta(seconds=360))}
     assert latest["000001"].price == Decimal("10.1")
     assert latest["300001"].price == Decimal("20")
+
+
+def test_intraday_snapshots_filter_symbol_trading_date_and_cutoff(tmp_path) -> None:
+    repository = PollStateRepository(tmp_path / "intraday-read.sqlite3")
+    state = PollState(
+        last_focus_success_at=NOW,
+        next_focus_due_at=NOW + timedelta(seconds=60),
+        next_universe_due_at=NOW,
+    )
+
+    def snapshot(symbol: str, price: str, observed_at: datetime) -> MarketFeedSnapshot:
+        return MarketFeedSnapshot(
+            symbol=symbol,
+            price=Decimal(price),
+            change=Decimal(price) - Decimal("10"),
+            change_percent=(Decimal(price) / Decimal("10") - Decimal("1")) * 100,
+            volume=Decimal("1000"),
+            source="test",
+            observed_at=observed_at,
+            fetched_at=observed_at,
+            quality="ready",
+            source_snapshot_id=f"{symbol}-{observed_at.isoformat()}",
+        )
+
+    previous_day = NOW - timedelta(days=1)
+    later = NOW + timedelta(minutes=1)
+    after_cutoff = NOW + timedelta(minutes=2)
+    for index, value in enumerate((
+        snapshot("000001", "9.9", previous_day),
+        snapshot("000001", "10.1", NOW),
+        snapshot("300001", "20", NOW),
+        snapshot("000001", "10.2", later),
+        snapshot("000001", "10.3", after_cutoff),
+    )):
+        repository.append_success_batch(
+            f"batch-read-{index}", "focus", (value,), state, value.observed_at,
+        )
+
+    result = repository.intraday_snapshots(
+        "000001", date(2026, 7, 14), cutoff=later,
+    )
+
+    assert [item.price for item in result] == [Decimal("10.1"), Decimal("10.2")]
+    assert [item.observed_at for item in result] == [NOW, later]
 
 
 def test_older_focus_quote_cannot_replace_fresher_universe_quote_across_restart(tmp_path) -> None:
@@ -323,6 +420,23 @@ class Evaluation:
         return self.results.pop(0) if len(self.results) > 1 else self.results[0]
 
 
+class AI:
+    def __init__(self, *, ready=True) -> None:
+        self.ready = ready
+        self.requests = []
+
+    def explain(self, request):
+        self.requests.append(request)
+        return DecisionAIResult(
+            status="ready" if self.ready else "unavailable",
+            explanation="模型只解释冻结的盘中变化。" if self.ready else None,
+            statements=(), provider="openai-compatible", model="model-one",
+            prompt_version="decision-v1", generated_at=request.generated_at,
+            evidence_ids=tuple(item.evidence_id for item in request.evidence),
+            invalid_output_count=0, provider_error_count=0 if self.ready else 1,
+        )
+
+
 class InputPort:
     def __init__(self, value=None):
         self.value = value if value is not None else {"state": "ready"}
@@ -376,7 +490,8 @@ def baseline_aggregate(repository):
 
 
 def decision_monitor(tmp_path, evaluation, repository, *, feed=None, state_database=None,
-                     focus_symbols=None, universe_symbols=None):
+                     focus_symbols=None, universe_symbols=None, ai=None):
+    ai_options = {} if ai is None else {"ai_gateway": ai}
     return IntradayMonitor(
         feed=feed or QuoteFeed(), calendar=Calendar(),
         state_repository=PollStateRepository(
@@ -387,6 +502,7 @@ def decision_monitor(tmp_path, evaluation, repository, *, feed=None, state_datab
         decision_repository=repository, evaluator=evaluation,
         candidate_factor_port=InputPort(), risk_port=InputPort(),
         compliance_port=InputPort(), evidence_port=InputPort(),
+        **ai_options,
     )
 
 
@@ -396,6 +512,253 @@ def result_for(proposed=(), *, source="source-v1", gates=None):
         market_state="range", data_quality="ready", status="ready",
         candidate_snapshot_id="candidate-current", news_event_ids=(), risk_event_ids=(),
     )
+
+
+class EmptyQuoteFeed:
+    def snapshot_many(self, symbols, *, cutoff=None):
+        return ()
+
+
+class StaleQuoteFeed(QuoteFeed):
+    def snapshot_many(self, symbols, *, cutoff=None):
+        return tuple(
+            item.model_copy(update={"observed_at": cutoff - timedelta(seconds=181)})
+            for item in super().snapshot_many(symbols, cutoff=cutoff)
+        )
+
+
+def deterministic_decision_monitor(
+    tmp_path, repository, *, feed, compliance_allowed=True, ai=None,
+):
+    ai_options = {} if ai is None else {"ai_gateway": ai}
+    candidate_input = CandidateInputSnapshot(
+        board=CandidateBoard(
+            snapshot_id="candidate-current", as_of=date(2026, 7, 14),
+            short_term=[], swing=[],
+        ),
+        captured_at=NOW, history_available=False,
+    )
+    risk_input = MarketRiskInputSnapshot(
+        snapshot_id="risk-current", captured_at=NOW, available=True,
+        market_state="range", version="test-v1", summary="ready", risks=(),
+    )
+    compliance_input = ComplianceInputSnapshot(
+        snapshot_id="compliance-current", captured_at=NOW, available=True,
+        allowed=compliance_allowed, version="test-v1", risks=(),
+    )
+    return IntradayMonitor(
+        feed=feed, calendar=Calendar(),
+        state_repository=PollStateRepository(tmp_path / "poll-blocked.sqlite3"),
+        focus_symbols=lambda now: ("000001",),
+        universe_symbols=lambda now: ("000001",),
+        decision_repository=repository, evaluator=DeterministicIntradayEvaluator(),
+        candidate_factor_port=InputPort(candidate_input), risk_port=InputPort(risk_input),
+        compliance_port=InputPort(compliance_input), evidence_port=InputPort(()),
+        **ai_options,
+    )
+
+
+def assert_single_blocked_cycle(repository):
+    cycles = repository.cycles(date(2026, 7, 14), "intraday")
+    assert len(cycles) == 1
+    aggregate = cycles[0]
+    assert aggregate.snapshot.status == "blocked"
+    assert aggregate.snapshot.data_quality == "blocked"
+    assert aggregate.snapshot.candidate_snapshot_id == "candidate-current"
+    assert aggregate.snapshot.news_event_ids == ()
+    assert aggregate.snapshot.risk_event_ids == ()
+    assert aggregate.advice == ()
+    assert not any(
+        item.quantitative_result.get("invalidation_reason_code") == "candidate_removed"
+        for item in aggregate.advice
+    )
+    return aggregate
+
+
+def test_ready_evaluation_preserves_premarket_evidence_and_appends_live_quote(tmp_path) -> None:
+    repository = DecisionRepository(tmp_path / "decisions-ready-evidence.sqlite3")
+    baseline = baseline_aggregate(repository)
+    monitor = deterministic_decision_monitor(tmp_path, repository, feed=QuoteFeed())
+
+    result = monitor.check(NOW)
+
+    cycles = repository.cycles(date(2026, 7, 14), "intraday")
+    assert len(cycles) == 1
+    aggregate = cycles[0]
+    assert result.aggregate == aggregate
+    assert aggregate.snapshot.status == "ready"
+    assert aggregate.snapshot.data_quality == "ready"
+    assert len(aggregate.advice) == 1
+    inherited = baseline.advice[0].supporting_evidence[0]
+    supporting = aggregate.advice[0].supporting_evidence
+    assert supporting[0] == inherited
+    assert supporting[1].evidence_id == f"quote-000001-{int(NOW.timestamp())}"
+    assert supporting[1].source == "test"
+    assert supporting[1].snapshot_id == supporting[1].evidence_id
+    assert supporting[1].observed_at == NOW
+
+
+@pytest.mark.parametrize(
+    "old_evidence",
+    (
+        pytest.param(
+            EvidenceReference(
+                evidence_id="introduced-old", source="test", snapshot_id="introduced-s",
+                summary="new old evidence", observed_at=datetime(2026, 7, 14, 1, 20, tzinfo=UTC),
+            ),
+            id="new-evidence",
+        ),
+        pytest.param(
+            EvidenceReference(
+                evidence_id="base-e", source="test", snapshot_id="base-s",
+                summary="tampered base", observed_at=datetime(2026, 7, 14, 1, 20, tzinfo=UTC),
+            ),
+            id="tampered-inherited-id",
+        ),
+    ),
+)
+def test_ready_evaluation_rejects_non_inherited_evidence_before_window(
+    tmp_path, old_evidence,
+) -> None:
+    repository = DecisionRepository(tmp_path / "decisions-old-evidence.sqlite3")
+    baseline_aggregate(repository)
+    proposed = advice(
+        "proposal", conclusion="changed", created_at=NOW,
+        supporting_evidence=(old_evidence,),
+    )
+    monitor = decision_monitor(
+        tmp_path, Evaluation([result_for((proposed,), source="old-evidence")]), repository,
+    )
+
+    with pytest.raises(ValueError, match="evidence predates the advice baseline"):
+        monitor.check(NOW)
+
+
+def test_no_quotes_persist_blocked_cycle_idempotently_without_candidate_removal(tmp_path) -> None:
+    repository = DecisionRepository(tmp_path / "decisions-no-quotes.sqlite3")
+    baseline_aggregate(repository)
+    monitor = deterministic_decision_monitor(tmp_path, repository, feed=EmptyQuoteFeed())
+
+    first = monitor.check(NOW)
+    second = monitor.check(NOW + timedelta(seconds=180))
+
+    aggregate = assert_single_blocked_cycle(repository)
+    assert first.aggregate == aggregate
+    assert second.aggregate == aggregate
+    assert aggregate.snapshot.market_state == "insufficient_data"
+    assert aggregate.snapshot.source_snapshot_ids == ()
+    assert aggregate.snapshot.source_observed_at == ()
+    assert aggregate.snapshot.quality_reasons == ("live_quotes_unavailable",)
+
+
+def test_stale_quote_persists_blocked_cycle_without_candidate_removal(tmp_path) -> None:
+    repository = DecisionRepository(tmp_path / "decisions-stale-quote.sqlite3")
+    baseline_aggregate(repository)
+    monitor = deterministic_decision_monitor(tmp_path, repository, feed=StaleQuoteFeed())
+
+    result = monitor.check(NOW)
+
+    aggregate = assert_single_blocked_cycle(repository)
+    assert result.aggregate == aggregate
+    assert aggregate.snapshot.market_state == "range"
+    assert aggregate.snapshot.source_snapshot_ids == (
+        f"quote-000001-{int(NOW.timestamp())}",
+    )
+    assert aggregate.snapshot.source_observed_at == (NOW - timedelta(seconds=181),)
+
+
+def test_denied_compliance_persists_blocked_cycle_without_candidate_removal(tmp_path) -> None:
+    repository = DecisionRepository(tmp_path / "decisions-compliance-denied.sqlite3")
+    baseline_aggregate(repository)
+    monitor = deterministic_decision_monitor(
+        tmp_path, repository, feed=QuoteFeed(), compliance_allowed=False,
+    )
+
+    result = monitor.check(NOW)
+
+    aggregate = assert_single_blocked_cycle(repository)
+    assert result.aggregate == aggregate
+    assert aggregate.snapshot.market_state == "range"
+    assert aggregate.snapshot.source_snapshot_ids == (
+        f"quote-000001-{int(NOW.timestamp())}",
+    )
+    assert aggregate.snapshot.source_observed_at == (NOW,)
+
+
+def test_partial_evaluation_does_not_invalidate_removed_candidate(tmp_path) -> None:
+    repository = DecisionRepository(tmp_path / "decisions-partial.sqlite3")
+    baseline = baseline_aggregate(repository)
+    partial = result_for((), source="partial").model_copy(update={
+        "data_quality": "partial", "status": "partial",
+    })
+    monitor = decision_monitor(tmp_path, Evaluation([partial]), repository)
+
+    result = monitor.check(NOW)
+
+    assert result.aggregate == baseline
+    assert repository.cycles(date(2026, 7, 14), "intraday") == []
+
+
+def test_blocked_evaluator_advice_is_discarded_defensively(tmp_path) -> None:
+    repository = DecisionRepository(tmp_path / "decisions-blocked-advice.sqlite3")
+    baseline_aggregate(repository)
+    blocked = result_for((
+        advice("blocked-proposal", conclusion="must not leak", created_at=NOW),
+    ), source="blocked-contract").model_copy(update={
+        "data_quality": "blocked", "status": "blocked",
+    })
+    monitor = decision_monitor(tmp_path, Evaluation([blocked]), repository)
+
+    result = monitor.check(NOW)
+
+    aggregate = assert_single_blocked_cycle(repository)
+    assert result.aggregate == aggregate
+
+
+def test_ready_state_after_blocked_cycle_is_persisted_without_advice_change(tmp_path) -> None:
+    repository = DecisionRepository(tmp_path / "decisions-blocked-recovery.sqlite3")
+    baseline_aggregate(repository)
+    blocked = result_for((), source="same-state").model_copy(update={
+        "data_quality": "blocked", "status": "blocked",
+    })
+    ready = result_for((advice("ready-proposal", created_at=NOW),), source="same-state")
+    ai = AI()
+    monitor = decision_monitor(
+        tmp_path, Evaluation([blocked, ready]), repository, ai=ai,
+    )
+
+    first = monitor.check(NOW)
+    second = monitor.check(NOW + timedelta(seconds=60))
+
+    cycles = repository.cycles(date(2026, 7, 14), "intraday")
+    assert first.aggregate == cycles[0]
+    assert cycles[0].snapshot.status == "blocked"
+    assert second.aggregate == cycles[1]
+    assert cycles[1].snapshot.status == "ready"
+    assert cycles[1].snapshot.data_quality == "ready"
+    assert cycles[1].advice == ()
+    assert cycles[1].snapshot.ai_status == "not_requested"
+    assert ai.requests == []
+
+
+def test_source_hash_distinguishes_ready_partial_and_blocked_states() -> None:
+    quote = QuoteFeed().snapshot_many(("000001",), cutoff=NOW)
+    ready = result_for((), source="same")
+    partial = ready.model_copy(update={"data_quality": "partial", "status": "partial"})
+    blocked_quote = ready.model_copy(update={
+        "data_quality": "blocked", "status": "blocked",
+        "quality_reasons": ("live_quotes_unavailable",),
+    })
+    blocked_risk = blocked_quote.model_copy(update={
+        "quality_reasons": ("risk_unavailable",),
+    })
+
+    hashes = {
+        IntradayMonitor._source_hash(result, quote)
+        for result in (ready, partial, blocked_quote, blocked_risk)
+    }
+
+    assert len(hashes) == 4
 
 
 def test_check_appends_changed_aggregate_then_unchanged_check_is_idempotent(tmp_path) -> None:
@@ -412,6 +775,126 @@ def test_check_appends_changed_aggregate_then_unchanged_check_is_idempotent(tmp_
     assert len(cycles) == 1
     assert cycles[0].advice[0].previous_advice_id == "a1"
     assert cycles[0].advice[0].changed_fields == ("conclusion",)
+
+
+def test_ready_ai_appends_one_explanation_without_changing_frozen_intraday_fields(
+    tmp_path,
+) -> None:
+    repository = DecisionRepository(tmp_path / "decisions-ai-ready.sqlite3")
+    baseline_aggregate(repository)
+    ai = AI()
+    proposed = advice(
+        "proposal-ai-ready",
+        action="wait",
+        conclusion="盘中确定性结论",
+        confidence=Decimal("0.42"),
+        plain_language_explanation="盘中确定性解释。",
+        ai_interpretation_id="premarket-ai-old",
+        quantitative_result={
+            "membership": "short_term",
+            "ai_provider": "old-provider",
+            "kept": "value",
+        },
+        created_at=NOW,
+    )
+    second_proposed = advice(
+        "proposal-ai-ready-second",
+        symbol="300001",
+        conclusion="第二只股票的确定性结论",
+        plain_language_explanation="第二条确定性解释。",
+        created_at=NOW,
+    )
+    monitor = decision_monitor(
+        tmp_path,
+        Evaluation([result_for((proposed, second_proposed))]),
+        repository,
+        ai=ai,
+    )
+
+    result = monitor.check(NOW)
+    stored = next(item for item in result.aggregate.advice if item.symbol == "000001")
+
+    assert result.aggregate.snapshot.ai_status == "ready"
+    assert result.aggregate.snapshot.status == "ready"
+    assert result.aggregate.snapshot.data_quality == "ready"
+    assert stored.action == "wait"
+    assert stored.conclusion == "盘中确定性结论"
+    assert stored.confidence == Decimal("0.42")
+    assert stored.risks == proposed.risks
+    assert stored.supporting_evidence == proposed.supporting_evidence
+    assert stored.plain_language_explanation == (
+        "盘中确定性解释。模型补充：模型只解释冻结的盘中变化。"
+    )
+    assert stored.ai_interpretation_id is not None
+    assert stored.ai_interpretation_id != "premarket-ai-old"
+    assert stored.quantitative_result["ai_provider"] == "openai-compatible"
+    assert stored.quantitative_result["kept"] == "value"
+    assert len(result.aggregate.advice) == 2
+    assert all(item.ai_interpretation_id for item in result.aggregate.advice)
+    assert len(ai.requests) == 1
+    assert ai.requests[0].generated_at == NOW
+    assert tuple(item.evidence_id for item in ai.requests[0].evidence) == ("e1",)
+
+
+def test_unavailable_ai_keeps_ready_intraday_decision_and_deterministic_text(tmp_path) -> None:
+    repository = DecisionRepository(tmp_path / "decisions-ai-unavailable.sqlite3")
+    baseline_aggregate(repository)
+    ai = AI(ready=False)
+    proposed = advice(
+        "proposal-ai-unavailable", conclusion="changed",
+        plain_language_explanation="确定性解释。", created_at=NOW,
+    )
+    monitor = decision_monitor(
+        tmp_path, Evaluation([result_for((proposed,))]), repository, ai=ai,
+    )
+
+    result = monitor.check(NOW)
+    stored = result.aggregate.advice[0]
+
+    assert result.aggregate.snapshot.ai_status == "unavailable"
+    assert result.aggregate.snapshot.status == "ready"
+    assert result.aggregate.snapshot.data_quality == "ready"
+    assert stored.plain_language_explanation == "确定性解释。"
+    assert stored.ai_interpretation_id is None
+    assert stored.quantitative_result["ai_provider_error_count"] == "1"
+
+
+def test_unchanged_intraday_poll_does_not_call_ai_again(tmp_path) -> None:
+    repository = DecisionRepository(tmp_path / "decisions-ai-idempotent.sqlite3")
+    baseline_aggregate(repository)
+    ai = AI()
+    proposed = advice(
+        "proposal-ai-idempotent", conclusion="changed",
+        plain_language_explanation="确定性解释。", created_at=NOW,
+    )
+    monitor = decision_monitor(
+        tmp_path,
+        Evaluation([result_for((proposed,)), result_for((proposed,))]),
+        repository,
+        ai=ai,
+    )
+
+    first = monitor.check(NOW)
+    second = monitor.check(NOW + timedelta(seconds=180))
+
+    assert second.aggregate.snapshot.snapshot_id == first.aggregate.snapshot.snapshot_id
+    assert len(repository.cycles(date(2026, 7, 14), "intraday")) == 1
+    assert len(ai.requests) == 1
+
+
+def test_blocked_intraday_snapshot_does_not_call_ai(tmp_path) -> None:
+    repository = DecisionRepository(tmp_path / "decisions-ai-blocked.sqlite3")
+    baseline_aggregate(repository)
+    ai = AI()
+    monitor = deterministic_decision_monitor(
+        tmp_path, repository, feed=EmptyQuoteFeed(), ai=ai,
+    )
+
+    result = monitor.check(NOW)
+
+    assert result.aggregate.snapshot.ai_status == "not_requested"
+    assert result.aggregate.snapshot.status == "blocked"
+    assert ai.requests == []
 
 
 def test_changed_evaluator_output_with_same_source_content_appends(tmp_path) -> None:

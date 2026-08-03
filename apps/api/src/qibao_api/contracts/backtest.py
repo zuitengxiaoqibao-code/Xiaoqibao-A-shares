@@ -6,9 +6,15 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class BacktestRequest(BaseModel):
-    strategy: Literal["sma_cross"] = "sma_cross"
+    strategy: Literal["sma_cross", "momentum_breakout", "low_volume_pullback"] = "sma_cross"
     fast_window: int = Field(default=5, ge=2, le=120)
     slow_window: int = Field(default=20, ge=3, le=250)
+    lookback_window: int = Field(default=20, ge=5, le=250)
+    exit_window: int = Field(default=10, ge=2, le=120)
+    volume_window: int = Field(default=20, ge=5, le=120)
+    volume_ratio: Decimal = Field(default=Decimal("0.80"), gt=0, le=Decimal("2"))
+    stop_loss_percent: Decimal = Field(default=Decimal("0.06"), gt=0, le=Decimal("0.30"))
+    take_profit_percent: Decimal = Field(default=Decimal("0.18"), gt=0, le=Decimal("1"))
     initial_cash: Decimal = Field(default=Decimal("100000"), gt=0)
     commission_rate: Decimal = Field(default=Decimal("0.0003"), ge=0, le=Decimal("0.01"))
     slippage_rate: Decimal = Field(default=Decimal("0.0005"), ge=0, le=Decimal("0.02"))
@@ -17,6 +23,8 @@ class BacktestRequest(BaseModel):
     def validate_windows(self) -> "BacktestRequest":
         if self.fast_window >= self.slow_window:
             raise ValueError("fast_window must be lower than slow_window")
+        if self.exit_window > self.lookback_window:
+            raise ValueError("exit_window must not exceed lookback_window")
         return self
 
 
@@ -39,7 +47,10 @@ class EquityPoint(BaseModel):
 
 
 class PerformanceMetrics(BaseModel):
+    annualized_return: Decimal
     annualized_volatility: Decimal = Field(ge=0)
+    sharpe_ratio: Decimal | None = None
+    calmar_ratio: Decimal | None = None
     win_rate: Decimal = Field(ge=0, le=1)
     profit_loss_ratio: Decimal | None = Field(default=None, ge=0)
     turnover_rate: Decimal = Field(ge=0)

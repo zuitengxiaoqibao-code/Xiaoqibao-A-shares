@@ -1,5 +1,8 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+import threading
+import time
 
 import pytest
 
@@ -116,6 +119,65 @@ def test_repository_preserves_legacy_id_when_appending_a_versioned_article(tmp_p
     repository.close()
 
 
+def test_interpretations_for_events_is_verified_and_cutoff_bounded(tmp_path) -> None:
+    repository = NewsRepository(tmp_path / "news.sqlite3")
+    item = article()
+    repository.append_articles((item,))
+    base = DeterministicNewsLinker(
+        instrument_aliases={}, industry_keywords={}, theme_keywords={}
+    ).link(item)
+    first_event = base.model_copy(update={"event_id": "event-1"})
+    second_event = base.model_copy(update={"event_id": "event-2"})
+    repository.append_event(first_event)
+    repository.append_event(second_event)
+
+    def make_interpretation(
+        interpretation_id: str,
+        event: NormalizedNewsEvent,
+        generated_at: datetime,
+    ) -> AIInterpretation:
+        return AIInterpretation(
+            interpretation_id=interpretation_id,
+            event_id=event.event_id,
+            generated_at=generated_at,
+            provider="test",
+            model="test-model",
+            prompt_version="news-v1",
+            degraded=False,
+            impact_direction="positive",
+            confidence=Decimal("0.8"),
+            statements=(InterpretationStatement(
+                statement_id=f"statement-{interpretation_id}",
+                kind="fact",
+                text="已核验事实",
+                citation_ids=(event.citations[0].citation_id,),
+            ),),
+            citations=event.citations,
+        )
+
+    before = make_interpretation("interpretation-before", first_event, NOW)
+    future = make_interpretation(
+        "interpretation-future", first_event, NOW + timedelta(minutes=1)
+    )
+    other = make_interpretation("interpretation-other", second_event, NOW)
+    for value in (before, future, other):
+        repository.append_interpretation(value)
+
+    assert repository.interpretations_for_events(
+        (first_event.event_id,), cutoff=NOW
+    ) == [before]
+
+    repository.connection.execute("DROP TRIGGER reject_update_news_interpretations")
+    repository.connection.execute(
+        "UPDATE news_interpretations SET payload='{}' WHERE interpretation_id=?",
+        (before.interpretation_id,),
+    )
+    repository.connection.commit()
+    with pytest.raises(NewsIntegrityError, match="integrity"):
+        repository.interpretations_for_events((first_event.event_id,), cutoff=NOW)
+    repository.close()
+
+
 def test_events_for_symbol_is_verified_linked_and_cutoff_bounded(tmp_path) -> None:
     repository = NewsRepository(tmp_path / "news.sqlite3")
     item = article()
@@ -126,6 +188,9 @@ def test_events_for_symbol_is_verified_linked_and_cutoff_bounded(tmp_path) -> No
     verified = base.model_copy(update={
         "event_id": "verified-600519",
         "affected_instruments": ((AssetKind.A_SHARE, "600519"),),
+        "association_kind": "direct",
+        "association_reasons": ("company_code:600519",),
+        "association_confidence": Decimal("1"),
         "review_state": "verified",
     })
     pending = verified.model_copy(update={
@@ -164,6 +229,8 @@ def test_reconcile_event_appends_one_system_correction_and_projects_effective_st
     corrected = original.model_copy(update={
         "industries": (),
         "association_confidence": Decimal("1"),
+        "association_kind": "direct",
+        "association_reasons": ("company_code:600519",),
     })
 
     assert repository.reconcile_event(corrected) == (False, True)
@@ -172,6 +239,8 @@ def test_reconcile_event_appends_one_system_correction_and_projects_effective_st
     assert len(repository.corrections()) == 1
     correction = repository.corrections()[0]
     assert correction.origin == "system"
+    assert correction.association_kind == "direct"
+    assert correction.association_reasons == ("company_code:600519",)
     assert repository.effective_events() == [corrected]
     assert repository.effective_events(
         cutoff=correction.corrected_at - timedelta(microseconds=1)
@@ -197,4 +266,38 @@ def test_reconcile_event_rejects_changes_to_frozen_evidence(tmp_path) -> None:
         repository.reconcile_event(original.model_copy(update={"headline": "changed"}))
 
     assert repository.corrections() == []
+    repository.close()
+
+
+def test_repository_serializes_concurrent_connection_reads(tmp_path, monkeypatch) -> None:
+    repository = NewsRepository(tmp_path / "news.sqlite3")
+    item = article()
+    repository.append_articles((item,))
+    original = NewsRepository._articles_from_rows
+    state_lock = threading.Lock()
+    active = 0
+    maximum_active = 0
+
+    def tracked(rows):
+        nonlocal active, maximum_active
+        with state_lock:
+            active += 1
+            maximum_active = max(maximum_active, active)
+        time.sleep(0.05)
+        try:
+            return original(rows)
+        finally:
+            with state_lock:
+                active -= 1
+
+    monkeypatch.setattr(NewsRepository, "_articles_from_rows", staticmethod(tracked))
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(repository.articles_by_ids, (item.article_id,))
+            for _ in range(2)
+        ]
+        assert [future.result() for future in futures] == [[item], [item]]
+
+    assert maximum_active == 1
     repository.close()

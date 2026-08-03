@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, ExternalLink, ShieldAlert } from "lucide-react";
-export type RiskStatus = { rule_version: string; limits: Record<string, string | number> };
+export type RiskLevel = "low" | "medium" | "high" | "unavailable";
+export type RiskDimension = { id: string; label: string; level: RiskLevel; value: string; evidence: string; action: string };
+export type RiskAlert = { id: string; title: string; level: Exclude<RiskLevel, "unavailable">; category: string; evidence: string; action: string; affected_instruments: string[]; affected_sectors: string[]; observed_at: string; source: string };
+export type RiskStatus = { rule_version: string; limits: Record<string, string | number>; overall_level?: RiskLevel; generated_at?: string; dimensions?: RiskDimension[]; alerts?: RiskAlert[] };
 export type ComplianceStatus = { policy_state: string; sources: Array<Record<string, string | null>>; features: Array<{ feature: string; allowed: boolean; blocked_reasons: string[] }> };
 export type AuditStatus = { state: string; findings: Array<{ finding_id: string; finding_type: string; severity: string; owner_department: string; resolution_state: string; evidence: string[]; snapshots: Array<{ snapshot_id: string; evidence_link: string }> }> };
 type Asset = "a_share" | "convertible_bond";
@@ -39,7 +42,7 @@ export function GovernanceView(props: Props) {
   }, [props.view, props.loadRisk, props.loadCompliance, props.loadAudit, asset]);
   const data = loaded?.view === props.view && (loaded.view !== "libu" || loaded.asset === asset) ? loaded.data : null;
   if (error && !data) return <main className="command-center"><section className="governance-page"><div className="error-state" role="alert"><AlertTriangle /><div><b>{error}</b><button type="button" onClick={() => void reload()}>重试</button></div></div></section></main>;
-  if (!data) return <main className="command-center"><section className="governance-page">正在加载...</section></main>;
+  if (!data) return <main className="command-center"><section className="governance-page" role="status" aria-busy="true">正在加载...</section></main>;
   async function runComplianceAction(source: string, action: "authorize" | "revoke" | "acknowledge") {
     if (!props.complianceAction || !props.loadCompliance) return;
     const request = ++requestVersion.current;

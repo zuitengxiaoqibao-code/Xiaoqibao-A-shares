@@ -1,8 +1,10 @@
 import hashlib
 import json
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 
+import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from decimal import Decimal
 from typing import Literal
@@ -12,6 +14,7 @@ from qibao_api.contracts.news import (
     InterpretationStatement,
     NormalizedNewsEvent,
 )
+from qibao_api.settings_repository import AISettings, EffectiveAISettingsResolver
 
 
 class _ProviderPayload(BaseModel):
@@ -26,6 +29,61 @@ class _ProviderPayload(BaseModel):
 class UnavailableNewsAIProvider:
     async def complete(self, _request: dict) -> str:
         raise OSError("news AI provider is not configured")
+
+
+class OpenAICompatibleNewsProvider:
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        api_key: str,
+        model: str,
+        client: httpx.AsyncClient,
+        timeout: float = 10,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self._api_key = api_key
+        self._client = client
+        self.timeout = timeout
+
+    def __repr__(self) -> str:
+        return (
+            "OpenAICompatibleNewsProvider("
+            f"base_url={self.base_url!r}, model={self.model!r})"
+        )
+
+    async def complete(self, request: dict) -> str:
+        response = await self._client.post(
+            f"{self.base_url}/chat/completions",
+            headers={"Authorization": f"Bearer {self._api_key}"},
+            json={
+                "model": self.model,
+                "temperature": 0,
+                "response_format": {"type": "json_object"},
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Return one strict JSON object matching the supplied schema. "
+                            "Use only the frozen event and allowed citation IDs. Explain "
+                            "uncertainty; never create a trading instruction."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": json.dumps(request, ensure_ascii=False),
+                    },
+                ],
+            },
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        envelope = response.json()
+        content = envelope["choices"][0]["message"]["content"]
+        if not isinstance(content, str):
+            raise TypeError("chat completion content must be a JSON string")
+        return content
 
 
 class NewsAIGateway:
@@ -208,3 +266,88 @@ class NewsAIGateway:
             statements=statements,
             citations=event.citations,
         )
+
+
+class ReloadableNewsAIGateway:
+    provider_name = "openai-compatible"
+
+    def __init__(
+        self,
+        settings: EffectiveAISettingsResolver,
+        *,
+        client: httpx.AsyncClient | None = None,
+        client_factory: Callable[[], httpx.AsyncClient] | None = None,
+        timeout: float = 10,
+        prompt_version: str = "news-v1",
+        clock=lambda: datetime.now(timezone.utc),
+        monotonic=time.monotonic,
+    ) -> None:
+        self._settings = settings
+        self._client = client
+        self._client_factory = client_factory or (
+            lambda: httpx.AsyncClient(timeout=timeout)
+        )
+        self._owns_client = client is None
+        self._timeout = timeout
+        self.prompt_version = prompt_version
+        self._clock = clock
+        self._monotonic = monotonic
+
+    def __repr__(self) -> str:
+        return (
+            "ReloadableNewsAIGateway("
+            f"provider_name={self.provider_name!r}, "
+            f"prompt_version={self.prompt_version!r})"
+        )
+
+    def _client_or_create(self) -> httpx.AsyncClient:
+        if self._client is None:
+            self._client = self._client_factory()
+        return self._client
+
+    async def aclose(self) -> None:
+        if self._owns_client and self._client is not None:
+            await self._client.aclose()
+
+    def needs_interpretation(self, event_id: str, interpretations) -> bool:
+        current = self._settings.resolve()
+        if not isinstance(current, AISettings):
+            return False
+        return not any(
+            item.event_id == event_id
+            and item.provider == self.provider_name
+            and item.model == current.model
+            and item.prompt_version == self.prompt_version
+            and not item.degraded
+            for item in interpretations
+        )
+
+    async def interpret(self, event: NormalizedNewsEvent) -> AIInterpretation:
+        current = self._settings.resolve()
+        if not isinstance(current, AISettings):
+            gateway = NewsAIGateway(
+                UnavailableNewsAIProvider(),
+                provider_name="unconfigured",
+                model="none",
+                prompt_version=self.prompt_version,
+                clock=self._clock,
+                monotonic=self._monotonic,
+            )
+            return await gateway.interpret(event)
+        provider = OpenAICompatibleNewsProvider(
+            base_url=current.base_url,
+            api_key=current.api_key,
+            model=current.model,
+            client=self._client_or_create(),
+            timeout=self._timeout,
+        )
+        gateway = NewsAIGateway(
+            provider,
+            provider_name=self.provider_name,
+            model=current.model,
+            prompt_version=self.prompt_version,
+            clock=self._clock,
+            monotonic=self._monotonic,
+            api_key=current.api_key,
+        )
+        return await gateway.interpret(event)

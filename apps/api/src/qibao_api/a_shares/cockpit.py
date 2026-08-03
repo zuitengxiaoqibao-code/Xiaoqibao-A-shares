@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Callable
 from datetime import date, datetime, time, timezone
 import hashlib
@@ -56,6 +57,8 @@ class StockPhaseHistory(BaseModel):
     advice: tuple[AdviceCard, ...] = ()
     change_stream: tuple[DecisionVersion, ...] = ()
     execution: PhaseExecution | None = None
+    phase_status: Literal["empty", "ready", "partial", "blocked"] = "empty"
+    quality_reasons: tuple[str, ...] = ()
 
 
 class StockCockpitSnapshot(BaseModel):
@@ -105,14 +108,16 @@ def _section_snapshot_id(
     section: Any,
     observed_at: datetime | None,
 ) -> str:
+    payload = getattr(section, "payload", {})
     content = {
         "name": name,
         "source": section.source,
         "status": section.status,
         "observed_at": observed_at.isoformat() if observed_at is not None else None,
-        "metrics": section.metrics,
-        "evidence_ids": section.evidence_ids,
-        "explanation": section.explanation,
+        "reason": section.reason,
+        "metrics": getattr(section, "metrics", payload.get("metrics", {})),
+        "evidence_ids": getattr(section, "evidence_ids", payload.get("evidence_ids", ())),
+        "explanation": getattr(section, "explanation", payload.get("explanation", "")),
     }
     encoded = json.dumps(
         content,
@@ -148,19 +153,23 @@ class StockDecisionCockpitService:
         self.operations_repository = operations_repository
 
     async def get(
-        self, symbol: AShareCode, as_of: date, cutoff: datetime
+        self, symbol: AShareCode, as_of: date, cutoff: datetime,
+        *, include_ai: bool = True,
     ) -> StockCockpitSnapshot:
         instrument = self.instrument_directory.resolve_at(symbol, cutoff)
         if instrument is None:
             raise UnknownAShareError(symbol)
 
         live_request = as_of == cutoff.astimezone(ZoneInfo("Asia/Shanghai")).date()
-        preparation = await self.preparation_service.inspect(
-            symbol, as_of=as_of, cutoff=None if live_request else cutoff
+        preparation, sections = await asyncio.gather(
+            self.preparation_service.inspect(
+                symbol, as_of=as_of, cutoff=None if live_request else cutoff
+            ),
+            self._diagnosis_sections(
+                symbol, as_of, None if live_request else cutoff
+            ),
         )
-        sections = await self._diagnosis_sections(
-            symbol, as_of, None if live_request else cutoff
-        )
+        sections = self._merge_preparation_failures(sections, preparation)
         effective_cutoff = self.clock() if live_request else cutoff
         sections = self._enforce_cutoff(sections, effective_cutoff)
         phases = self._phases(symbol, as_of, effective_cutoff)
@@ -169,7 +178,9 @@ class StockDecisionCockpitService:
         assessment = self.assessor.assess(symbol, sections, membership, effective_cutoff)
         ai_status: AIStatus = "unconfigured"
         ai_explanation = None
-        if self.assessor_ai is not None:
+        if self.assessor_ai is not None and not include_ai:
+            ai_status = "deferred"
+        elif self.assessor_ai is not None:
             frozen_evidence = (
                 *assessment.supporting_evidence, *assessment.contrary_evidence
             )
@@ -187,6 +198,29 @@ class StockDecisionCockpitService:
             assessment=assessment, ai_status=ai_status, ai_explanation=ai_explanation,
             current_advice=current, sections=sections, phases=phases,
         )
+
+    @staticmethod
+    def _merge_preparation_failures(sections, preparation):
+        section_by_source = {
+            "news": "news",
+            "classification": "industry",
+            "fund_flow": "funds",
+        }
+        merged = dict(sections)
+        for source in preparation.sources:
+            target = section_by_source.get(source.name)
+            if source.status != "partial" or target is None or target not in merged:
+                continue
+            current = merged[target]
+            reason = source.reason or f"{source.name}_partial"
+            if current.reason and current.reason != reason:
+                reason = f"{current.reason}; {reason}"
+            status = "partial" if current.status == "ready" else current.status
+            updated = current.model_copy(update={"status": status, "reason": reason})
+            merged[target] = updated.model_copy(update={
+                "snapshot_id": _section_snapshot_id(target, updated, updated.observed_at),
+            })
+        return merged
 
     @staticmethod
     def _enforce_cutoff(sections, cutoff):
@@ -232,7 +266,10 @@ class StockDecisionCockpitService:
             mapped[target] = CockpitSection(
                 status=item.status, source=item.source, observed_at=observed_at,
                 snapshot_id=_section_snapshot_id(target, item, observed_at),
-                reason="diagnosis_section_unavailable" if item.status == "unavailable" else None,
+                reason=(
+                    item.reason
+                    or ("diagnosis_section_unavailable" if item.status == "unavailable" else None)
+                ),
                 payload={
                     "metrics": item.metrics,
                     "evidence_ids": item.evidence_ids,
@@ -293,9 +330,16 @@ class StockDecisionCockpitService:
                     aggregate=(included_aggregates[-1] if included_aggregates else None),
                     jobs=jobs,
                 )
+            latest_snapshot = (
+                included_aggregates[-1].snapshot if included_aggregates else None
+            )
             result[phase] = StockPhaseHistory(
                 advice=tuple(advice), change_stream=tuple(versions),
                 execution=execution,
+                phase_status=(latest_snapshot.status if latest_snapshot else "empty"),
+                quality_reasons=(
+                    latest_snapshot.quality_reasons if latest_snapshot else ()
+                ),
             )
         return result
 

@@ -21,6 +21,7 @@ from qibao_api.contracts.market import AssetKind
 NonBlank = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 WebUrl = Annotated[str, StringConstraints(pattern=r"^https?://[^\s]+$")]
+AssociationKind = Literal["direct", "context", "theme", "macro"]
 
 
 class NewsArticle(BaseModel):
@@ -69,7 +70,30 @@ class NormalizedNewsEvent(BaseModel):
     themes: tuple[NonBlank, ...] = ()
     citations: tuple[EvidenceCitation, ...] = Field(min_length=1)
     association_confidence: Decimal = Field(ge=0, le=1)
+    association_kind: AssociationKind = "macro"
+    association_reasons: tuple[NonBlank, ...] = ()
     review_state: Literal["pending", "verified", "rejected"]
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_association(cls, value):
+        if isinstance(value, dict) and "association_kind" not in value:
+            migrated = dict(value)
+            instruments = tuple(migrated.get("affected_instruments") or ())
+            confidence = Decimal(str(migrated.get("association_confidence", "0")))
+            migrated["association_kind"] = (
+                "direct"
+                if instruments and confidence >= Decimal("1")
+                else "context"
+                if instruments
+                else "theme"
+                if migrated.get("industries") or migrated.get("themes")
+                else "macro"
+            )
+            if instruments:
+                migrated["association_reasons"] = ("legacy_confidence_migration",)
+            value = migrated
+        return value
 
     @field_validator("affected_instruments")
     @classmethod
@@ -91,6 +115,10 @@ class NormalizedNewsEvent(BaseModel):
             raise ValueError("normalized_at cannot precede occurred_at")
         if any(citation.published_at > self.normalized_at for citation in self.citations):
             raise ValueError("event cannot cite news published after normalization")
+        if self.association_kind in {"direct", "context"} and not self.association_reasons:
+            raise ValueError("direct/context association requires association reasons")
+        if self.association_kind == "macro" and self.affected_instruments:
+            raise ValueError("macro event cannot claim instruments")
         return self
 
 
@@ -171,6 +199,8 @@ class NewsCorrection(BaseModel):
     industries: tuple[NonBlank, ...] = ()
     themes: tuple[NonBlank, ...] = ()
     association_confidence: Decimal | None = Field(default=None, ge=0, le=1)
+    association_kind: AssociationKind | None = None
+    association_reasons: tuple[NonBlank, ...] | None = None
 
     @field_validator("affected_instruments")
     @classmethod

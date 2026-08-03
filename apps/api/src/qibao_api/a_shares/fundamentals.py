@@ -6,6 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from qibao_api.contracts.source_health import SourceAttemptEvent
 from qibao_api.gongbu.tdx_client import create_tdx_client
 
 
@@ -145,12 +146,16 @@ class TdxFinanceSource:
         self,
         client_factory: Callable[[], Any] = create_tdx_client,
         clock: Callable[[], datetime] = _utc_now,
+        observer: Callable[[SourceAttemptEvent], None] | None = None,
     ) -> None:
         self.client_factory = client_factory
         self.clock = clock
+        self.observer = observer
 
     def fetch(self, symbol: str) -> FundamentalSnapshot:
         client = self.client_factory()
+        if self.observer is not None and hasattr(client, "observer"):
+            client.observer = self.observer
         try:
             payload = client.finance(symbol=symbol)
         finally:
@@ -160,4 +165,17 @@ class TdxFinanceSource:
         mapping = _as_mapping(payload)
         if not mapping:
             raise ValueError("mootdx finance response is empty")
-        return parse_tdx_finance(mapping, symbol, self.clock())
+        snapshot = parse_tdx_finance(mapping, symbol, self.clock())
+        usable_fields = (
+            snapshot.data_updated_on,
+            snapshot.industry,
+            snapshot.eps,
+            snapshot.roe,
+            snapshot.net_profit,
+            snapshot.revenue,
+            snapshot.book_value_per_share,
+            snapshot.total_shares,
+        )
+        if all(value is None for value in usable_fields):
+            raise ValueError("mootdx finance response has no usable fields")
+        return snapshot

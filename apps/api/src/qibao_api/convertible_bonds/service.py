@@ -1,19 +1,49 @@
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
+import httpx
+
 from qibao_api.contracts.market import AssetKind
+from qibao_api.convertible_bonds.adapters import ClauseDataUnavailable
 from qibao_api.convertible_bonds.candidates import BondCandidate, BondCandidateFilter, filter_and_rank_candidates
 from qibao_api.convertible_bonds.metrics import (
     EvidenceBackedClauseState,
     calculate_metrics,
 )
 from qibao_api.convertible_bonds.risk import BondRiskInput, BondRiskPolicy, evaluate_bond_risk
+from qibao_api.libu_compliance.repository import SourceAuthorizationError
+
+
+def classify_diagnosis_state(diagnosis: dict | None) -> tuple[str, str | None]:
+    """Return the user-facing observation state for one discovered bond."""
+    if diagnosis is None:
+        return "discovered", "尚未诊断，行情、条款与估值尚未核验"
+    status = diagnosis.get("status")
+    bond = diagnosis.get("bond") or {}
+    if status == "stale_quote":
+        return "unavailable", "行情已过期，未进入观察候选"
+    if status == "source_conflict":
+        return "unavailable", "条款来源冲突，未进入观察候选"
+    if status != "ready":
+        return "unavailable", "诊断数据不可用"
+    if bond.get("suspended") or bond.get("price") is None:
+        return "unavailable", "行情停牌或价格缺失"
+    risk = diagnosis.get("risk") or {}
+    unknowns = risk.get("unknowns") or []
+    if unknowns:
+        return "unavailable", "缺少：" + "、".join(str(item) for item in unknowns)
+    if risk.get("outcome") == "exclude":
+        return "risk_excluded", "规则风险拦截"
+    if risk.get("outcome") == "eligible":
+        return "diagnosed", None
+    return "unavailable", "风险输入不完整，暂不进入观察候选"
 
 
 class ConvertibleBondService:
     def __init__(self, quote_source, clause_source, linked_stock_source, repository, compliance,
                  diagnosis_repository, valuation_source=None,
-                 *, clock=lambda: datetime.now(timezone.utc)) -> None:
+                 *, universe_source=None, universe_repository=None,
+                 clock=lambda: datetime.now(timezone.utc)) -> None:
         self.quote_source = quote_source
         self.clause_source = clause_source
         self.linked_stock_source = linked_stock_source
@@ -22,10 +52,56 @@ class ConvertibleBondService:
         self.diagnosis_repository = diagnosis_repository
         self.clock = clock
         self.valuation_source = valuation_source
+        self.universe_source = universe_source
+        self.universe_repository = universe_repository
 
     def dashboard(self) -> dict:
-        codes = sorted({item.contract.bond_code for item in self.repository.all_latest()})
-        return {"status": "ready" if codes else "empty", "bond_count": len(codes), "bond_codes": codes}
+        all_diagnosed_codes = sorted({item["bond_code"] for item in self.diagnosis_repository.latest_by_bond()})
+        diagnosis_by_code = {
+            item["bond_code"]: item.get("payload") for item in self.diagnosis_repository.latest_by_bond()
+        }
+        clause_codes = sorted({item.contract.bond_code for item in self.repository.all_latest()})
+        snapshot = self.universe_repository.latest() if self.universe_repository is not None else None
+        discovered_codes = [item.bond_code for item in snapshot.items] if snapshot else []
+        discovered_code_set = set(discovered_codes)
+        diagnosed_codes = (
+            [code for code in all_diagnosed_codes if code in discovered_code_set]
+            if snapshot
+            else all_diagnosed_codes
+        )
+        state_counts = {"discovered": 0, "unavailable": 0, "risk_excluded": 0, "diagnosed": 0}
+        if snapshot:
+            for item in snapshot.items:
+                state, _ = classify_diagnosis_state(diagnosis_by_code.get(item.bond_code))
+                state_counts[state] += 1
+        codes = discovered_codes or clause_codes or diagnosed_codes
+        return {
+            "status": "ready" if codes else "empty",
+            "bond_count": len(codes),
+            "bond_codes": codes,
+            "discovered_count": len(discovered_codes),
+            "diagnosed_count": len(diagnosed_codes),
+            "unavailable_count": state_counts["discovered"] if snapshot else max(0, len(discovered_codes) - len(diagnosed_codes)),
+            "undiagnosed_count": state_counts["discovered"],
+            "undignosed_count": state_counts["discovered"],
+            "data_unavailable_count": state_counts["unavailable"],
+            "risk_excluded_count": state_counts["risk_excluded"],
+            "observable_count": state_counts["diagnosed"],
+            "diagnosed_outside_universe_count": max(0, len(all_diagnosed_codes) - len(diagnosed_codes)),
+            "universe_observed_at": snapshot.observed_at if snapshot else None,
+        }
+
+    async def sync_universe(self, *, max_age: timedelta = timedelta(hours=12)) -> bool:
+        if self.universe_source is None or self.universe_repository is None:
+            return False
+        latest = self.universe_repository.latest()
+        now = self.clock()
+        if latest is not None and now - latest.observed_at.astimezone(timezone.utc) < max_age:
+            return False
+        self.compliance.require_feature_sources("bond_clauses", AssetKind.CONVERTIBLE_BOND)
+        snapshot = await self.universe_source.fetch()
+        self.universe_repository.append(snapshot)
+        return True
 
     async def diagnose(self, bond_code: str) -> dict:
         now = self.clock()
@@ -129,10 +205,83 @@ class ConvertibleBondService:
         result["diagnosis_id"] = self.diagnosis_repository.append(bond_code, result)
         return result
 
+    def cached_diagnosis(self, bond_code: str) -> dict | None:
+        record = self.diagnosis_repository.latest_for_bond(bond_code)
+        if record is None:
+            return None
+        return {
+            **record["payload"],
+            "is_cached": True,
+            "cache_recorded_at": record["recorded_at"],
+        }
+
+    async def diagnose_discovered(self, *, limit: int = 6) -> dict:
+        """Diagnose a small, deterministic slice of the current bond universe."""
+        snapshot = self.universe_repository.latest() if self.universe_repository is not None else None
+        if snapshot is None:
+            return {"status": "empty", "requested": 0, "processed": 0,
+                    "diagnosed_count": 0, "unavailable_count": 0, "items": []}
+
+        existing = {item["bond_code"] for item in self.diagnosis_repository.latest_by_bond()}
+        targets = [item for item in snapshot.items if item.bond_code not in existing][:limit]
+        items: list[dict] = []
+        for item in targets:
+            try:
+                diagnosis = await self.diagnose(item.bond_code)
+            except (ClauseDataUnavailable, SourceAuthorizationError, httpx.HTTPError, OSError, ValueError) as error:
+                items.append({
+                    "bond_code": item.bond_code,
+                    "state": "unavailable",
+                    "reason_code": self._batch_failure_reason(error),
+                })
+                continue
+            items.append({
+                "bond_code": item.bond_code,
+                "state": "diagnosed",
+                "status": diagnosis.get("status"),
+                "risk_outcome": diagnosis.get("risk", {}).get("outcome"),
+            })
+
+        diagnosed_count = sum(item["state"] == "diagnosed" for item in items)
+        observable_count = sum(
+            item["state"] == "diagnosed" and item.get("risk_outcome") == "eligible"
+            for item in items
+        )
+        risk_excluded_count = sum(
+            item["state"] == "diagnosed" and item.get("risk_outcome") == "exclude"
+            for item in items
+        )
+        return {
+            "status": "ready" if items else "empty",
+            "requested": len(targets),
+            "processed": len(items),
+            "diagnosed_count": diagnosed_count,
+            "unavailable_count": len(items) - diagnosed_count,
+            "observable_count": observable_count,
+            "risk_excluded_count": risk_excluded_count,
+            "data_unavailable_count": len(items) - diagnosed_count,
+            "items": items,
+        }
+
+    @staticmethod
+    def _batch_failure_reason(error: Exception) -> str:
+        if isinstance(error, SourceAuthorizationError):
+            return "source_unauthorized"
+        if isinstance(error, ClauseDataUnavailable):
+            return "clauses_unavailable"
+        if isinstance(error, (httpx.HTTPError, OSError)):
+            return "upstream_unavailable"
+        return "invalid_provider_data"
+
     def candidates(self, filters: BondCandidateFilter | None = None) -> dict:
         items = []
-        for stored in self.diagnosis_repository.latest_by_bond():
+        stored_rows = self.diagnosis_repository.latest_by_bond()
+        universe_snapshot = self.universe_repository.latest() if self.universe_repository is not None else None
+        universe_codes = {item.bond_code for item in universe_snapshot.items} if universe_snapshot else None
+        for stored in stored_rows:
             diagnosis = stored["payload"]
+            if universe_codes is not None and stored["bond_code"] not in universe_codes:
+                continue
             if (diagnosis["status"] != "ready" or diagnosis["bond"]["suspended"]
                     or diagnosis["bond"]["price"] is None):
                 continue
@@ -155,5 +304,41 @@ class ConvertibleBondService:
                 strong_redemption=evidence, risk=risk,
             ))
         ranked = filter_and_rank_candidates(items, filters)
-        return {"status": "ready" if ranked else "empty",
-                "items": [item.model_dump(mode="json") for item in ranked]}
+        diagnosis_by_code = {stored["bond_code"]: stored["payload"] for stored in stored_rows}
+        snapshot = universe_snapshot
+        discovered = []
+        for item in snapshot.items if snapshot else ():
+            state, reason = classify_diagnosis_state(diagnosis_by_code.get(item.bond_code))
+            discovered.append(
+                {
+                    "bond_code": item.bond_code,
+                    "name": item.name,
+                    "linked_stock_code": item.linked_stock_code,
+                    "state": state,
+                    "reason": reason,
+                }
+            )
+        state_counts = {state: sum(item["state"] == state for item in discovered)
+                        for state in ("discovered", "unavailable", "risk_excluded", "diagnosed")}
+        diagnosed_count = len(discovered) - state_counts["discovered"]
+        return {
+            "status": "ready" if ranked else "empty",
+            "items": [item.model_dump(mode="json") for item in ranked],
+            "coverage": {
+                "discovered_count": len(discovered),
+                "diagnosed_count": diagnosed_count,
+                "candidate_count": len(ranked),
+                "unavailable_count": state_counts["unavailable"],
+                "undiagnosed_count": state_counts["discovered"],
+                "undignosed_count": state_counts["discovered"],
+                "data_unavailable_count": state_counts["unavailable"],
+                "risk_excluded_count": state_counts["risk_excluded"],
+                "observable_count": state_counts["diagnosed"],
+                "observed_at": snapshot.observed_at if snapshot else None,
+            },
+            "discovered": discovered,
+        }
+
+    @staticmethod
+    def _diagnosis_unavailable_reason(diagnosis: dict) -> str:
+        return classify_diagnosis_state(diagnosis)[1] or "诊断数据不可用"

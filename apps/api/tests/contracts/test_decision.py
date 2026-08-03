@@ -21,6 +21,10 @@ def evidence() -> EvidenceReference:
     )
 
 
+def test_evidence_kind_defaults_for_legacy_records() -> None:
+    assert evidence().evidence_kind == "other"
+
+
 def advice(**updates: object) -> AdviceCard:
     values = dict(
         advice_id="advice-1", snapshot_id="cycle-1", asset="a_share",

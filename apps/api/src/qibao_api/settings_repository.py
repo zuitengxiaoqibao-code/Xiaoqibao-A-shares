@@ -1,12 +1,18 @@
 import json
 import os
 import re
+import secrets
 import tempfile
 import unicodedata
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal
 from urllib.parse import unquote, urlsplit
+
+from qibao_api.credential_protection import (
+    CredentialProtector,
+    default_credential_protector,
+)
 
 
 _MALFORMED_PERCENT_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
@@ -72,26 +78,64 @@ AISettingsState = AISettings | UnconfiguredAISettings
 
 
 class AISettingsRepository:
-    def __init__(self, data_dir: Path) -> None:
+    def __init__(
+        self,
+        data_dir: Path,
+        *,
+        protector: CredentialProtector | None = default_credential_protector(),
+    ) -> None:
         self.path = data_dir / "ai-settings.json"
+        self.protector = protector
 
     def load(self) -> AISettingsState:
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
             if not isinstance(raw, dict):
                 raise ValueError("configuration must be an object")
-            return AISettings(
+            protected_key = raw.get("api_key_protected")
+            is_legacy_plaintext = protected_key is None
+            if protected_key is not None:
+                if not isinstance(protected_key, str) or self.protector is None:
+                    raise ValueError("protected credential is unavailable")
+                api_key = self.protector.unprotect(protected_key)
+            else:
+                api_key = raw["api_key"]
+            settings = AISettings(
                 base_url=raw["base_url"],
                 model=raw["model"],
-                api_key=raw["api_key"],
+                api_key=api_key,
             )
+            if is_legacy_plaintext and self.protector is not None:
+                self.save(settings)
+            return settings
         except FileNotFoundError:
             return UnconfiguredAISettings(reason="missing")
         except (KeyError, TypeError, ValueError, json.JSONDecodeError, OSError):
             return UnconfiguredAISettings(reason="invalid_local_config")
 
+    def revision(self) -> str | None:
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, ValueError, json.JSONDecodeError, OSError):
+            return None
+        if not isinstance(raw, dict):
+            return None
+        revision = raw.get("revision")
+        if not isinstance(revision, str) or re.fullmatch(r"[0-9a-f]{32}", revision) is None:
+            return None
+        return revision
+
     def save(self, settings: AISettings) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "base_url": settings.base_url,
+            "model": settings.model,
+            "revision": secrets.token_hex(16),
+        }
+        if self.protector is None:
+            payload["api_key"] = settings.api_key
+        else:
+            payload["api_key_protected"] = self.protector.protect(settings.api_key)
         descriptor, temporary_name = tempfile.mkstemp(
             prefix=f".{self.path.name}.", suffix=".tmp", dir=self.path.parent
         )
@@ -100,7 +144,11 @@ class AISettingsRepository:
             if os.name != "nt":
                 os.fchmod(descriptor, 0o600)
             with os.fdopen(descriptor, "w", encoding="utf-8") as file:
-                json.dump(settings.model_dump(), file, ensure_ascii=False)
+                json.dump(
+                    payload,
+                    file,
+                    ensure_ascii=False,
+                )
                 file.flush()
                 os.fsync(file.fileno())
             os.replace(temporary_path, self.path)

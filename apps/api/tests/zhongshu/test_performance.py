@@ -56,6 +56,32 @@ def test_performance_metrics_use_closed_trades_and_equity_returns() -> None:
     assert metrics.profit_loss_ratio == Decimal("1.9412")
     assert metrics.turnover_rate == Decimal("41.2470")
     assert metrics.annualized_volatility == Decimal("1.7928")
+    assert metrics.annualized_return > 0
+    assert metrics.sharpe_ratio is not None
+    assert metrics.calmar_ratio == (metrics.annualized_return / Decimal("0.1")).quantize(
+        Decimal("0.0001")
+    )
+
+
+def test_performance_metrics_do_not_invent_infinite_risk_ratios() -> None:
+    start = date(2026, 1, 1)
+    points = [
+        EquityPoint(
+            trade_date=start + timedelta(days=index),
+            equity=Decimal(value),
+            cash=Decimal(value),
+            shares=0,
+            market_value=0,
+        )
+        for index, value in enumerate(["100", "110", "121", "133.1"])
+    ]
+
+    metrics = performance_metrics(points, [])
+
+    assert metrics.annualized_return > 0
+    assert metrics.annualized_volatility == Decimal("0.0000")
+    assert metrics.sharpe_ratio is None
+    assert metrics.calmar_ratio is None
 
 
 def test_market_regime_attribution_uses_only_trailing_prices() -> None:

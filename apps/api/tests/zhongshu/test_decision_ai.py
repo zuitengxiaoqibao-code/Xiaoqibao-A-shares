@@ -1,10 +1,19 @@
 import json
 from datetime import datetime, timedelta, timezone
 
+import httpx
 import pytest
 
+from qibao_api.settings_repository import (
+    AISettings,
+    AISettingsRepository,
+    EffectiveAISettingsResolver,
+)
 from qibao_api.zhongshu.decision_ai import (
-    DecisionAIEvidence, DecisionAIGateway, DecisionAIRequest,
+    DecisionAIEvidence,
+    DecisionAIGateway,
+    DecisionAIRequest,
+    ReloadableDecisionAIGateway,
 )
 
 
@@ -118,3 +127,64 @@ def test_rejects_ascii_numbers_adjacent_to_chinese_text(text: str) -> None:
 def test_rejects_plan_and_market_semantics_in_both_languages(text: str) -> None:
     subject, _ = gateway(json.dumps({"summary": text, "statements": []}, ensure_ascii=False))
     assert subject.explain(request()).status == "unavailable"
+
+
+def test_reloadable_gateway_uses_saved_settings_without_restart(tmp_path) -> None:
+    repository = AISettingsRepository(tmp_path)
+    calls = []
+
+    def handler(http_request: httpx.Request) -> httpx.Response:
+        body = json.loads(http_request.content)
+        prompt = json.loads(body["messages"][1]["content"])
+        calls.append((str(http_request.url), http_request.headers["authorization"], body))
+        assert prompt["allowed_evidence_ids"] == ["ev-1"]
+        assert prompt["deterministic_conclusions"] == ["仅观察，不生成交易计划"]
+        assert "top-secret" not in body["messages"][1]["content"]
+        return httpx.Response(200, json={
+            "choices": [{"message": {"content": valid_payload()}}],
+        })
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    subject = ReloadableDecisionAIGateway(
+        EffectiveAISettingsResolver(repository), client=client,
+    )
+
+    unavailable_identity = subject.configuration_identity()
+    unavailable = subject.explain(request())
+    assert unavailable.status == "unavailable"
+    assert unavailable.generated_at == request().generated_at
+    assert calls == []
+
+    repository.save(AISettings(
+        base_url="https://provider.example/v1",
+        model="model-first",
+        api_key="top-secret",
+    ))
+    first_identity = subject.configuration_identity()
+    ready = subject.explain(request())
+
+    assert ready.status == "ready"
+    assert ready.provider == "openai-compatible"
+    assert ready.model == "model-first"
+    assert ready.generated_at == request().generated_at
+    assert first_identity != unavailable_identity
+    assert calls[0][0] == "https://provider.example/v1/chat/completions"
+    assert calls[0][1] == "Bearer top-secret"
+    assert calls[0][2]["model"] == "model-first"
+    assert calls[0][2]["temperature"] == 0
+    assert calls[0][2]["response_format"] == {"type": "json_object"}
+
+    repository.save(AISettings(
+        base_url="https://provider.example/v1",
+        model="model-second",
+        api_key="top-secret",
+    ))
+    second_identity = subject.configuration_identity()
+    changed = subject.explain(request())
+
+    assert changed.model == "model-second"
+    assert second_identity != first_identity
+    assert calls[-1][2]["model"] == "model-second"
+    assert "top-secret" not in json.dumps(second_identity)
+    assert "top-secret" not in repr(subject)
+    client.close()

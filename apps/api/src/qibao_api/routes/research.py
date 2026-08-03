@@ -5,26 +5,43 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 import httpx
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
+from qibao_api.a_shares.candidate_sentiment_repository import (
+    CandidateSentimentStoreError,
+)
+from qibao_api.a_shares.candidate_sentiment_service import (
+    CandidateSentimentInputError,
+    CandidateSnapshotNotFoundError,
+)
 from qibao_api.a_shares.diagnosis import AShareDiagnosis, DiagnosisUnavailableError
 from qibao_api.a_shares.cockpit import StockCockpitSnapshot, UnknownAShareError
 from qibao_api.a_shares.instrument_directory import AShareInstrument, AShareInstrumentDirectory
-from qibao_api.a_shares.models import CandidateBoard
+from qibao_api.a_shares.models import CandidateBoard, CandidateScoreBoard
 from qibao_api.a_shares.preparation import StockPreparation
 from qibao_api.a_shares.repository import AShareResearchStoreError
 from qibao_api.contracts.instruments import AShareCode, validate_a_share_code
 from qibao_api.contracts.market import DataQuality
+from qibao_api.contracts.candidate_sentiment import CandidateSentimentBatch
+from qibao_api.contracts.company_research import CompanyResearchResponse
 from qibao_api.contracts.research import ResearchCard
+from qibao_api.contracts.stock_timeline import StockTimelineResponse
 from qibao_api.dependencies import (
     get_a_share_diagnosis_service,
     get_a_share_cockpit_service,
     get_a_share_instrument_directory,
     get_a_share_preparation_service,
     get_a_share_quote_source,
+    get_a_share_universe_source,
+    get_candidate_sentiment_service,
+    get_company_research_service,
+    get_compliance_repository,
+    get_poll_state_repository,
     get_pipeline,
     get_server_time,
+    get_stock_timeline_service,
 )
+from qibao_api.gongbu.market_feed import MarketFeedSnapshot
 from qibao_api.gongbu.tencent_quotes import market_prefix
 from qibao_api.shangshu.pipeline import ResearchPipeline
 from qibao_api.shangshu.decision_repository import DecisionIntegrityError
@@ -46,6 +63,21 @@ class AShareSearchResponse(BaseModel):
     source_status: Literal["ready", "unavailable"] = "ready"
 
 
+class AShareUniverseSyncResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    status: Literal["ready"]
+    count: int
+    observed_at: datetime
+    source: str
+
+
+class CandidateSentimentBatchRequest(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    candidate_snapshot_id: str = Field(min_length=1)
+
+
 def _quote_observed_at(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=ZoneInfo("Asia/Shanghai"))
@@ -58,6 +90,47 @@ def _quote_quality(value: DataQuality) -> Literal["ready", "stale", "unavailable
     if value == DataQuality.STALE:
         return "stale"
     return "unavailable"
+
+
+@router.post("/universe/sync", response_model=AShareUniverseSyncResponse)
+async def sync_universe(
+    directory: Annotated[AShareInstrumentDirectory, Depends(get_a_share_instrument_directory)],
+    source: Annotated[object, Depends(get_a_share_universe_source)],
+    compliance: Annotated[object, Depends(get_compliance_repository)],
+) -> AShareUniverseSyncResponse:
+    try:
+        compliance.require_feature_sources("a_share_universe", "a_share")
+        instruments = await source.fetch()
+    except SourceAuthorizationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "source_authorization_required",
+                "message": "请先在礼部完成 A 股基础证券目录授权",
+            },
+        ) from error
+    except (httpx.HTTPError, OSError, ValueError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "a_share_universe_unavailable",
+                "message": "A 股证券目录来源暂不可用，请稍后重试",
+            },
+        ) from error
+    if not instruments:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "a_share_universe_empty",
+                "message": "A 股证券目录来源未返回有效标的",
+            },
+        )
+    directory.observe_many(instruments)
+    observed_at = max(item.observed_at for item in instruments)
+    return AShareUniverseSyncResponse(
+        status="ready", count=len(instruments), observed_at=observed_at,
+        source=str(getattr(source, "last_source", "eastmoney-a-share-universe")),
+    )
 
 
 @router.get("/search", response_model=AShareSearchResponse)
@@ -80,25 +153,35 @@ async def search_instruments(
         exact_symbol = validate_a_share_code(query)
     except ValueError:
         exact_symbol = None
-    resolved = directory.resolve(exact_symbol) if exact_symbol is not None else None
-    if exact_symbol is not None and (resolved is None or resolved.name == exact_symbol):
-        try:
-            quote = await quote_source.fetch(exact_symbol)
-            if quote.symbol != exact_symbol:
-                raise ValueError("Tencent quote symbol does not match requested A-share")
-            instrument = AShareInstrument(
-                symbol=quote.symbol,
-                name=quote.name,
-                exchange=market_prefix(quote.symbol),
-                observed_at=_quote_observed_at(quote.observed_at),
-                quote_quality=_quote_quality(quote.quality),
-            )
-        except (httpx.HTTPError, ValueError, DecimalException):
-            items = ()
-            source_status = "unavailable"
+    if exact_symbol is not None:
+        local_instrument = next(
+            (
+                item
+                for item in items
+                if item.symbol == exact_symbol and item.name.strip() != exact_symbol
+            ),
+            None,
+        )
+        if local_instrument is not None:
+            items = (local_instrument,)
         else:
-            directory.observe(instrument)
-            items = (instrument,)
+            try:
+                quote = await quote_source.fetch(exact_symbol)
+                if quote.symbol != exact_symbol:
+                    raise ValueError("Tencent quote symbol does not match requested A-share")
+                instrument = AShareInstrument(
+                    symbol=quote.symbol,
+                    name=quote.name,
+                    exchange=market_prefix(quote.symbol),
+                    observed_at=_quote_observed_at(quote.observed_at),
+                    quote_quality=_quote_quality(quote.quality),
+                )
+            except (httpx.HTTPError, ValueError, DecimalException):
+                items = ()
+                source_status = "unavailable"
+            else:
+                directory.observe(instrument)
+                items = (instrument,)
     return AShareSearchResponse(
         query=query,
         items=tuple(AShareSearchItem(**item.model_dump()) for item in items),
@@ -149,6 +232,32 @@ def _store_error() -> HTTPException:
     )
 
 
+def _candidate_sentiment_error(error: Exception) -> HTTPException:
+    if isinstance(error, CandidateSnapshotNotFoundError):
+        return HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": "candidate_snapshot_not_found",
+                "message": "未找到该短线候选快照",
+            },
+        )
+    if isinstance(error, CandidateSentimentInputError):
+        return HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "candidate_sentiment_input_invalid",
+                "message": "短线候选情绪输入无效",
+            },
+        )
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail={
+            "code": "candidate_sentiment_store_error",
+            "message": "短线候选情绪存档暂不可用",
+        },
+    )
+
+
 @router.get("/candidates", response_model=CandidateBoard)
 def candidates(
     service: Annotated[object, Depends(get_a_share_diagnosis_service)],
@@ -159,6 +268,58 @@ def candidates(
         return service.candidates(_research_date(as_of), limit)
     except AShareResearchStoreError as error:
         raise _store_error() from error
+
+
+@router.get("/candidate-scores", response_model=CandidateScoreBoard)
+def candidate_scores(
+    service: Annotated[object, Depends(get_a_share_diagnosis_service)],
+    symbols: Annotated[list[AShareCode], Query()],
+    as_of: date | None = None,
+    horizon: Literal["short_term", "swing"] = "short_term",
+) -> CandidateScoreBoard:
+    return service.candidate_scores(
+        _research_date(as_of), tuple(symbols), horizon=horizon
+    )
+
+
+@router.post(
+    "/candidate-sentiment/batch",
+    response_model=CandidateSentimentBatch,
+)
+def candidate_sentiment_batch(
+    request: CandidateSentimentBatchRequest,
+    service: Annotated[object, Depends(get_candidate_sentiment_service)],
+    server_time: Annotated[datetime, Depends(get_server_time)],
+) -> CandidateSentimentBatch:
+    try:
+        return service.current(request.candidate_snapshot_id, server_time)
+    except (
+        CandidateSnapshotNotFoundError,
+        CandidateSentimentInputError,
+        CandidateSentimentStoreError,
+        AShareResearchStoreError,
+    ) as error:
+        raise _candidate_sentiment_error(error) from error
+
+
+@router.post(
+    "/candidate-sentiment/batch/refresh",
+    response_model=CandidateSentimentBatch,
+)
+async def refresh_candidate_sentiment_batch(
+    request: CandidateSentimentBatchRequest,
+    service: Annotated[object, Depends(get_candidate_sentiment_service)],
+    server_time: Annotated[datetime, Depends(get_server_time)],
+) -> CandidateSentimentBatch:
+    try:
+        return await service.refresh(request.candidate_snapshot_id, server_time)
+    except (
+        CandidateSnapshotNotFoundError,
+        CandidateSentimentInputError,
+        CandidateSentimentStoreError,
+        AShareResearchStoreError,
+    ) as error:
+        raise _candidate_sentiment_error(error) from error
 
 
 @router.get("/{symbol}/diagnosis", response_model=AShareDiagnosis)
@@ -189,6 +350,35 @@ async def diagnosis(
         raise _store_error() from error
 
 
+@router.get("/{symbol}/intraday-ticks", response_model=list[MarketFeedSnapshot])
+def intraday_ticks(
+    symbol: Annotated[AShareCode, Path()],
+    repository: Annotated[object | None, Depends(get_poll_state_repository)],
+    server_time: Annotated[datetime, Depends(get_server_time)],
+    trading_date: date | None = None,
+) -> tuple[MarketFeedSnapshot, ...]:
+    if repository is None:
+        return ()
+    selected_date = _research_date_at(trading_date, server_time)
+    return repository.intraday_snapshots(
+        symbol, selected_date, cutoff=server_time,
+    )
+
+
+@router.get("/{symbol}/timeline", response_model=StockTimelineResponse)
+def stock_timeline(
+    symbol: Annotated[AShareCode, Path()],
+    service: Annotated[object, Depends(get_stock_timeline_service)],
+    server_time: Annotated[datetime, Depends(get_server_time)],
+    as_of: date | None = None,
+) -> StockTimelineResponse:
+    return service.get(
+        symbol,
+        _research_date_at(as_of, server_time),
+        server_time,
+    )
+
+
 @router.post("/{symbol}/prepare", response_model=StockPreparation)
 async def prepare(
     symbol: Annotated[AShareCode, Path()],
@@ -215,10 +405,12 @@ async def cockpit(
     service: Annotated[object, Depends(get_a_share_cockpit_service)],
     server_time: Annotated[datetime, Depends(get_server_time)],
     as_of: date | None = None,
+    include_ai: bool = False,
 ) -> StockCockpitSnapshot:
     try:
         return await service.get(
-            symbol, _research_date_at(as_of, server_time), server_time
+            symbol, _research_date_at(as_of, server_time), server_time,
+            include_ai=include_ai,
         )
     except UnknownAShareError as error:
         raise HTTPException(
@@ -231,6 +423,24 @@ async def cockpit(
             detail={
                 "code": "decision_integrity_error",
                 "message": "决策历史完整性校验失败",
+            },
+        ) from error
+
+
+@router.get("/{symbol}/company-research", response_model=CompanyResearchResponse)
+async def company_research(
+    symbol: Annotated[AShareCode, Path()],
+    service: Annotated[object, Depends(get_company_research_service)],
+    as_of: date | None = None,
+) -> CompanyResearchResponse:
+    try:
+        return await service.get(symbol, _research_date(as_of))
+    except (OSError, httpx.HTTPError, ValueError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "company_research_unavailable",
+                "message": "公司研究数据暂不可用，请稍后重试",
             },
         ) from error
 

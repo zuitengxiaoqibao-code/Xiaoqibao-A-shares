@@ -20,7 +20,14 @@ export async function loadNewsIntelligence(): Promise<NewsIntelligenceBundle> {
   return { events, interpretations, quality, corrections, briefings };
 }
 
-export const syncNews = () => read<Record<string, number>>("/api/v1/news/sync", { method: "POST" });
+export const syncNews = (symbol?: string | null) => read<Record<string, number>>(
+  symbol ? `/api/v1/news/sync/${encodeURIComponent(symbol)}` : "/api/v1/news/sync",
+  { method: "POST" },
+);
+export const syncHotspots = () => read<Record<string, number>>(
+  "/api/v1/news/hotspots/sync",
+  { method: "POST" },
+);
 export const createNewsCorrection = (input: CorrectionInput) => read("/api/v1/news/corrections", {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
 });

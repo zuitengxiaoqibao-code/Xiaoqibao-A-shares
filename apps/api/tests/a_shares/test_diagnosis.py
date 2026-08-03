@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
@@ -22,6 +23,30 @@ from qibao_api.libu_compliance.repository import SourceAuthorizationError
 
 AS_OF = date(2026, 7, 14)
 OBSERVED_AT = datetime(2026, 7, 14, 10, 30)
+
+
+@pytest.mark.asyncio
+async def test_source_inspection_fetches_quote_and_finance_concurrently() -> None:
+    finance_started = asyncio.Event()
+    service = object.__new__(AShareDiagnosisService)
+
+    async def market(*args, **kwargs):
+        await asyncio.wait_for(finance_started.wait(), timeout=0.2)
+        return "quote", None
+
+    async def finance(*args, **kwargs):
+        finance_started.set()
+        return "finance", None
+
+    service._market = market
+    service._finance = finance
+
+    result = await service.inspect_sources("600000", AS_OF)
+
+    assert result == {
+        "quote": ("quote", None),
+        "finance": ("finance", None),
+    }
 
 
 def bars(symbol: str = "600000", count: int = 80) -> list[DailyBar]:
@@ -151,9 +176,11 @@ class FundFlows:
         *,
         observed_at=datetime(2026, 7, 14, 10, 0, tzinfo=UTC),
         direction="inflow",
+        minute_error=None,
     ):
         self.observed_at = observed_at
         self.direction = direction
+        self.minute_error = minute_error
         self.queries = []
 
     def latest(self, symbol, as_of, *, cutoff=None):
@@ -175,6 +202,7 @@ class FundFlows:
             daily_sample_count=20,
             intraday_sample_count=120,
             flow_direction=self.direction,
+            minute_error=self.minute_error,
             content_hash="d" * 64,
             raw_snapshot=b"{}",
         )
@@ -470,6 +498,25 @@ async def test_diagnosis_exposes_verified_fund_flow_without_changing_core_risk()
 
 
 @pytest.mark.asyncio
+async def test_diagnosis_marks_daily_only_fund_flow_partial_with_reason() -> None:
+    funds = FundFlows(minute_error="minute endpoint disconnected")
+    service = AShareDiagnosisService(
+        bar_repository=FakeBars({"600000": bars()}),
+        market_source=FakeMarket(),
+        finance_source=FailingFinance(),
+        news_repository=EmptyNews(),
+        fund_flow_repository=funds,
+    )
+
+    result = await service.diagnose("600000", AS_OF, persist=False)
+
+    section = result.sections["funds"]
+    assert section.status == "partial"
+    assert section.reason == "fund_flow_intraday_unavailable"
+    assert section.metrics["intraday_main_net"] == Decimal("90000000")
+
+
+@pytest.mark.asyncio
 async def test_fund_flow_respects_historical_cutoff_and_remains_optional() -> None:
     cutoff = datetime(2026, 7, 14, 9, 0, tzinfo=UTC)
     funds = FundFlows(
@@ -634,6 +681,33 @@ def test_candidates_use_only_local_symbols_with_enough_history() -> None:
     assert board.as_of == AS_OF
 
 
+def test_candidate_scores_cover_requested_watchlist_outside_top_board() -> None:
+    service = AShareDiagnosisService(
+        bar_repository=FakeBars({
+            "600000": bars("600000"),
+            "000001": bars("000001"),
+            "300750": bars("300750", count=40),
+        }),
+        market_source=FakeMarket(), finance_source=FailingFinance(),
+        news_repository=EmptyNews(),
+    )
+
+    result = service.candidate_scores(
+        AS_OF, ("000001", "300750"), horizon="short_term"
+    )
+
+    assert result.universe_size == 2
+    assert result.eligible_size == 2
+    assert result.latest_trade_date is not None
+    assert result.sources == ("mootdx",)
+    assert result.items[0].symbol == "000001"
+    assert result.items[0].status == "ready"
+    assert result.items[0].score is not None
+    assert result.items[1].symbol == "300750"
+    assert result.items[1].status == "insufficient_history"
+    assert result.items[1].score is None
+
+
 def test_candidates_pass_cutoff_to_bar_queries() -> None:
     cutoff = datetime(2026, 7, 14, 9, 25, tzinfo=UTC)
 
@@ -659,6 +733,48 @@ def test_candidates_pass_cutoff_to_bar_queries() -> None:
     service.candidates(AS_OF, cutoff=cutoff)
 
     assert frozen_bars.cutoffs == [cutoff, cutoff]
+
+
+def test_intraday_candidates_freeze_to_previous_confirmed_trading_day() -> None:
+    previous = date(2026, 7, 13)
+
+    class CapturingBars(FakeBars):
+        def __init__(self):
+            super().__init__({"600000": bars()})
+            self.as_of_dates = []
+
+        def symbols_with_history(self, minimum_bars, as_of, *, cutoff=None):
+            self.as_of_dates.append(as_of)
+            return super().symbols_with_history(minimum_bars, as_of)
+
+        def latest_many(self, symbols, limit, as_of, *, cutoff=None):
+            self.as_of_dates.append(as_of)
+            return super().latest_many(symbols, limit, as_of)
+
+    class Calendar:
+        @staticmethod
+        def is_trading_day(value):
+            return True
+
+        @staticmethod
+        def previous_trading_day(value):
+            assert value == AS_OF
+            return previous
+
+    repository = CapturingBars()
+    service = AShareDiagnosisService(
+        bar_repository=repository, market_source=FakeMarket(),
+        finance_source=FailingFinance(), news_repository=EmptyNews(),
+        trading_calendar=Calendar(),
+        clock=lambda: datetime(2026, 7, 14, 2, 30, tzinfo=UTC),
+    )
+
+    board = service.candidates(AS_OF)
+
+    assert board.as_of == previous
+    assert repository.as_of_dates == [previous, previous]
+    assert board.short_term == []
+    assert board.exclusions[0].reason_code == "stale_history"
 
 
 @pytest.mark.asyncio

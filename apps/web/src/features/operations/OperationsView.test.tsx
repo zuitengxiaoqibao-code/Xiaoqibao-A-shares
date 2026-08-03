@@ -20,6 +20,13 @@ const status: OperationsStatus = {
 
 
 describe("OperationsView", () => {
+  it("uses the shared terminal page shell", async () => {
+    render(<OperationsView loadStatus={() => Promise.resolve(status)} setSchedulerPaused={() => Promise.resolve(status.scheduler)} createBackup={() => Promise.resolve(status.backups[0])} verifyBackup={() => Promise.reject(new Error("unused"))} runManualJob={() => Promise.resolve({ report_id: "report-manual" })} />);
+
+    expect(await screen.findByRole("heading", { name: "数据与运维中心" })).toBeInTheDocument();
+    expect(screen.getByRole("main")).toHaveClass("terminal-page", "operations-domain");
+  });
+
   it("shows scheduler failures and verifies a backup with restore drill", async () => {
     const verifyBackup = vi.fn(() => Promise.resolve({ backup_id: "backup-20260714", valid: true, restore_drill_passed: true, checked_files: 8, mismatched_files: [] }));
     render(<OperationsView loadStatus={() => Promise.resolve(status)} setSchedulerPaused={() => Promise.resolve(status.scheduler)} createBackup={() => Promise.resolve(status.backups[0])} verifyBackup={verifyBackup} runManualJob={() => Promise.resolve({ report_id: "report-manual" })} />);

@@ -46,6 +46,19 @@ def test_costs_reduce_ending_equity() -> None:
     assert costly.total_cost > 0
 
 
+def test_backtest_discloses_unadjusted_and_uncontrolled_data_biases() -> None:
+    bars = bars_from_prices(["10", "9", "8", "12", "14"])
+
+    result = BacktestEngine().run(
+        BacktestRequest(fast_window=2, slow_window=3),
+        bars,
+    )
+
+    assert "corporate_actions_not_adjusted" in result.warnings
+    assert "benchmark_not_available" in result.warnings
+    assert "survivorship_bias_not_eliminated" in result.warnings
+
+
 def test_limit_up_open_rejects_buy() -> None:
     bars = bars_from_prices(
         ["10", "9", "8", "12", "13.20"],
@@ -56,6 +69,20 @@ def test_limit_up_open_rejects_buy() -> None:
 
     assert result.trades == []
     assert any("涨停" in warning for warning in result.warnings)
+
+
+def test_momentum_breakout_uses_configured_lookback_and_next_open() -> None:
+    bars = bars_from_prices(["10", "10.1", "10.2", "10.3", "10.4", "11", "11.2"])
+    request = BacktestRequest(
+        strategy="momentum_breakout", lookback_window=5, exit_window=2,
+        commission_rate=0, slippage_rate=0,
+    )
+
+    result = BacktestEngine().run(request, bars)
+
+    assert result.trades[0].side == "buy"
+    assert result.trades[0].signal_date == bars[5].trade_date
+    assert result.trades[0].trade_date == bars[6].trade_date
 
 
 def test_long_history_returns_independent_train_validation_and_out_of_sample_results() -> None:

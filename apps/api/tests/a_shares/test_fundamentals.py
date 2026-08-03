@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 
+import pytest
+
 from qibao_api.a_shares.fundamentals import TdxFinanceSource, parse_tdx_finance
 
 
@@ -12,10 +14,23 @@ class FinanceClient:
         pass
 
 
+class MetadataOnlyFinanceClient:
+    def finance(self, symbol):
+        return {"market": 1, "code": symbol}
+
+    def close(self):
+        pass
+
+
 def test_tdx_finance_source_default_clock_is_utc_aware() -> None:
     snapshot = TdxFinanceSource(client_factory=FinanceClient).fetch("600000")
 
     assert snapshot.observed_at.tzinfo == timezone.utc
+
+
+def test_tdx_finance_rejects_nonempty_response_without_usable_fields() -> None:
+    with pytest.raises(ValueError, match="no usable fields"):
+        TdxFinanceSource(client_factory=MetadataOnlyFinanceClient).fetch("600000")
 
 
 def test_tdx_finance_normalizes_monetary_fields_without_scaling_share_fields() -> None:

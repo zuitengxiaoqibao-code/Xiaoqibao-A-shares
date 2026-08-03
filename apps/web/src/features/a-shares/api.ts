@@ -1,4 +1,4 @@
-import type { AShareDiagnosis, CandidateBoard } from "./types";
+import type { AShareDiagnosis, CandidateBoard, CandidateScoreBoard } from "./types";
 
 
 async function request<T>(path: string): Promise<T> {
@@ -16,8 +16,15 @@ export function loadAShareCandidates(asOf?: string, limit = 20): Promise<Candida
   return request(`/api/v1/a-shares/candidates?${query}`);
 }
 
+export function loadAShareCandidateScores(
+  symbols: string[], horizon: "short_term" | "swing" = "short_term",
+): Promise<CandidateScoreBoard> {
+  const query = new URLSearchParams({ horizon });
+  symbols.forEach((symbol) => query.append("symbols", symbol));
+  return request(`/api/v1/a-shares/candidate-scores?${query}`);
+}
+
 export function loadAShareDiagnosis(symbol: string, asOf?: string): Promise<AShareDiagnosis> {
   const query = asOf ? `?as_of=${encodeURIComponent(asOf)}` : "";
   return request(`/api/v1/a-shares/${symbol}/diagnosis${query}`);
 }
-

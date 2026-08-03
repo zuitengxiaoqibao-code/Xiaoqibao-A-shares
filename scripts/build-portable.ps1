@@ -5,6 +5,9 @@ $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $Python = Join-Path $Root ".venv\Scripts\python.exe"
 $Release = Join-Path $Root "dist\XiaoQiBao-Portable"
 $env:PYTHONUTF8 = "1"
+$PersistentNames = @(
+    "config", "data", "news", "cache", "logs", "models", "exports", "backups"
+)
 
 if (-not $SkipTests) {
     $PreviousDataDir = [Environment]::GetEnvironmentVariable("QIBAO_DATA_DIR", "Process")
@@ -29,23 +32,45 @@ if (-not $SkipTests) {
 & pnpm.cmd --dir $Root --filter "@qibao/web" build
 if ($LASTEXITCODE -ne 0) { throw "Web build failed" }
 
-& $Python -m PyInstaller `
-    --noconfirm `
-    --clean `
-    --distpath (Join-Path $Root "dist") `
-    --workpath (Join-Path $Root "build") `
-    (Join-Path $Root "packaging\xiaoqibao.spec")
-if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
+$PreserveRoot = Join-Path $env:TEMP (
+    "xiaoqibao-persistent-" + [guid]::NewGuid().ToString("N")
+)
+New-Item -ItemType Directory -Path $PreserveRoot | Out-Null
+foreach ($Name in $PersistentNames) {
+    $Source = Join-Path $Release $Name
+    if (Test-Path -LiteralPath $Source) {
+        Copy-Item -LiteralPath $Source -Destination $PreserveRoot -Recurse -Force
+    }
+}
 
-$WebTarget = Join-Path $Release "web"
-New-Item -ItemType Directory -Force -Path $WebTarget | Out-Null
-Copy-Item -Path (Join-Path $Root "apps\web\dist\*") `
-    -Destination $WebTarget -Recurse -Force
+try {
+    & $Python -m PyInstaller `
+        --noconfirm `
+        --clean `
+        --distpath (Join-Path $Root "dist") `
+        --workpath (Join-Path $Root "build") `
+        (Join-Path $Root "packaging\xiaoqibao.spec")
+    if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
 
-foreach ($Name in @(
-    "config", "data", "news", "cache", "logs", "models", "exports", "backups"
-)) {
-    New-Item -ItemType Directory -Force -Path (Join-Path $Release $Name) | Out-Null
+    $WebTarget = Join-Path $Release "web"
+    New-Item -ItemType Directory -Force -Path $WebTarget | Out-Null
+    Copy-Item -Path (Join-Path $Root "apps\web\dist\*") `
+        -Destination $WebTarget -Recurse -Force
+} finally {
+    foreach ($Name in $PersistentNames) {
+        $Target = Join-Path $Release $Name
+        New-Item -ItemType Directory -Force -Path $Target | Out-Null
+        $Saved = Join-Path $PreserveRoot $Name
+        if (Test-Path -LiteralPath $Saved) {
+            Get-ChildItem -LiteralPath $Saved -Force |
+                Copy-Item -Destination $Target -Recurse -Force
+        }
+    }
+    $ResolvedPreserve = [IO.Path]::GetFullPath($PreserveRoot)
+    $ResolvedTemp = [IO.Path]::GetFullPath($env:TEMP).TrimEnd('\') + '\'
+    if ($ResolvedPreserve.StartsWith($ResolvedTemp)) {
+        Remove-Item -LiteralPath $ResolvedPreserve -Recurse -Force
+    }
 }
 
 $Files = Get-ChildItem -LiteralPath $Release -Recurse -File

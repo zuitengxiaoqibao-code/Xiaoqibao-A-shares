@@ -2,12 +2,13 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { BacktestPanel } from "./BacktestPanel";
+import type { BacktestResult } from "./types";
 
-const result = {
+const result: BacktestResult = {
   symbol: "600000", strategy: "sma_cross", initial_cash: "100000",
   ending_equity: "76206.79", total_return: "-0.2379", max_drawdown: "0.2520",
-  total_cost: "937.21", trades: Array.from({ length: 14 }, () => ({})),
-  metrics: { annualized_volatility: "0.1825", win_rate: "0.4286", profit_loss_ratio: "1.2400", turnover_rate: "3.2500", closed_trade_count: 7 },
+  total_cost: "937.21", trades: Array.from({ length: 14 }, (_, index) => ({ side: index % 2 ? "sell" as const : "buy" as const, signal_date: "2025-01-01", trade_date: "2025-01-02", price: "10.00", shares: 100, gross_amount: "1000.00", fees: "0.30" })),
+  metrics: { annualized_return: "-0.1540", annualized_volatility: "0.1825", sharpe_ratio: "-0.8400", calmar_ratio: "-0.6111", win_rate: "0.4286", profit_loss_ratio: "1.2400", turnover_rate: "3.2500", closed_trade_count: 7 },
   segments: [
     { name: "train" as const, start_date: "2024-01-01", end_date: "2024-12-31", bar_count: 240, starting_equity: "100000", ending_equity: "110000", total_return: "0.1000", max_drawdown: "0.1200" },
     { name: "validation" as const, start_date: "2025-01-01", end_date: "2025-04-30", bar_count: 80, starting_equity: "110000", ending_equity: "107800", total_return: "-0.0200", max_drawdown: "0.0800" },
@@ -18,7 +19,7 @@ const result = {
     { name: "bear" as const, bar_count: 90, total_return: "-0.1800" },
     { name: "sideways" as const, bar_count: 170, total_return: "0.0100" },
   ],
-  equity_curve: [], warnings: [],
+  equity_curve: [], warnings: ["benchmark_not_available"],
 };
 
 describe("BacktestPanel", () => {
@@ -58,13 +59,25 @@ describe("BacktestPanel", () => {
     view.rerender(<BacktestPanel symbol="600519" runBacktest={runBacktest} />);
     expect(input).toHaveValue("000001");
     fireEvent.click(screen.getByRole("button", { name: "运行回测" }));
-    expect(runBacktest).toHaveBeenCalledWith("000001", expect.any(AbortSignal));
+    expect(runBacktest).toHaveBeenCalledWith("000001", expect.objectContaining({ strategy: "sma_cross" }), expect.any(AbortSignal));
+  });
+
+  it("runs a selected strategy with editable parameters", async () => {
+    const runBacktest = vi.fn(() => Promise.resolve({ ...result, strategy: "momentum_breakout" }));
+    render(<BacktestPanel symbol="600000" runBacktest={runBacktest} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /动量突破/ }));
+    fireEvent.change(screen.getByLabelText("突破周期"), { target: { value: "30" } });
+    fireEvent.click(screen.getByRole("button", { name: "运行回测" }));
+
+    expect(runBacktest).toHaveBeenCalledWith("600000", expect.objectContaining({ strategy: "momentum_breakout", lookback_window: 30 }), expect.any(AbortSignal));
+    expect(await screen.findByText(/回测标的 600000/)).toBeInTheDocument();
   });
 
   it("shows losses, drawdown and costs without positive framing", async () => {
     render(<BacktestPanel symbol="600000" runBacktest={() => Promise.resolve(result)} />);
 
-    expect(screen.getByText(/100 万元固定测算基准 · 不连接模拟账户/)).toBeInTheDocument();
+    expect(screen.getByText(/100 万元固定测算基准 · 不连接账户/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "运行回测" }));
 
     expect(await screen.findByText("-23.79%")).toBeInTheDocument();
@@ -75,6 +88,10 @@ describe("BacktestPanel", () => {
     expect(screen.getByText("42.86%")).toBeInTheDocument();
     expect(screen.getByText("1.24")).toBeInTheDocument();
     expect(screen.getByText("325.00%")).toBeInTheDocument();
+    expect(screen.getByText("-15.40%")).toBeInTheDocument();
+    expect(screen.getByText("-0.84")).toBeInTheDocument();
+    expect(screen.getByText("-0.61")).toBeInTheDocument();
+    expect(screen.getByText("未提供同期基准，暂不能判断超额收益")).toBeInTheDocument();
     expect(screen.getByText("样本外")).toBeInTheDocument();
     expect(screen.getByText("3.00%")).toBeInTheDocument();
     expect(screen.getByText("下行阶段")).toBeInTheDocument();

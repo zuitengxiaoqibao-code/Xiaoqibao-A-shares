@@ -41,7 +41,9 @@ def _news_context(news_repository, snapshot):
             "error_code": None,
         }
     window_end = snapshot.get("window_end")
+    window_start = snapshot.get("window_start")
     cutoff = datetime.fromisoformat(window_end) if window_end else None
+    lower_bound = datetime.fromisoformat(window_start) if window_start else None
     try:
         values = news_repository.effective_events(cutoff=cutoff)
     except Exception:
@@ -51,9 +53,19 @@ def _news_context(news_repository, snapshot):
             "error_code": "news_context_unavailable",
         }
     verified = {}
+    outside_window = set()
     for value in values:
         event = _model_dump(value)
         if event.get("review_state") == "verified":
+            normalized_at = event.get("normalized_at")
+            if normalized_at:
+                normalized = datetime.fromisoformat(normalized_at)
+                if (
+                    (lower_bound is not None and normalized < lower_bound)
+                    or (cutoff is not None and normalized > cutoff)
+                ):
+                    outside_window.add(event["event_id"])
+                    continue
             verified[event["event_id"]] = event
     events = []
     for event_id in referenced_ids:
@@ -78,9 +90,12 @@ def _news_context(news_repository, snapshot):
             "source_url": citation.get("canonical_url"),
         })
     found = {event["event_id"] for event in events}
-    missing = [event_id for event_id in referenced_ids if event_id not in found]
+    missing = [
+        event_id for event_id in referenced_ids
+        if event_id not in found and event_id not in outside_window
+    ]
     return {
-        "status": "partial" if missing else "ready",
+        "status": "partial" if missing else "ready" if events else "empty",
         "events": events, "missing_event_ids": missing, "error_code": None,
     }
 
@@ -114,7 +129,7 @@ def _phase_context(news_repository, snapshot):
 
 def _slot(
     aggregate, *, news_repository, materialized_advice=None, change_stream=None,
-    execution=None,
+    materialized_delta_advice=None, execution=None,
 ):
     if aggregate is None:
         return {
@@ -139,7 +154,11 @@ def _slot(
         "advice": effective_advice,
         "evidence": evidence,
         "delta_version": snapshot["snapshot_id"],
-        "delta_advice": payload.get("advice", []),
+        "delta_advice": (
+            materialized_delta_advice
+            if materialized_delta_advice is not None
+            else payload.get("advice", [])
+        ),
         "change_stream": change_stream or [],
         "context": _phase_context(news_repository, snapshot),
         "execution": _model_dump(execution),
@@ -171,6 +190,42 @@ def _intraday_state(repository, trading_date):
     return list(current.values()), stream
 
 
+def _postclose_state(repository, trading_date, aggregate):
+    """Project one current postclose card per A-share and horizon.
+
+    The stored postclose aggregate intentionally keeps every reviewed intraday
+    advice for auditability. The current decision screen should show only the
+    card corresponding to the latest premarket/intraday advice; older reviews
+    remain available through the append-only history and source snapshots.
+    """
+    payload = _model_dump(aggregate)
+    cards = payload.get("advice", [])
+    current, _ = _intraday_state(repository, trading_date)
+    latest_original_ids = {
+        (item.get("symbol"), item.get("horizon")): item.get("advice_id")
+        for item in current
+        if item.get("asset") == "a_share"
+    }
+    selected = {}
+    fallback = {}
+    latest_by_key = {}
+    for item in cards:
+        if item.get("asset") != "a_share":
+            continue
+        key = (item.get("symbol"), item.get("horizon"))
+        latest_by_key[key] = item
+        original_id = (item.get("quantitative_result") or {}).get("original_advice_id")
+        if original_id and original_id == latest_original_ids.get(key):
+            selected[key] = item
+        elif not original_id:
+            fallback[key] = item
+    for key, item in fallback.items():
+        selected.setdefault(key, item)
+    for key, item in latest_by_key.items():
+        selected.setdefault(key, item)
+    return [selected[key] for key in sorted(selected) if key[0] and key[1]]
+
+
 def _polling(state, server_time, market_session):
     if state is None:
         return {
@@ -178,6 +233,7 @@ def _polling(state, server_time, market_session):
             "universe_interval_seconds": None, "next_check_seconds": None,
             "last_focus_success_at": None, "last_universe_success_at": None,
             "consecutive_focus_failures": 0, "consecutive_universe_failures": 0,
+            "focus_error_code": None, "universe_error_code": None,
             "stale_after_seconds": 180,
         }
     next_due = min(state.next_focus_due_at, state.next_universe_due_at)
@@ -190,6 +246,8 @@ def _polling(state, server_time, market_session):
         "last_universe_success_at": state.last_universe_success_at,
         "consecutive_focus_failures": state.consecutive_focus_failures,
         "consecutive_universe_failures": state.consecutive_universe_failures,
+        "focus_error_code": state.focus_error_code,
+        "universe_error_code": state.universe_error_code,
         "stale_after_seconds": 180,
     }
 
@@ -211,13 +269,21 @@ def _response(
             )
             for phase in PHASES
         }
-        slots = {
-            phase: _slot(
+        slots = {}
+        for phase in PHASES:
+            materialized = None
+            materialized_delta = None
+            if phase == "postclose" and aggregates[phase] is not None:
+                materialized = _postclose_state(
+                    repository, trading_date, aggregates[phase]
+                )
+                materialized_delta = materialized
+            slots[phase] = _slot(
                 aggregates[phase], execution=executions[phase],
+                materialized_advice=materialized,
+                materialized_delta_advice=materialized_delta,
                 news_repository=news_repository,
             )
-            for phase in PHASES
-        }
         latest_intraday = aggregates["intraday"]
         if latest_intraday is not None and hasattr(repository, "cycles"):
             advice, stream = _intraday_state(repository, trading_date)

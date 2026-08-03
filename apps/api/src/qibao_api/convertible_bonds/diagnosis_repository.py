@@ -47,6 +47,14 @@ class BondDiagnosisRepository:
         """).fetchall()
         return [self._validated(row) for row in rows]
 
+    def latest_for_bond(self, bond_code: str) -> dict | None:
+        row = self.connection.execute(
+            """SELECT * FROM bond_diagnoses
+            WHERE bond_code=? ORDER BY sequence DESC LIMIT 1""",
+            (bond_code,),
+        ).fetchone()
+        return None if row is None else self._validated(row)
+
     @staticmethod
     def _validated(row) -> dict:
         computed = hashlib.sha256(row["payload"].encode("utf-8")).hexdigest()

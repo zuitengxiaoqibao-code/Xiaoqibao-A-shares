@@ -13,6 +13,7 @@ dependencies = [
   "sqlalchemy==2.0.41",
   "uvicorn[standard]==0.35.0",
   "exchange-calendars==4.13.2",
+  "edge-tts>=7,<8",
   "pywebview>=5.4,<7",
 ]
 

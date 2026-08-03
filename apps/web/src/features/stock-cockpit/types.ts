@@ -46,7 +46,7 @@ export type StockAssessment = {
   generated_at: string;
 };
 
-export type AssessmentAIStatus = "ready" | "unconfigured" | "timeout" | "http_error" | "invalid";
+export type AssessmentAIStatus = "ready" | "unconfigured" | "deferred" | "timeout" | "http_error" | "invalid";
 
 export type AssessmentAIExplanation = {
   plain_language: string;
@@ -100,6 +100,8 @@ export type StockPhaseHistory = {
   advice: Advice[];
   change_stream: DecisionVersion[];
   execution?: PhaseExecution | null;
+  phase_status?: "empty" | "ready" | "partial" | "blocked";
+  quality_reasons?: string[];
 };
 
 export type CandidateLoader = () => Promise<CandidateBoard>;

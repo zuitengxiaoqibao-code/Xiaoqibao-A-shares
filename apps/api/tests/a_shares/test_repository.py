@@ -69,6 +69,20 @@ def test_candidate_snapshot_is_append_only_hash_verified_and_reopenable(tmp_path
     reopened.close()
 
 
+def test_identical_candidate_inputs_reuse_the_frozen_snapshot(tmp_path) -> None:
+    repository = AShareResearchRepository(tmp_path / "research.sqlite3")
+    inputs = {"as_of": AS_OF.isoformat(), "bars": [{"symbol": "600000"}]}
+
+    first = repository.append_candidate_board(board(), input_payload=inputs)
+    second = repository.append_candidate_board(board(), input_payload=inputs)
+    count = repository.connection.execute(
+        "SELECT COUNT(*) FROM candidate_snapshots"
+    ).fetchone()[0]
+
+    assert second == first
+    assert count == 1
+
+
 def test_repository_detects_candidate_payload_tampering(tmp_path) -> None:
     repository = AShareResearchRepository(tmp_path / "tampered.sqlite3")
     snapshot_id = repository.append_candidate_board(board())

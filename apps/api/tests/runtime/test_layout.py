@@ -10,7 +10,7 @@ def test_runtime_layout_maps_every_portable_directory(tmp_path: Path) -> None:
     assert layout.web_dir == layout.root / "web"
     assert layout.config_dir == layout.root / "config"
     assert layout.data_dir == layout.root / "data"
-    assert layout.legacy_data_dir == layout.root / "data" / "legacy"
+    assert layout.previous_data_dir == layout.root / "data" / "legacy"
     assert layout.news_dir == layout.root / "news"
     assert layout.cache_dir == layout.root / "cache"
     assert layout.logs_dir == layout.root / "logs"
@@ -28,3 +28,4 @@ def test_ensure_creates_runtime_directories_but_not_web_assets(tmp_path: Path) -
     for name, path in layout.directory_map().items():
         if name != "web":
             assert path.is_dir(), name
+    assert not layout.previous_data_dir.exists()
