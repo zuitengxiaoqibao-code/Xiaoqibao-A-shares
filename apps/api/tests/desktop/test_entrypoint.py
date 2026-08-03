@@ -182,4 +182,4 @@ def test_second_launch_restores_existing_window(tmp_path: Path, monkeypatch) -> 
     )
 
     assert entrypoint.main(["--portable-root", str(tmp_path)]) == 2
-    assert restored == ["小七宝量化决策台"]
+    assert restored == ["一树电子商务-A股观测台"]

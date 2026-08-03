@@ -45,7 +45,7 @@ export function BeginnerNavigation({ active, onNavigate }: {
   }
 
   return <aside className="terminal-navigation beginner-sidebar">
-    <div className="beginner-brand"><span><BookOpenText size={20} /></span><div><strong>小七宝</strong><small>个股观察台</small></div></div>
+    <div className="beginner-brand"><span><BookOpenText size={20} /></span><div><strong>一树-A股观测台</strong><small>个股观察台</small></div></div>
     <div className="navigation-mode-switch" role="group" aria-label="导航模式">
       <button className="navigation-mode-beginner" type="button" aria-pressed={mode === "beginner"} onClick={() => selectMode("beginner")}>新手模式</button>
       <button className="navigation-mode-expert" type="button" aria-pressed={mode === "expert"} onClick={() => selectMode("expert")}>专家模式</button>
@@ -55,6 +55,7 @@ export function BeginnerNavigation({ active, onNavigate }: {
     </nav>
     <div className="asset-separator"><span>独立资产</span></div>
     <button className={`bond-navigation ${active === "bonds" ? "active" : ""}`} type="button" aria-label="可转债" onClick={() => onNavigate("bonds")}><BellRing size={18} /><span><b>可转债</b><small>独立观察空间</small></span></button>
+    <p className="beginner-company">上海一树电子商务有限公司</p>
     <p className="beginner-disclaimer">只做观察与风险提示<br />不连接券商，不构成投资建议</p>
   </aside>;
 }

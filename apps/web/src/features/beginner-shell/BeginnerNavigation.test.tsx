@@ -22,6 +22,10 @@ describe("BeginnerNavigation", () => {
     expect(screen.getByRole("button", { name: "个股观察" }).nextElementSibling).toBe(companyResearch);
     expect(screen.getByRole("button", { name: "新手模式" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "可转债" })).toBeInTheDocument();
+    expect(screen.getByText("一树-A股观测台")).toBeInTheDocument();
+    const company = screen.getByText("上海一树电子商务有限公司");
+    const disclaimer = screen.getByText(/只做观察与风险提示/);
+    expect(company.nextElementSibling).toBe(disclaimer);
   });
 
   it("shows every route in expert mode and persists the selection", () => {

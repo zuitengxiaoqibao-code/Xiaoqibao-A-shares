@@ -916,7 +916,7 @@ async def lifespan(application: FastAPI):
     engine.dispose()
 
 
-app = FastAPI(title="小七宝量化决策台", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="一树电子商务-A股观测台", version="0.1.0", lifespan=lifespan)
 
 
 @app.middleware("http")

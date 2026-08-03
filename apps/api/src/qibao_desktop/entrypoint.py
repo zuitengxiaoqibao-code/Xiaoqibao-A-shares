@@ -68,7 +68,7 @@ def main(argv: list[str] | None = None) -> int:
                 run_window(start_application)
         return 0
     except AlreadyRunningError:
-        activated = activate_existing_window("小七宝量化决策台")
+        activated = activate_existing_window("一树电子商务-A股观测台")
         logger.warning("xiaoqibao is already running; activated=%s", activated)
         return 2
     except Exception:

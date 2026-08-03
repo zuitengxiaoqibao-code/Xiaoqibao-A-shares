@@ -20,9 +20,11 @@ def test_window_shell_is_created_before_waiting_for_api(monkeypatch) -> None:
     window = FakeWindow()
     order: list[str] = []
 
-    def create_window(_title: str, **options):
+    def create_window(title: str, **options):
         order.append("window-created")
-        assert "正在启动量化决策台" in options["html"]
+        assert title == "一树电子商务-A股观测台"
+        assert "正在启动一树电子商务-A股观测台" in options["html"]
+        assert "一树-A股观测台" in options["html"]
         assert "1%" in options["html"]
         assert "homepage-progress-tracer" in options["html"]
         return window

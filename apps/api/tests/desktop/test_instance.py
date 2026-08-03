@@ -43,9 +43,9 @@ def test_activate_existing_window_restores_and_focuses_named_window(
 
     monkeypatch.setattr(instance_module, "_user32", User32, raising=False)
 
-    assert instance_module.activate_existing_window("小七宝量化决策台") is True
+    assert instance_module.activate_existing_window("一树电子商务-A股观测台") is True
     assert calls == [
-        ("find", None, "小七宝量化决策台"),
+        ("find", None, "一树电子商务-A股观测台"),
         ("show", 123, 9),
         ("top", 123),
         ("foreground", 123),
