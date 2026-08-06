@@ -1,14 +1,30 @@
-param([int]$Port = 18765, [switch]$KeepSmokeRoot)
+param(
+    [int]$Port = 18765,
+    [switch]$KeepSmokeRoot,
+    [switch]$UseReleaseData
+)
 
 $ErrorActionPreference = "Stop"
+$Utf8 = [Text.UTF8Encoding]::new($false)
+$OutputEncoding = $Utf8
+try { [Console]::OutputEncoding = $Utf8 } catch { }
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $Exe = Join-Path $Root "dist\XiaoQiBao-Portable\xiaoqibao.exe"
-$SmokeRoot = Join-Path $env:TEMP (
-    "xiaoqibao-smoke-" + [guid]::NewGuid().ToString("N")
-)
-New-Item -ItemType Directory -Path $SmokeRoot | Out-Null
-Copy-Item -LiteralPath (Join-Path $Root "dist\XiaoQiBao-Portable\web") `
-    -Destination (Join-Path $SmokeRoot "web") -Recurse
+$ReleaseRoot = Join-Path $Root "dist\XiaoQiBao-Portable"
+if ($UseReleaseData) {
+    $SmokeRoot = $ReleaseRoot
+    if (-not (Test-Path -LiteralPath $SmokeRoot)) {
+        throw "Portable release directory was not found: $SmokeRoot"
+    }
+    Write-Host ("Release data mode: using persistent portable root {0}" -f $SmokeRoot)
+} else {
+    $SmokeRoot = Join-Path $env:TEMP (
+        "xiaoqibao-smoke-" + [guid]::NewGuid().ToString("N")
+    )
+    New-Item -ItemType Directory -Path $SmokeRoot | Out-Null
+    Copy-Item -LiteralPath (Join-Path $ReleaseRoot "web") `
+        -Destination (Join-Path $SmokeRoot "web") -Recurse
+}
 $Process = Start-Process -FilePath $Exe -ArgumentList @(
     "--portable-root", $SmokeRoot,
     "--port", $Port
@@ -138,42 +154,64 @@ try {
         }
         $QuantStrategyStatus = $QuantStrategy.status
     }
-    Write-Host ("Portable smoke passed; window visible in {0}ms; API ready in {1}ms; verification completed in {2}ms; overview {3}; quant strategy {4}" -f `
-        $WindowVisibleMs, $HealthReadyMs, $StartedAt.ElapsedMilliseconds, $Overview.status, $QuantStrategyStatus)
+    $Professional = Invoke-RestMethod `
+        -Uri "http://127.0.0.1:$Port/api/v1/tdx/local/professional?method=get_financial_data&table_list=Fn&stock_codes=600000" `
+        -TimeoutSec 30
+    if ($Professional.status -notin @("ready", "partial", "unavailable")) {
+        throw "Portable TDX professional probe did not return an honest data status"
+    }
+    $QuantDetail = if ($null -ne $QuantStrategy) {
+        if ($QuantStrategy.status -eq "partial") {
+            "candidates=$($QuantStrategy.candidates.Count); coverage=$($QuantStrategy.regime.coverage_percent)%"
+        } else {
+            "candidates=$($QuantStrategy.candidates.Count)"
+        }
+    } elseif ($null -ne $ErrorBody.detail.reason) {
+        $ErrorBody.detail.reason
+    } else {
+        "unavailable"
+    }
+    $ProfessionalDetail = if ($Professional.detail) { $Professional.detail } else { "rows=$($Professional.rows.Count)" }
+    Write-Host ("Portable smoke passed; window visible in {0}ms; API ready in {1}ms; verification completed in {2}ms; overview {3}; quant strategy {4} ({5}); tdx professional {6} ({7})" -f `
+        $WindowVisibleMs, $HealthReadyMs, $StartedAt.ElapsedMilliseconds, $Overview.status, $QuantStrategyStatus, $QuantDetail, $Professional.status, $ProfessionalDetail)
 } finally {
     if (-not $Process.HasExited) {
         Stop-Process -Id $Process.Id
         Wait-Process -Id $Process.Id -ErrorAction SilentlyContinue
     }
-    $ResolvedTempRoot = [IO.Path]::GetFullPath($env:TEMP).TrimEnd('\') + '\'
-    $ResolvedSmokeRoot = [IO.Path]::GetFullPath($SmokeRoot)
-    $IsSmokeDirectory = (Split-Path -Leaf $ResolvedSmokeRoot) -like `
-        "xiaoqibao-smoke-*"
-    if (
-        -not $KeepSmokeRoot -and
-        $IsSmokeDirectory -and
-        $ResolvedSmokeRoot.StartsWith(
-            $ResolvedTempRoot,
-            [StringComparison]::OrdinalIgnoreCase
-        ) -and
-        (Test-Path -LiteralPath $ResolvedSmokeRoot)
-    ) {
-        $CleanupDeadline = [DateTime]::UtcNow.AddSeconds(5)
-        do {
-            try {
-                Remove-Item `
-                    -LiteralPath $ResolvedSmokeRoot `
-                    -Recurse `
-                    -Force `
-                    -ErrorAction Stop
-                break
-            } catch [IO.IOException] {
-                if ([DateTime]::UtcNow -ge $CleanupDeadline) { throw }
-                Start-Sleep -Milliseconds 100
-            }
-        } while (Test-Path -LiteralPath $ResolvedSmokeRoot)
-    }
-    if ($KeepSmokeRoot) {
-        Write-Host ("Portable smoke root retained: {0}" -f $SmokeRoot)
+    if (-not $UseReleaseData) {
+        $ResolvedTempRoot = [IO.Path]::GetFullPath($env:TEMP).TrimEnd('\') + '\'
+        $ResolvedSmokeRoot = [IO.Path]::GetFullPath($SmokeRoot)
+        $IsSmokeDirectory = (Split-Path -Leaf $ResolvedSmokeRoot) -like `
+            "xiaoqibao-smoke-*"
+        if (
+            -not $KeepSmokeRoot -and
+            $IsSmokeDirectory -and
+            $ResolvedSmokeRoot.StartsWith(
+                $ResolvedTempRoot,
+                [StringComparison]::OrdinalIgnoreCase
+            ) -and
+            (Test-Path -LiteralPath $ResolvedSmokeRoot)
+        ) {
+            $CleanupDeadline = [DateTime]::UtcNow.AddSeconds(5)
+            do {
+                try {
+                    Remove-Item `
+                        -LiteralPath $ResolvedSmokeRoot `
+                        -Recurse `
+                        -Force `
+                        -ErrorAction Stop
+                    break
+                } catch [IO.IOException] {
+                    if ([DateTime]::UtcNow -ge $CleanupDeadline) { throw }
+                    Start-Sleep -Milliseconds 100
+                }
+            } while (Test-Path -LiteralPath $ResolvedSmokeRoot)
+        }
+        if ($KeepSmokeRoot) {
+            Write-Host ("Portable smoke root retained: {0}" -f $SmokeRoot)
+        }
+    } else {
+        Write-Host ("Release data mode: persistent data retained at {0}" -f $SmokeRoot)
     }
 }

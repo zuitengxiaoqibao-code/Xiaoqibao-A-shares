@@ -173,6 +173,16 @@
 
 便携目录中的 `config`、`data`、`news`、`cache`、`logs`、`models`、`exports`、`backups` 已保留。
 
+## 2026-08-07 真实发布数据烟测与发布脚本增量
+
+- 新增 `scripts/run-portable-smoke.ps1 -UseReleaseData`：直接使用 `dist/XiaoQiBao-Portable` 的真实持久目录，不复制或清理发布数据；默认 smoke 模式仍使用隔离临时目录。
+- smoke 新增 `/api/v1/tdx/local/professional` 只读探针，输出通达信专业字段的真实状态与原因，防止发布验收只验证首页而遗漏专业数据链路。
+- 默认隔离 smoke：窗口首帧 `124ms`、API `/health` 就绪 `2620ms`、完整验证 `3500ms`；信息总览 `ready`；量化策略 `unavailable`；通达信专业字段 `unavailable`，原因是本机没有可用的专业数据响应。
+- 真实发布数据 smoke：窗口首帧 `61ms`、API `/health` 就绪 `2018ms`、完整验证 `9430ms`；信息总览 `ready`；量化策略 `partial`，真实候选 `7` 只、市场风格覆盖 `85.00%`；通达信专业字段 `unavailable`（真实桥接/专业调用仍不可用）。
+- 本轮 API 全量 `1130 passed, 1 skipped`；前端全量 `72` 个测试文件、`469 passed`；生产构建通过。
+- 便携 EXE 已重建，SHA-256：`83CD95D5E750AEBBDAF84DD6F01875144F7E3CFA75E12A34B2D5F21AD8027930`。
+- smoke 结束后确认桌面进程已释放、`127.0.0.1:17709` 未被本程序占用；`config/data/news/cache/logs/models/exports/backups` 均保留。
+
 ## 未完成目标
 
 本轮新增并验证：`get_more_info`/`get_stock_info` 可选接入个股基本面契约，明确提供 PE/PB/总市值/行业等字段时才进入诊断估值；`get_kzz_info` 进入可转债条款诊断的只读优先链，条款字段不完整时回退公开条款源。桥接不可达、空响应或字段不足时保留真实不可用状态。其余 TdxQuant 新股/新债、公式批量业务字段、全站逐菜单字段审计和长期实时数据覆盖仍在持续计划中；接口不可用或专业数据包缺失时，软件继续显示明确的不可用原因，不生成模拟值。
@@ -240,3 +250,5 @@
 
 - 继续拆分首屏行情与 ECharts 依赖，必须以 EXE smoke 证据确认，不用浏览器构建体积单独推断启动收益。
 - 通达信只读桥恢复后逐字段验证 `Fn/GP/BK/SC/GO`，再绑定到对应菜单。
+- 继续使用真实发布数据 smoke 观察量化 `partial` 的字段覆盖变化；当真实样本下降时保持不可用/部分可用，不生成模拟推荐。
+- 继续剖析冷盘 API 就绪时间的 Windows 安全扫描波动；窗口首帧已满足 3 秒目标，但冷盘完整验证仍可能高于热启动。

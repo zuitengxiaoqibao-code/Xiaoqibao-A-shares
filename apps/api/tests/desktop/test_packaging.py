@@ -74,6 +74,16 @@ def test_portable_smoke_reports_non_json_quant_errors_without_masking_them() -> 
     assert "with non-JSON error body" in script
 
 
+def test_portable_smoke_supports_a_release_data_mode() -> None:
+    smoke_path = _project_root() / "scripts" / "run-portable-smoke.ps1"
+    script = smoke_path.read_text(encoding="utf-8")
+
+    assert "[switch]$UseReleaseData" in script
+    assert "XiaoQiBao-Portable" in script
+    assert "Release data mode" in script
+    assert "/api/v1/tdx/local/professional" in script
+
+
 def test_portable_spec_does_not_collect_cross_platform_or_unused_tool_submodules() -> None:
     spec_path = _project_root() / "packaging" / "xiaoqibao.spec"
     source = spec_path.read_text(encoding="utf-8")
