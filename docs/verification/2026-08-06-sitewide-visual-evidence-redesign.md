@@ -25,7 +25,7 @@
   - 完整验证：12087ms
   - 信息总览：`ready`
   - 量化策略：`unavailable`（真实样本不足，保持诚实降级）
-- EXE SHA-256：`9402CDC8CB08F8232EA419BA5EB4CAA5DF7904E231CB2897B11442E0B9FABD66`
+- EXE SHA-256：`C2345BB84550820831C80A11F24CA3B3277AAF9299186A2EBA5884CD0F6CDC39`
 
 ## 交付文件
 
@@ -37,4 +37,4 @@
 
 本轮新增并验证：`get_more_info`/`get_stock_info` 可选接入个股基本面契约，明确提供 PE/PB/总市值/行业等字段时才进入诊断估值；桥接不可达、空响应或字段不足时回退既有 mootdx 源并保留真实不可用状态。其余 TdxQuant 新股/新债、可转债条款、公式批量业务字段、全站逐菜单字段审计和长期实时数据覆盖仍在持续计划中；接口不可用或专业数据包缺失时，软件继续显示明确的不可用原因，不生成模拟值。
 
-本增量验证：API 相关单元测试 41 项通过（`test_fundamentals.py`、`test_diagnosis.py`）。全量前端/API、生产构建与便携 EXE 烟测将在本轮剩余修改完成后重新执行。
+本增量验证：API 相关单元测试 42 项通过（`test_fundamentals.py`、`test_diagnosis.py`）；全量前端 430 项、API 1074 项通过；生产构建通过；便携 EXE 烟测窗口 118ms、API 5087ms、完整验证 5485ms，信息总览 `ready`，量化策略 `unavailable`。
