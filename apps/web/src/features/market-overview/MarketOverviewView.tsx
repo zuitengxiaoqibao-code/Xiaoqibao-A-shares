@@ -16,6 +16,7 @@ import type { SpeechSynthesizer } from "../speech/types";
 import { isAShareSymbol } from "../instrument-selection/SelectedInstrumentProvider";
 import { DistinctMarketWorkspace } from "./workspaces/DistinctMarketWorkspace";
 import { HomepageStartupOverlay } from "./HomepageStartupOverlay";
+import { MetricBand } from "../../shared/visualization/VisualPrimitives";
 import "./overview.css";
 
 const expectedIndices = [
@@ -59,6 +60,12 @@ function marketSourceLabel(source?: string): string {
   if (source === "tdx-local-rpc") return "本地通达信实时";
   if (source === "market-sentiment-cache") return "本地情绪快照";
   return "数据源准备中";
+}
+
+function finiteNumber(value: string | number | null | undefined): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function keepAShareInformation(response: MarketOverviewResponse): MarketOverviewResponse {
@@ -152,6 +159,15 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, synthesizeS
   const coverage = marketData
     ? `${marketData.quote_count.toLocaleString("zh-CN")} / ${marketData.universe_count.toLocaleString("zh-CN")}`
     : "-- / --";
+  const hasVerifiedMarket = Boolean(data && data.status !== "unavailable" && marketData?.quality !== "unavailable");
+  const metricNumber = (value: string | number | null | undefined): number | null => hasVerifiedMarket ? finiteNumber(value) : null;
+  const metricPercent = (value: string | number | null | undefined): string | null => {
+    const parsed = metricNumber(value);
+    return parsed === null ? null : `${parsed.toFixed(1)}%`;
+  };
+  const breadthTotal = data ? data.breadth.rising_count + data.breadth.falling_count + data.breadth.flat_count : 0;
+  const risingRatio = hasVerifiedMarket && breadthTotal > 0 ? (data?.breadth.rising_count ?? 0) / breadthTotal * 100 : null;
+  const metricDetail = hasVerifiedMarket ? data?.status === "ready" ? "实时快照" : "部分快照" : "等待可用证据";
 
   const openSearchedSymbol = () => {
     const symbol = searchSymbol.trim();
@@ -176,6 +192,13 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, synthesizeS
 
     <section className="overview-market-strip" aria-label="A 股市场情绪与核心指数">
       <MarketTemperatureGauge sentiment={data?.sentiment ?? { score: null, band: "等待数据", coverage_percent: "0", quality: "unavailable", observed_at: new Date().toISOString() }} />
+      <MetricBand items={[
+        { label: "封板率", value: metricPercent(data?.limit_ecology.seal_rate_percent), tone: hasVerifiedMarket ? "up" : "unavailable", detail: metricDetail },
+        { label: "上涨占比", value: risingRatio === null ? null : `${risingRatio.toFixed(1)}%`, tone: hasVerifiedMarket ? "up" : "unavailable", detail: metricDetail },
+        { label: "成交热度", value: metricNumber(data?.liquidity.relative_amount), tone: hasVerifiedMarket ? "live" : "unavailable", detail: hasVerifiedMarket ? "相对 20 日基准" : metricDetail },
+        { label: "情绪分", value: metricNumber(data?.sentiment.score), tone: hasVerifiedMarket && data?.sentiment.quality === "ready" ? "warning" : "unavailable", detail: hasVerifiedMarket ? data?.sentiment.band ?? "已读取" : metricDetail },
+        { label: "行情覆盖", value: marketData && marketData.universe_count > 0 && hasVerifiedMarket ? `${(marketData.quote_count / marketData.universe_count * 100).toFixed(1)}%` : null, tone: hasVerifiedMarket ? "live" : "unavailable", detail: marketData ? `${coverage} 条` : metricDetail },
+      ]} />
       <div className="overview-stat"><span>涨停 / 炸板</span><b className="up">{data ? `${data.limit_ecology.limit_up_count} / ${data.limit_ecology.broken_limit_up_count}` : "-- / --"}</b><small className="down">跌停 {data?.limit_ecology.limit_down_count ?? "--"}</small></div>
       <div className="overview-stat"><span>A 股涨跌广度</span><b className="up">上涨 {data?.breadth.rising_count ?? "--"}</b><small className="down">下跌 {data?.breadth.falling_count ?? "--"}</small></div>
       <div className="overview-stat"><span>封板率</span><b>{data?.limit_ecology.seal_rate_percent ? `${data.limit_ecology.seal_rate_percent}%` : "--"}</b><small>炸板 {data?.limit_ecology.broken_limit_up_count ?? "--"}</small></div>

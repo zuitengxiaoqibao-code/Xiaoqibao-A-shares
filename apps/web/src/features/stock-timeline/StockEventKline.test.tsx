@@ -87,7 +87,7 @@ describe("stockTimelineOption", () => {
     const markLine = candle.markLine as { data: Array<Record<string, unknown>> };
     expect(markLine.data).toHaveLength(3);
     expect(markLine.data.map((item) => (item.lineStyle as { color: string }).color)).toEqual([
-      "#f04f5f", "#2fcf91", "#8b98a7",
+      "#f04f5f", "#2fcf91", "#7d8993",
     ]);
     expect(markLine.data.map((item) => (item.label as { formatter: string }).formatter)).toEqual([
       "01", "02", "03",

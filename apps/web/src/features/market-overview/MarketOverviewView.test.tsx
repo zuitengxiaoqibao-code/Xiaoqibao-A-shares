@@ -147,6 +147,7 @@ describe("MarketOverviewView", () => {
     await screen.findByText("本地通达信实时");
     expect(screen.getByRole("region", { name: "A 股市场情绪与核心指数" })).toHaveTextContent("76");
     expect(screen.getByRole("region", { name: "A 股市场情绪与核心指数" })).toHaveTextContent("中性");
+    expect(screen.getByRole("region", { name: "关键指标" })).toHaveTextContent("封板率");
     expect(screen.getByRole("navigation", { name: "市场功能筛选" })).toHaveTextContent("盘中异动");
     expect(screen.getByRole("region", { name: "上证指数分时与异动" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "A 股关联资讯" })).toHaveTextContent("算力方向活跃");

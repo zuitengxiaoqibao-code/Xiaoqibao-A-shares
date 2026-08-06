@@ -39,7 +39,7 @@ describe("chart option factories", () => {
     });
     expect(option.yAxis).toHaveLength(2);
     expect(option.series).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: "涨幅", itemStyle: expect.objectContaining({ color: "var(--market-up, #f04f5f)" }) }),
+      expect.objectContaining({ name: "涨幅", itemStyle: expect.objectContaining({ color: "#f04f5f" }) }),
     ]));
   });
 

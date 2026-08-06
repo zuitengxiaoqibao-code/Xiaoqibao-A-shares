@@ -326,7 +326,7 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
 
       <section className="quant-panel quant-radar-panel" role="region" aria-label="量化因子雷达">
         <header><div><span>Q3 / FACTOR ARRAY</span><h2>量化因子雷达</h2></div><small>{radar ? `证据覆盖 ${radar.verifiedCount}/6` : "等待证据"}</small></header>
-        {candidate ? <><QuantChart option={radarOption(candidate)} ariaLabel={`${candidate.name}首次涨停规则因子雷达`} /><p className="quant-panel-note">雷达值由 PE、周/月线距低点、回撤阶段、盘整天数和规则分派生；待验证项目按 0 显示并计入覆盖提示。</p></> : <div className="quant-empty"><b>{selected ? "未进入首次涨停候选池" : "暂无规则因子"}</b><p>{selected ? "该区域不使用其他股票的候选分或规则因子。" : "选择股票后再检查候选资格。"}</p></div>}
+        {candidate ? <><QuantChart option={radarOption(candidate)} ariaLabel={`${candidate.name}首次涨停规则因子雷达`} /><p className="quant-panel-note">雷达值由 PE、周/月线距低点、回撤阶段、盘整天数和规则分派生；缺失字段保持空缺并计入证据覆盖。</p></> : <div className="quant-empty"><b>{selected ? "未进入首次涨停候选池" : "暂无规则因子"}</b><p>{selected ? "该区域不使用其他股票的候选分或规则因子。" : "选择股票后再检查候选资格。"}</p></div>}
       </section>
 
       <section className="quant-panel quant-backtest-panel" role="region" aria-label="回测风险收益">

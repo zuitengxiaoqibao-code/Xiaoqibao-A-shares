@@ -81,14 +81,15 @@ export function signalMetrics(
   ];
 }
 
-function distanceScore(value: string | null): number {
+function distanceScore(value: string | null): number | null {
   const result = numeric(value);
-  return result === null ? 0 : clamp(100 - result * 100);
+  return result === null ? null : clamp(100 - result * 100);
 }
 
-function valuationScore(value: string | null): number {
+function valuationScore(value: string | null): number | null {
   const result = numeric(value);
-  if (result === null || result <= 0 || result > 50) return 0;
+  if (result === null) return null;
+  if (result <= 0 || result > 50) return 0;
   return clamp(100 - result);
 }
 
@@ -103,21 +104,27 @@ function structureScore(candidate: FirstLimitUpCandidate): number {
 }
 
 export function factorRadar(candidate: FirstLimitUpCandidate) {
+  const score = candidate.selection_status === "data_insufficient" ? null : numeric(candidate.score);
+  const structure = candidate.selection_status === "data_insufficient" ? null : structureScore(candidate);
+  const consolidation = candidate.selection_status === "data_insufficient" ? null : clamp(candidate.consolidation_days / 10 * 100);
   return {
     indicators: ["估值", "周线底部", "月线底部", "回撤结构", "盘整", "规则总分"],
     values: [
       valuationScore(candidate.pe_ttm),
       distanceScore(candidate.weekly_distance_to_low),
       distanceScore(candidate.monthly_distance_to_low),
-      structureScore(candidate),
-      clamp(candidate.consolidation_days / 10 * 100),
-      clamp(numeric(candidate.score) ?? 0),
+      structure,
+      consolidation,
+      score,
     ],
     verifiedCount: [
       candidate.pe_ttm,
       candidate.weekly_distance_to_low,
       candidate.monthly_distance_to_low,
-    ].filter((value) => numeric(value) !== null).length + 3,
+      structure,
+      consolidation,
+      score,
+    ].filter((value) => value !== null && Number.isFinite(value)).length,
   };
 }
 

@@ -1,6 +1,7 @@
 import type { EChartsOption } from "echarts";
 
 import { QuantChart } from "../quant-analysis/QuantChart";
+import { chartTheme } from "../../shared/visualization/chartTheme";
 import type { OverviewAnomaly, OverviewMinutePoint } from "./types";
 
 function timeLabel(value: string): string {
@@ -10,9 +11,9 @@ function timeLabel(value: string): string {
   }).format(new Date(value));
 }
 
-const ANOMALY_COLOR = "#96343d";
-const SELECTED_ANOMALY_COLOR = "#d92131";
-const UNVERIFIED_ANOMALY_COLOR = "#7b8794";
+const ANOMALY_COLOR = chartTheme.upColor;
+const SELECTED_ANOMALY_COLOR = chartTheme.upColor;
+const UNVERIFIED_ANOMALY_COLOR = chartTheme.unavailableColor;
 const MAJOR_TIME_LABELS = new Set([
   "09:30", "10:00", "10:30", "11:00", "13:00", "13:30", "14:00", "14:30", "15:00",
 ]);
@@ -181,8 +182,8 @@ export function overviewMinuteOption(
     series: [
       {
         name: "上证指数", type: "line", data: prices, showSymbol: false, smooth: false,
-        lineStyle: { color: "#1d9b4f", width: 2 }, itemStyle: { color: "#1d9b4f" },
-        areaStyle: { color: "rgba(29,155,79,.04)" },
+        lineStyle: { color: chartTheme.liveColor, width: 2 }, itemStyle: { color: chartTheme.liveColor },
+        areaStyle: { color: "rgba(57,200,221,.08)" },
         markLine: {
           symbol: ["none", "none"], silent: true,
           lineStyle: { color: ANOMALY_COLOR, type: "dashed", width: 1 },
@@ -195,7 +196,7 @@ export function overviewMinuteOption(
           data: anomalyPoints,
         },
       },
-      { name: "成交量", type: "bar", data: volumes, xAxisIndex: 1, yAxisIndex: 1, itemStyle: { color: "rgba(38,111,168,.28)" } },
+      { name: "成交量", type: "bar", data: volumes, xAxisIndex: 1, yAxisIndex: 1, itemStyle: { color: "rgba(57,200,221,.28)" } },
     ],
   };
 }

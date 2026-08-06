@@ -3,6 +3,7 @@ import { AlertTriangle, CheckCircle2, ExternalLink, Newspaper, RefreshCw } from 
 import { useEffect, useMemo, useState } from "react";
 
 import { QuantChart } from "../quant-analysis/QuantChart";
+import { chartTheme } from "../../shared/visualization/chartTheme";
 import { loadStockTimeline } from "./api";
 import type {
   StockTimelineEvent,
@@ -11,10 +12,10 @@ import type {
 } from "./types";
 
 
-const UP_COLOR = "#f04f5f";
-const DOWN_COLOR = "#2fcf91";
-const NEUTRAL_COLOR = "#eab308";
-const UNCERTAIN_COLOR = "#8b98a7";
+const UP_COLOR = chartTheme.upColor;
+const DOWN_COLOR = chartTheme.downColor;
+const NEUTRAL_COLOR = chartTheme.warningColor;
+const UNCERTAIN_COLOR = chartTheme.unavailableColor;
 const SELECTED_COLOR = "#f8fafc";
 const MAX_CHART_EVENTS = 15;
 const MAX_COMPACT_CHART_EVENTS = 3;

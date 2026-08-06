@@ -37,6 +37,8 @@
 .overview-error small { margin-left: auto; color: var(--overview-muted); }
 
 .overview-market-strip { display: grid; grid-template-columns: 126px repeat(4, minmax(100px, 126px)) minmax(410px, 1fr) minmax(190px, 220px); min-height: 104px; border: 1px solid var(--overview-line-strong); border-bottom: 0; background: var(--overview-panel); }
+.overview-market-strip > .viz-metric-band { grid-column: 1 / -1; order: 8; border: 0; border-top: 1px solid var(--overview-line); border-radius: 0; }
+.overview-market-strip > .viz-metric-band .viz-metric { background: color-mix(in srgb, var(--overview-panel) 84%, var(--overview-up) 16%); }
 .overview-gauge { position: relative; min-height: 96px; padding: 7px 8px 4px; border-right: 1px solid var(--overview-line); text-align: center; }
 .overview-gauge-arc { position: relative; width: 82px; height: 41px; margin: 1px auto 0; overflow: hidden; }
 .overview-gauge-arc::before { content: ""; position: absolute; left: 0; top: 0; width: 82px; height: 82px; border-radius: 50%; background: conic-gradient(from 270deg, var(--overview-down) 0 25%, #d5c14a 25% 45%, var(--overview-gold) 45% 65%, var(--overview-up) 65% 100%); }

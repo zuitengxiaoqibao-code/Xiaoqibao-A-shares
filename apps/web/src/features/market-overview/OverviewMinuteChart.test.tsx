@@ -47,7 +47,7 @@ describe("OverviewMinuteChart", () => {
 
     expect(markers).toHaveLength(1);
     expect(markers[0].xAxis).toBe("09:31");
-    expect(markers[0].lineStyle).toMatchObject({ color: "#d92131", type: "solid", width: 2 });
+    expect(markers[0].lineStyle).toMatchObject({ color: "#f04f5f", type: "solid", width: 2 });
     expect(markers[0].label).toMatchObject({ formatter: "算\n力", rotate: 0 });
   });
 
@@ -61,7 +61,7 @@ describe("OverviewMinuteChart", () => {
       { anomaly_id: "wait", occurred_at: "2026-07-29T09:32:00+08:00", label: "待确认", headline: "待确认", direction: "uncertain", themes: [], symbols: [] },
     ], null);
 
-    expect(markers.map((item) => item.lineStyle.color)).toEqual(["#96343d", "#96343d", "#7b8794"]);
+    expect(markers.map((item) => item.lineStyle.color)).toEqual(["#f04f5f", "#f04f5f", "#7d8993"]);
     expect(markers.map((item) => item.label.offset[1])).toEqual([0, 148, 0]);
   });
 
