@@ -507,7 +507,7 @@ class AShareDiagnosisService:
     ) -> dict[str, DiagnosisSection]:
         sections: dict[str, DiagnosisSection] = {}
         sections["market"] = self._market_section(market, market_error)
-        sections["valuation"] = self._valuation_section(market, market_error)
+        sections["valuation"] = self._valuation_section(market, market_error, finance)
         sections.update(self._bar_sections(symbol, bars, as_of))
         sections["fundamentals"] = self._fundamental_section(finance, finance_error)
         sections["funds"] = self._fund_flow_section(fund_flow, fund_flow_error)
@@ -551,21 +551,24 @@ class AShareDiagnosisService:
 
     @staticmethod
     def _valuation_section(
-        market: TencentMarketSnapshot | None, error: str | None
+        market: TencentMarketSnapshot | None,
+        error: str | None,
+        finance: FundamentalSnapshot | None = None,
     ) -> DiagnosisSection:
-        if market is None:
-            return _unavailable("tencent", f"估值行情不可用：{error}")
         metrics = {
-            "pe_ttm": market.pe_ttm, "pb": market.pb,
-            "market_cap_yi": market.market_cap_yi,
+            "pe_ttm": market.pe_ttm if market is not None else getattr(finance, "pe_ttm", None),
+            "pb": market.pb if market is not None else getattr(finance, "pb", None),
+            "market_cap_yi": market.market_cap_yi if market is not None else getattr(finance, "market_cap_yi", None),
         }
+        source = market.source if market is not None else getattr(finance, "source", "tencent")
+        observed_at = market.observed_at if market is not None else getattr(finance, "observed_at", None)
         status = "ready" if any(value is not None for value in metrics.values()) else "unavailable"
         return DiagnosisSection(
-            status=status, observed_at=market.observed_at, source=market.source,
+            status=status, observed_at=observed_at, source=source,
             metrics=metrics,
             explanation=(
                 "估值仅展示来源原值，不对缺失字段进行推算。"
-                if status == "ready" else "腾讯未返回可用估值字段。"
+                if status == "ready" else f"估值行情不可用：{error or '未返回可用字段'}"
             ),
         )
 

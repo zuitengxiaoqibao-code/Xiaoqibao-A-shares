@@ -24,6 +24,9 @@ class FundamentalSnapshot(BaseModel):
     revenue: Decimal | None = None
     book_value_per_share: Decimal | None = None
     total_shares: Decimal | None = Field(default=None, ge=0)
+    pe_ttm: Decimal | None = None
+    pb: Decimal | None = None
+    market_cap_yi: Decimal | None = Field(default=None, ge=0)
     source: str
 
 
@@ -137,6 +140,65 @@ def _as_mapping(value: Any) -> Mapping[str, Any]:
     raise ValueError("unsupported mootdx finance response")
 
 
+def _unwrap_tdx_rpc(value: Any) -> Mapping[str, Any]:
+    """Return one row from a TdxQuant response without inventing fields."""
+    if isinstance(value, Mapping):
+        nested = value.get("Value")
+        if isinstance(nested, list):
+            for row in nested:
+                if isinstance(row, Mapping):
+                    return row
+        if isinstance(nested, Mapping):
+            return nested
+        return value
+    if isinstance(value, list):
+        return next((row for row in value if isinstance(row, Mapping)), {})
+    return {}
+
+
+def _lookup(mapping: Mapping[str, Any], *keys: str) -> Any:
+    normalized = {str(key).casefold().replace("_", ""): value for key, value in mapping.items()}
+    for key in keys:
+        value = normalized.get(key.casefold().replace("_", ""))
+        if value not in (None, "", "--"):
+            return value
+    return None
+
+
+def parse_tdx_rpc_security(
+    *,
+    more_info: Any,
+    stock_info: Any,
+    symbol: str,
+    observed_at: datetime,
+) -> FundamentalSnapshot:
+    """Parse optional local TdxQuant detail responses into the shared finance contract."""
+    more = _unwrap_tdx_rpc(more_info)
+    info = _unwrap_tdx_rpc(stock_info)
+    merged = {**info, **more}
+    industry = _industry_name_or_none(_lookup(info, "industry", "industry_name", "行业", "所属行业"))
+    values = {
+        "pe_ttm": _decimal_or_none(_lookup(merged, "pe_ttm", "pe", "市盈率", "pettm")),
+        "pb": _decimal_or_none(_lookup(merged, "pb", "市净率")),
+        "market_cap_yi": _decimal_or_none(_lookup(merged, "market_cap_yi", "market_cap", "总市值", "zongshizhi")),
+        "eps": _decimal_or_none(_lookup(merged, "eps", "每股收益")),
+        "roe": _decimal_or_none(_lookup(merged, "roe", "净资产收益率")),
+        "revenue": _decimal_or_none(_lookup(merged, "revenue", "营业收入", "zhuyingshouru")),
+        "net_profit": _decimal_or_none(_lookup(merged, "net_profit", "净利润", "jinglirun")),
+        "book_value_per_share": _decimal_or_none(_lookup(merged, "book_value_per_share", "每股净资产", "meigujingzichan")),
+        "total_shares": _decimal_or_none(_lookup(merged, "total_shares", "总股本", "zongguben")),
+    }
+    if not any(value is not None for value in values.values()) and industry is None:
+        raise ValueError("tdx rpc detail response has no usable fields")
+    return FundamentalSnapshot(
+        symbol=symbol,
+        observed_at=observed_at,
+        industry=industry,
+        source="tdx-local-rpc-detail",
+        **values,
+    )
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -147,12 +209,17 @@ class TdxFinanceSource:
         client_factory: Callable[[], Any] = create_tdx_client,
         clock: Callable[[], datetime] = _utc_now,
         observer: Callable[[SourceAttemptEvent], None] | None = None,
+        local_rpc_factory: Callable[[], Any] | None = None,
     ) -> None:
         self.client_factory = client_factory
         self.clock = clock
         self.observer = observer
+        self.local_rpc_factory = local_rpc_factory
 
     def fetch(self, symbol: str) -> FundamentalSnapshot:
+        local_snapshot = self._fetch_local_rpc(symbol)
+        if local_snapshot is not None:
+            return local_snapshot
         client = self.client_factory()
         if self.observer is not None and hasattr(client, "observer"):
             client.observer = self.observer
@@ -179,3 +246,29 @@ class TdxFinanceSource:
         if all(value is None for value in usable_fields):
             raise ValueError("mootdx finance response has no usable fields")
         return snapshot
+
+    def _fetch_local_rpc(self, symbol: str) -> FundamentalSnapshot | None:
+        if self.local_rpc_factory is None:
+            return None
+        rpc = None
+        try:
+            rpc = self.local_rpc_factory()
+            if rpc is None or not getattr(rpc, "available", lambda: False)():
+                return None
+            exchange = "SH" if symbol.startswith(("5", "6", "9")) else "SZ"
+            code = f"{symbol}.{exchange}"
+            more_info = rpc.call("get_more_info", {"stock_code": code})
+            stock_info = rpc.call("get_stock_info", {"stock_code": code})
+            return parse_tdx_rpc_security(
+                more_info=more_info,
+                stock_info=stock_info,
+                symbol=symbol,
+                observed_at=self.clock(),
+            )
+        except Exception:
+            # The optional local bridge must never hide the established mootdx fallback.
+            return None
+        finally:
+            close = getattr(rpc, "close", None)
+            if callable(close):
+                close()

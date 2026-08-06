@@ -452,6 +452,14 @@ async def lifespan(application: FastAPI):
                     TdxFinanceSource(
                         client_factory=create_tdx_client,
                         observer=operations_repository.append_source_attempt,
+                        local_rpc_factory=(
+                            lambda: TdxJsonRpcClient(
+                                endpoint=local_source_settings_record.settings.tdx_rpc_url
+                            )
+                            if local_source_settings_record.settings.tdx_rpc_enabled
+                            and local_source_settings_record.settings.tdx_rpc_url is not None
+                            else None
+                        ),
                     ),
                     compliance,
                     "a_share_finance",

@@ -3,7 +3,11 @@ from decimal import Decimal
 
 import pytest
 
-from qibao_api.a_shares.fundamentals import TdxFinanceSource, parse_tdx_finance
+from qibao_api.a_shares.fundamentals import (
+    TdxFinanceSource,
+    parse_tdx_finance,
+    parse_tdx_rpc_security,
+)
 
 
 class FinanceClient:
@@ -117,3 +121,58 @@ def test_tdx_finance_treats_nan_and_zero_placeholder_as_missing() -> None:
     assert snapshot.net_profit is None
     assert snapshot.revenue is None
     assert snapshot.report_period is None
+
+
+def test_tdx_rpc_security_keeps_only_explicit_detail_fields() -> None:
+    snapshot = parse_tdx_rpc_security(
+        more_info={
+            "ErrorId": "0",
+            "Value": {"pe_ttm": "18.2", "pb": "2.1", "market_cap_yi": "123.4"},
+        },
+        stock_info={
+            "ErrorId": "0",
+            "Value": {"industry_name": "银行", "status": "上市"},
+        },
+        symbol="600000",
+        observed_at=datetime(2026, 8, 6, 9, 30, tzinfo=timezone.utc),
+    )
+
+    assert snapshot.source == "tdx-local-rpc-detail"
+    assert snapshot.industry == "银行"
+    assert snapshot.pe_ttm == Decimal("18.2")
+    assert snapshot.pb == Decimal("2.1")
+    assert snapshot.market_cap_yi == Decimal("123.4")
+    assert snapshot.revenue is None
+
+
+def test_tdx_rpc_security_rejects_empty_or_metadata_only_payloads() -> None:
+    with pytest.raises(ValueError, match="no usable fields"):
+        parse_tdx_rpc_security(
+            more_info={"ErrorId": "0", "Value": {}},
+            stock_info={"ErrorId": "0", "Value": {"status": "上市"}},
+            symbol="600000",
+            observed_at=datetime(2026, 8, 6, tzinfo=timezone.utc),
+        )
+
+
+def test_tdx_finance_prefers_local_rpc_detail_when_available() -> None:
+    class Rpc:
+        def available(self):
+            return True
+
+        def call(self, method, params):
+            if method == "get_more_info":
+                return {"ErrorId": "0", "Value": {"pe_ttm": "12.5", "pb": "1.4"}}
+            return {"ErrorId": "0", "Value": {"industry_name": "银行"}}
+
+        def close(self):
+            pass
+
+    snapshot = TdxFinanceSource(
+        client_factory=MetadataOnlyFinanceClient,
+        local_rpc_factory=Rpc,
+    ).fetch("600000")
+
+    assert snapshot.source == "tdx-local-rpc-detail"
+    assert snapshot.pe_ttm == Decimal("12.5")
+    assert snapshot.industry == "银行"

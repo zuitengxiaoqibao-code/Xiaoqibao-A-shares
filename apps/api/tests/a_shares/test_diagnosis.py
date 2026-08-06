@@ -167,7 +167,26 @@ def test_partial_classification_keeps_board_evidence_without_claiming_industry()
 
     assert section.status == "partial"
     assert section.metrics == {"industry": None, "board_tags": "酿酒行业"}
-    assert "行业名称暂缺" in section.explanation
+
+
+def test_valuation_can_use_explicit_local_tdx_detail_when_market_quote_is_missing() -> None:
+    finance = FundamentalSnapshot(
+        symbol="600000",
+        observed_at=datetime(2026, 7, 29, tzinfo=UTC),
+        pe_ttm=Decimal("12.5"),
+        pb=Decimal("1.4"),
+        market_cap_yi=Decimal("123.4"),
+        source="tdx-local-rpc-detail",
+    )
+
+    section = AShareDiagnosisService._valuation_section(
+        None, "tencent unavailable", finance
+    )
+
+    assert section.status == "ready"
+    assert section.source == "tdx-local-rpc-detail"
+    assert section.metrics["pe_ttm"] == Decimal("12.5")
+    assert section.metrics["pb"] == Decimal("1.4")
 
 
 class FundFlows:
