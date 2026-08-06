@@ -78,6 +78,7 @@ from qibao_api.convertible_bonds.adapters import (
     EastmoneyClauseSource,
     TencentBondQuoteSource,
 )
+from qibao_api.convertible_bonds.tdx_local import FallbackClauseSource, TdxLocalClauseSource
 from qibao_api.convertible_bonds.repository import BondClauseRepository
 from qibao_api.convertible_bonds.universe_repository import BondUniverseRepository
 from qibao_api.convertible_bonds.service import ConvertibleBondService
@@ -478,7 +479,18 @@ async def lifespan(application: FastAPI):
             )
             application.state.bond_repository = bond_repository
             application.state.bond_service = ConvertibleBondService(
-                TencentBondQuoteSource(client), EastmoneyClauseSource(client=client),
+                TencentBondQuoteSource(client),
+                FallbackClauseSource(
+                    TdxLocalClauseSource(
+                        lambda: TdxJsonRpcClient(
+                            endpoint=local_source_settings_record.settings.tdx_rpc_url
+                        )
+                        if local_source_settings_record.settings.tdx_rpc_enabled
+                        and local_source_settings_record.settings.tdx_rpc_url is not None
+                        else None
+                    ),
+                    EastmoneyClauseSource(client=client),
+                ),
                 TencentQuoteSource(client), bond_repository, compliance,
                 diagnosis_repository,
                 EastmoneyBondValuationSource(client=client),
