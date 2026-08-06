@@ -15,11 +15,15 @@ export function TdxFormulaPanel({ symbol, load }: Props) {
     }
     let active = true;
     setLoading(true);
-    void load("formula_process_mul_zb", [symbol])
-      .then((value) => { if (active) setResponse(value); })
-      .catch(() => { if (active) setResponse(null); })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
+    const refresh = () => {
+      void load("formula_process_mul_zb", [symbol])
+        .then((value) => { if (active) setResponse(value); })
+        .catch(() => { if (active) setResponse(null); })
+        .finally(() => { if (active) setLoading(false); });
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 15_000);
+    return () => { active = false; window.clearInterval(timer); };
   }, [load, symbol]);
   if (!load) return null;
   const point = response?.points.find((item) => item.symbol === symbol);

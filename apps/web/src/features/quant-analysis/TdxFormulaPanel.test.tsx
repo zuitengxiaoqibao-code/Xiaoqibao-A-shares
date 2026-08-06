@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { TdxFormulaPanel } from "./TdxFormulaPanel";
@@ -38,5 +38,26 @@ describe("TdxFormulaPanel", () => {
 
     await waitFor(() => expect(screen.getByText("公式结果不可用")).toBeInTheDocument());
     expect(screen.getByText("接口不可用")).toBeInTheDocument();
+  });
+
+  it("refreshes the current symbol on the live interval", async () => {
+    vi.useFakeTimers();
+    try {
+      const load = vi.fn(async () => ({
+        status: "unavailable" as const,
+        points: [],
+        fetched_at: null,
+        source: "tdx-local-rpc",
+        detail: null,
+      }));
+      const view = render(<TdxFormulaPanel symbol="600000" load={load} />);
+      await act(async () => { await Promise.resolve(); });
+      expect(load).toHaveBeenCalledTimes(1);
+      await act(async () => { vi.advanceTimersByTime(15_000); });
+      expect(load).toHaveBeenCalledTimes(2);
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
