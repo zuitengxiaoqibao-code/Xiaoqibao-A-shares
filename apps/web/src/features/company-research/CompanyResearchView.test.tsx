@@ -41,6 +41,18 @@ const refreshedResearch: CompanyResearchResponse = {
   final_score: "76",
 };
 
+const evidenceResearch = {
+  ...research,
+  profile: {
+    ...research.profile,
+    latest_tip_items: [
+      { id: "notice-1", category: "公告与合同", title: "公告与合同", date: "2026-08-05", tone: "positive", summary: "签署战略合作协议", source: "mootdx-f10", observed_at: research.profile.observed_at, raw_text: "●最新公告：2026-08-05 签署战略合作协议" },
+      { id: "risk-1", category: "风险提醒", title: "风险提醒", date: "2026-07-15", tone: "risk", summary: "预计净利润同比下降", source: "mootdx-f10", observed_at: research.profile.observed_at, raw_text: "●业绩预告：2026-07-15 预计净利润同比下降" },
+      { id: "neutral-1", category: "交易异动", title: "交易异动", date: "2026-07-10", tone: "neutral", summary: "股票交易出现异动", source: "mootdx-f10", observed_at: research.profile.observed_at, raw_text: "●交易异动：2026-07-10 股票交易出现异动" },
+    ],
+  },
+} as unknown as CompanyResearchResponse;
+
 describe("CompanyResearchView", () => {
   beforeEach(() => localStorage.clear());
 
@@ -194,5 +206,38 @@ describe("CompanyResearchView", () => {
     />);
 
     expect(await screen.findByRole("main")).toHaveClass("terminal-page", "company-research-page");
+  });
+
+  it("renders structured evidence as a summary, filterable cards and expandable raw text", async () => {
+    render(<CompanyResearchView
+      selectedSymbol="600519"
+      load={vi.fn(async () => evidenceResearch)}
+      search={vi.fn(async () => ({ query: "", items: [], server_time: "", source_status: "ready" as const }))}
+    />);
+
+    const evidence = await screen.findByRole("region", { name: "催化与最新提示" });
+    expect(evidence).toHaveTextContent("已识别 3 项事件");
+    expect(evidence).toHaveTextContent("签署战略合作协议");
+    expect(evidence).toHaveTextContent("预计净利润同比下降");
+    expect(evidence.querySelectorAll(".evidence-event")).toHaveLength(3);
+
+    fireEvent.click(screen.getByRole("button", { name: "风险提醒" }));
+    expect(evidence.querySelectorAll(".evidence-event")).toHaveLength(1);
+    expect(evidence).toHaveTextContent("预计净利润同比下降");
+    expect(evidence).not.toHaveTextContent("签署战略合作协议");
+
+    fireEvent.click(screen.getByRole("button", { name: "全部" }));
+    fireEvent.click(screen.getAllByText("查看原始证据")[1]);
+    expect(evidence).toHaveTextContent("●业绩预告：2026-07-15 预计净利润同比下降");
+  });
+
+  it("shows an explicit unavailable state when F10 has no latest tips", async () => {
+    render(<CompanyResearchView
+      selectedSymbol="600519"
+      load={vi.fn(async () => research)}
+      search={vi.fn(async () => ({ query: "", items: [], server_time: "", source_status: "ready" as const }))}
+    />);
+
+    expect(await screen.findByRole("region", { name: "催化与最新提示" })).toHaveTextContent("通达信 F10 未返回最新提示");
   });
 });

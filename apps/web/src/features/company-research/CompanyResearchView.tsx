@@ -7,6 +7,7 @@ import { readDailySnapshot, writeDailySnapshot } from "../../shared/dailySnapsho
 import type { LoadProgress, LoadProgressCallback } from "../../shared/fetchJsonWithProgress";
 import type { InstrumentSearchResponse } from "../stock-cockpit/types";
 import type { CompanyResearchResponse, FinancialPeriod } from "./types";
+import { LatestTipEvidencePanel } from "./LatestTipEvidencePanel";
 import "./companyResearch.css";
 
 type Props = {
@@ -163,12 +164,15 @@ function ResearchDashboard({ value, peers, onOpenAShare }: { value: CompanyResea
           <p>{item.detail}{item.threshold ? ` · 规则：${item.threshold}` : ""}</p>
         </article>)}</div>
       </section>
+      <LatestTipEvidencePanel items={value.profile.latest_tip_items ?? []} source={value.profile.source} observedAt={value.profile.observed_at} />
       <section className="research-card" aria-label="F10原文证据">
         <div className="research-card-header"><h2>F10 原文证据</h2><span className={`research-status ${value.profile.status}`}>{value.profile.source}</span></div>
         <div className="profile-copy">
           <section><h3>公司概况</h3><p>{value.profile.company_overview ?? "原文暂不可用"}</p></section>
           <section><h3>行业分析</h3><p>{value.profile.industry_analysis ?? "原文暂不可用"}</p></section>
-          <section><h3>最新提示</h3><p>{value.profile.latest_tips ?? "原文暂不可用"}</p></section>
+          <section><h3>最新提示原文</h3>{value.profile.latest_tips
+            ? <details className="profile-raw"><summary>展开完整 F10 原文</summary><p>{value.profile.latest_tips}</p></details>
+            : <p>原文暂不可用</p>}</section>
         </div>
       </section>
       <section className="research-card" aria-label="研究来源账本">

@@ -64,11 +64,27 @@ export type ValuationObservation = {
   observed_at: string | null;
 };
 
+export type LatestTipCategory = "公告与合同" | "业绩预告" | "资金与融资" | "交易异动" | "风险提醒" | "其他";
+export type LatestTipTone = "positive" | "neutral" | "risk" | "unknown";
+
+export type LatestTipItem = {
+  id: string;
+  category: LatestTipCategory;
+  title: string;
+  date: string | null;
+  tone: LatestTipTone;
+  summary: string;
+  source: string;
+  observed_at: string | null;
+  raw_text: string;
+};
+
 export type CompanyProfileEvidence = {
   status: ResearchStatus;
   company_overview: string | null;
   industry_analysis: string | null;
   latest_tips: string | null;
+  latest_tip_items?: LatestTipItem[];
   source: string;
   observed_at: string | null;
   reasons: string[];
