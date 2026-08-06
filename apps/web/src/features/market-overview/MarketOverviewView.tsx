@@ -16,6 +16,7 @@ import type { SpeechSynthesizer } from "../speech/types";
 import { isAShareSymbol } from "../instrument-selection/SelectedInstrumentProvider";
 import { DistinctMarketWorkspace } from "./workspaces/DistinctMarketWorkspace";
 import { HomepageStartupOverlay } from "./HomepageStartupOverlay";
+import { isMarketOverviewSnapshotCurrent, readMarketOverviewCache, writeMarketOverviewCache } from "./marketOverviewCache";
 import { MetricBand } from "../../shared/visualization/VisualPrimitives";
 import "./overview.css";
 
@@ -84,9 +85,12 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, synthesizeS
   onOpenAShare?: (symbol: string) => void;
   synthesizeSpeech?: SpeechSynthesizer;
 }) {
-  const [data, setData] = useState<MarketOverviewResponse | null>(null);
+  const [initialCache] = useState(() => readMarketOverviewCache());
+  const [data, setData] = useState<MarketOverviewResponse | null>(initialCache?.value ?? null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [cacheTimestamp, setCacheTimestamp] = useState<string | null>(initialCache?.cachedAt ?? null);
+  const [usingCache, setUsingCache] = useState(() => Boolean(initialCache));
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [visible, setVisible] = useState(document.visibilityState !== "hidden");
   const [activeFeature, setActiveFeature] = useState("盘中异动");
@@ -94,6 +98,8 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, synthesizeS
   const [selectedSectorId, setSelectedSectorId] = useState<string | null>(null);
   const [searchSymbol, setSearchSymbol] = useState("");
   const requestRef = useRef<AbortController | null>(null);
+  const dataRef = useRef<MarketOverviewResponse | null>(data);
+  dataRef.current = data;
   const alertState = useBreakingNewsAlerts(loadAlerts, undefined, 6);
   const aShareAlertState = useMemo(() => ({
     ...alertState,
@@ -109,12 +115,24 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, synthesizeS
       const next = keepAShareInformation(await load(controller.signal));
       if (controller.signal.aborted) return;
       setData(next);
+      const stored = writeMarketOverviewCache(next);
+      setCacheTimestamp((current) => stored.persisted ? stored.cachedAt : current);
+      setUsingCache(false);
       setError(null);
       setSelectedAnomalyId((current) => current && next.anomalies.some((item) => item.anomaly_id === current) ? current : null);
       setSelectedSectorId((current) => current && next.sectors.some((item) => item.sector_id === current) ? current : next.sectors[0]?.sector_id ?? null);
     } catch (reason) {
       if (reason instanceof DOMException && reason.name === "AbortError") return;
-      if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "信息总览数据暂不可用");
+      if (!controller.signal.aborted) {
+        setError(reason instanceof Error ? reason.message : "信息总览数据暂不可用");
+        if (dataRef.current && !isMarketOverviewSnapshotCurrent(dataRef.current)) {
+          setData(null);
+          setCacheTimestamp(null);
+          setUsingCache(false);
+        } else {
+          setUsingCache(true);
+        }
+      }
     } finally {
       if (requestRef.current === controller) {
         requestRef.current = null;
@@ -149,12 +167,21 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, synthesizeS
   const slots = useMemo(() => indexSlots(data?.indices ?? []), [data?.indices]);
   const selectedAnomaly = data?.anomalies.find((item) => item.anomaly_id === selectedAnomalyId) ?? null;
 
-  const statusLabel = !data && loading
+  const statusLabel = data && loading
+    ? "正在更新实时数据"
+    : !data && loading
     ? "正在聚合 A 股市场数据"
     : error && !data ? "数据链路中断"
     : data?.status === "ready" ? "实时数据就绪"
     : data?.status === "partial" ? "部分数据可用"
     : "当前数据不可用";
+  const headerStatusLabel = data && loading
+    ? "正在更新实时数据"
+    : error && data
+    ? "实时更新失败，继续使用缓存"
+    : data && !usingCache
+    ? "已加载最新数据 · 实时监控中"
+    : statusLabel;
   const marketData = data?.market_data;
   const coverage = marketData
     ? `${marketData.quote_count.toLocaleString("zh-CN")} / ${marketData.universe_count.toLocaleString("zh-CN")}`
@@ -175,15 +202,21 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, synthesizeS
   };
 
   return <main className="terminal-page market-overview-page">
-    <HomepageStartupOverlay data={data} error={error} loading={loading} onRetry={() => void refresh()} />
+    <HomepageStartupOverlay
+      data={data}
+      error={error}
+      loading={loading}
+      liveReady={Boolean(data && data.status !== "unavailable" && data.market_data?.quality !== "unavailable" && !usingCache && !loading && !error)}
+      onRetry={() => void refresh()}
+    />
     <TerminalPageHeader
       className="overview-terminal-header"
       eyebrow="A-SHARE / MARKET OVERVIEW"
       title="信息总览"
       description="A 股全市场行情、情绪、异动、题材与关联资讯同屏监测"
-      actions={<div className={`overview-status ${data?.status ?? "unavailable"}`}>
+      actions={<div className={`overview-status ${data?.status ?? "unavailable"}`} data-refreshing={loading ? "true" : "false"}>
         <Activity size={15} />
-        <span><b>{statusLabel}</b><small>{data ? `${coverage} 行情覆盖` : "等待首次快照"}</small></span>
+        <span><b>{headerStatusLabel}</b><small>{data ? `${coverage} 行情覆盖` : "等待首次快照"}</small></span>
       </div>}
     />
     <div className="overview-sr-only" role="status">{statusLabel}</div>
@@ -239,7 +272,7 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, synthesizeS
       <span>间隔 <b>5</b> 秒</span>
       <span>当前筛选 <strong>{activeFeature}</strong></span>
       {!visible && <span className="overview-paused">页面隐藏，刷新已暂停</span>}
-      {data && <time dateTime={data.observed_at}>更新于 {timeLabel(data.observed_at, true)}</time>}
+      {data && <time dateTime={data.observed_at}>最新观测 {timeLabel(data.observed_at, true)}{usingCache && cacheTimestamp ? ` · 缓存 ${timeLabel(cacheTimestamp, true)}` : ""}</time>}
     </div>
 
     {activeFeature === "盘中异动" && <><section className="overview-workspace">

@@ -47,4 +47,17 @@ describe("QuantChart", () => {
     unmount();
     expect(dispose).toHaveBeenCalledTimes(1);
   });
+
+  it("reuses the chart instance when the option changes", () => {
+    const { rerender } = render(<QuantChart option={{ series: [{ data: [1] }] }} ariaLabel="测试图表" />);
+
+    width = 640;
+    height = 320;
+    act(() => notifyResize?.());
+    rerender(<QuantChart option={{ series: [{ data: [2] }] }} ariaLabel="测试图表" />);
+
+    expect(init).toHaveBeenCalledTimes(1);
+    expect(dispose).not.toHaveBeenCalled();
+    expect(setOption).toHaveBeenLastCalledWith({ series: [{ data: [2] }] }, { notMerge: true });
+  });
 });

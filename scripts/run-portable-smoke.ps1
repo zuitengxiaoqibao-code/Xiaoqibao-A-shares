@@ -33,12 +33,14 @@ try {
     }
 
     $Health = $null
+    $HealthReadyMs = $null
     $Deadline = [DateTime]::UtcNow.AddSeconds(60)
     do {
         try {
             $Health = Invoke-RestMethod `
                 -Uri "http://127.0.0.1:$Port/health" `
                 -TimeoutSec 5
+            $HealthReadyMs = $StartedAt.ElapsedMilliseconds
             break
         } catch {
             Start-Sleep -Milliseconds 200
@@ -105,8 +107,8 @@ try {
         }
         $QuantStrategyStatus = $QuantStrategy.status
     }
-    Write-Host ("Portable smoke passed; window visible in {0}ms; API ready in {1}ms; overview {2}; quant strategy {3}" -f `
-        $WindowVisibleMs, $StartedAt.ElapsedMilliseconds, $Overview.status, $QuantStrategyStatus)
+    Write-Host ("Portable smoke passed; window visible in {0}ms; API ready in {1}ms; verification completed in {2}ms; overview {3}; quant strategy {4}" -f `
+        $WindowVisibleMs, $HealthReadyMs, $StartedAt.ElapsedMilliseconds, $Overview.status, $QuantStrategyStatus)
 } finally {
     if (-not $Process.HasExited) {
         Stop-Process -Id $Process.Id

@@ -33,6 +33,9 @@
 .overview-status.unavailable { border-color: color-mix(in srgb, var(--overview-up) 55%, var(--overview-line)); background: color-mix(in srgb, var(--overview-up) 9%, var(--overview-panel)); color: var(--overview-up); }
 .overview-status b, .overview-status small { display: block; }
 .overview-status b { font-size: 12px; }.overview-status small { margin-top: 2px; color: var(--overview-muted); font-size: 12px; }
+.overview-status[data-refreshing="true"] { border-color: var(--overview-blue); color: var(--overview-blue); }
+.overview-status[data-refreshing="true"] svg { animation: overview-refresh-spin 900ms linear infinite; }
+@keyframes overview-refresh-spin { to { transform: rotate(360deg); } }
 .overview-error { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 0 10px; border-bottom: 1px solid color-mix(in srgb, var(--overview-up) 48%, var(--overview-line)); background: color-mix(in srgb, var(--overview-up) 9%, var(--overview-panel)); color: var(--overview-up); font-size: 12px; }
 .overview-error small { margin-left: auto; color: var(--overview-muted); }
 

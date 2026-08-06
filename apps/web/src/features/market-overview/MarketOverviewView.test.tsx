@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MarketOverviewView } from "./MarketOverviewView";
+import { writeMarketOverviewCache } from "./marketOverviewCache";
 import type { MarketOverviewResponse } from "./types";
 import type { BreakingNewsAlertResponse } from "../news-alerts/types";
 
@@ -118,7 +119,7 @@ describe("MarketOverviewView", () => {
   it("does not claim 100 percent when the critical overview request fails", async () => {
     render(<MarketOverviewView load={() => Promise.reject(new Error("本地行情缓存损坏"))} />);
 
-    const dialog = await screen.findByRole("dialog", { name: "信息总览加载失败" });
+    const dialog = await screen.findByRole("dialog", { name: "信息总览实时更新失败" });
     await act(async () => vi.advanceTimersByTime(1000));
     expect(screen.getByRole("progressbar", { name: "首页数据加载进度" })).toHaveAttribute("aria-valuenow", "48");
     expect(dialog).toHaveTextContent("本地行情缓存损坏");
@@ -154,6 +155,46 @@ describe("MarketOverviewView", () => {
     expect(screen.getByRole("region", { name: "A 股关联资讯" })).not.toHaveTextContent("海外商品期货波动");
     expect(screen.getByRole("region", { name: "热门板块与成分股" })).toHaveTextContent("脑科学");
     expect(screen.getByRole("status")).toHaveTextContent("部分数据可用");
+  });
+
+  it("shows the same-day cache immediately while the newest snapshot is still loading", async () => {
+    const cached = { ...overview, observed_at: new Date().toISOString(), as_of: "2026-08-06" };
+    writeMarketOverviewCache(cached);
+    let resolveLatest: ((value: MarketOverviewResponse) => void) | undefined;
+    render(<MarketOverviewView load={() => new Promise<MarketOverviewResponse>((resolve) => { resolveLatest = resolve; })} />);
+
+    await waitFor(() => expect(screen.getAllByText("正在更新实时数据").length).toBeGreaterThan(0));
+    expect(screen.getByRole("region", { name: "A 股市场情绪与核心指数" })).toHaveTextContent("76");
+    expect(screen.getAllByText(/缓存/).length).toBeGreaterThan(0);
+    expect(screen.getByRole("progressbar", { name: "首页数据加载进度" })).toHaveAttribute("data-verified-target", "48");
+    expect(screen.getByRole("dialog", { name: "正在加载信息总览" })).toHaveTextContent("缓存已展示，正在更新实时数据");
+    await act(async () => resolveLatest?.(overview));
+    localStorage.clear();
+  });
+
+  it("marks the live snapshot as monitored after the refresh completes", async () => {
+    render(<MarketOverviewView load={() => Promise.resolve({ ...overview, status: "ready" })} />);
+
+    expect(await screen.findByText("已加载最新数据 · 实时监控中")).toBeInTheDocument();
+  });
+
+  it("keeps cached data visible and explains a failed live refresh", async () => {
+    const cached = { ...overview, observed_at: new Date().toISOString(), as_of: "2026-08-06" };
+    writeMarketOverviewCache(cached);
+    render(<MarketOverviewView load={() => Promise.reject(new Error("本地行情源超时"))} />);
+
+    expect(await screen.findByRole("dialog", { name: "信息总览实时更新失败" })).toHaveTextContent("实时更新失败，继续使用缓存");
+    expect(screen.getByRole("region", { name: "A 股市场情绪与核心指数" })).toHaveTextContent("76");
+    localStorage.clear();
+  });
+
+  it("does not mark an unavailable snapshot as a complete startup", async () => {
+    const unavailable = { ...overview, status: "unavailable" as const, market_data: { ...overview.market_data, quality: "unavailable" as const } };
+    render(<MarketOverviewView load={() => Promise.resolve(unavailable)} />);
+
+    const progress = await screen.findByRole("progressbar", { name: "首页数据加载进度" });
+    expect(progress).toHaveAttribute("data-verified-target", "48");
+    expect(screen.getByRole("dialog", { name: "正在加载信息总览" })).toHaveTextContent("数据证据不足");
   });
 
   it("loads the newest six market-wide verified alerts", async () => {

@@ -10,17 +10,19 @@ export function QuantChart({
   ariaLabel: string;
 }) {
   const element = useRef<HTMLDivElement>(null);
+  const optionRef = useRef(option);
+  const chartRef = useRef<ReturnType<typeof echarts.init> | null>(null);
+  optionRef.current = option;
 
   useEffect(() => {
     if (!element.current) return;
     const container = element.current;
-    let chart: ReturnType<typeof echarts.init> | null = null;
     let disposed = false;
     const renderChart = () => {
       if (disposed || container.clientWidth <= 0 || container.clientHeight <= 0) return;
-      if (!chart) chart = echarts.init(container, undefined, { renderer: "svg" });
-      chart.setOption(option, { notMerge: true });
-      chart.resize();
+      if (!chartRef.current) chartRef.current = echarts.init(container, undefined, { renderer: "svg" });
+      chartRef.current.setOption(optionRef.current, { notMerge: true });
+      chartRef.current.resize();
     };
     const observer = typeof ResizeObserver === "undefined"
       ? null
@@ -32,8 +34,13 @@ export function QuantChart({
       disposed = true;
       observer?.disconnect();
       window.removeEventListener("resize", renderChart);
-      chart?.dispose();
+      chartRef.current?.dispose();
+      chartRef.current = null;
     };
+  }, []);
+
+  useEffect(() => {
+    chartRef.current?.setOption(option, { notMerge: true });
   }, [option]);
 
   return <div className="quant-chart" role="img" aria-label={ariaLabel} ref={element} />;

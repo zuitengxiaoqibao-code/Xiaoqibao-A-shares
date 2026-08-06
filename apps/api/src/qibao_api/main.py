@@ -925,6 +925,8 @@ async def serialize_runtime_access(request: Request, call_next):
     if write_gate is None:
         return await call_next(request)
     path = request.url.path
+    if path == "/health":
+        return await call_next(request)
     if path.startswith("/api/v1/settings/"):
         return await call_next(request)
     if request.method == "GET" and (

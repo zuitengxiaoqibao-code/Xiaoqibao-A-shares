@@ -547,6 +547,27 @@ async def test_local_data_source_settings_read_does_not_wait_for_runtime_write()
     assert response.status_code == 200
 
 
+@pytest.mark.asyncio
+async def test_health_check_does_not_wait_for_runtime_write() -> None:
+    application = FastAPI()
+    application.middleware("http")(serialize_runtime_access)
+    application.state.write_gate = asyncio.Lock()
+
+    @application.get("/health")
+    async def health():
+        return {"status": "ready"}
+
+    await application.state.write_gate.acquire()
+    transport = httpx.ASGITransport(app=application)
+    try:
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await asyncio.wait_for(client.get("/health"), timeout=0.2)
+    finally:
+        application.state.write_gate.release()
+
+    assert response.status_code == 200
+
+
 SEARCH_NOW = datetime(2026, 7, 15, 2, 0, tzinfo=timezone.utc)
 
 
