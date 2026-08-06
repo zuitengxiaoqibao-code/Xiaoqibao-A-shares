@@ -122,6 +122,47 @@ async def test_lifespan_does_not_wait_for_remote_universe_refresh(
 
 
 @pytest.mark.asyncio
+async def test_lifespan_does_not_wait_for_remote_bond_universe_refresh(
+    tmp_path, monkeypatch
+) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def slow_sync_universe(_service):
+        started.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    monkeypatch.setattr(main_module, "Settings", lambda: FakeSettings(tmp_path))
+    monkeypatch.setattr(
+        main_module.ConvertibleBondService,
+        "sync_universe",
+        slow_sync_universe,
+    )
+    monkeypatch.setattr(
+        main_module, "create_tdx_client", lambda: (_ for _ in ()).throw(RuntimeError("offline"))
+    )
+    application = FastAPI()
+    manager = main_module.lifespan(application)
+    entering = asyncio.create_task(manager.__aenter__())
+    await asyncio.wait_for(started.wait(), timeout=2)
+    try:
+        await asyncio.sleep(0)
+        assert entering.done()
+    finally:
+        if not entering.done():
+            release.set()
+        await entering
+        await manager.__aexit__(None, None, None)
+
+    assert cancelled.is_set()
+
+
+@pytest.mark.asyncio
 async def test_lifespan_injects_guarded_production_sources_and_closes_compliance(
     tmp_path, monkeypatch
 ) -> None:

@@ -39,7 +39,7 @@ try {
         try {
             $Health = Invoke-RestMethod `
                 -Uri "http://127.0.0.1:$Port/health" `
-                -TimeoutSec 5
+                -TimeoutSec 1
             $HealthReadyMs = $StartedAt.ElapsedMilliseconds
             break
         } catch {

@@ -251,6 +251,15 @@ async def _refresh_a_share_universe(compliance, source, directory) -> None:
         logger.warning("A-share universe sync unavailable", exc_info=True)
 
 
+async def _refresh_bond_universe(service) -> None:
+    try:
+        await service.sync_universe()
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.warning("convertible-bond universe sync unavailable", exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     startup_started = time.monotonic()
@@ -364,6 +373,7 @@ async def lifespan(application: FastAPI):
     application.state.operations_repository = operations_repository
     log_startup_stage("repositories-ready")
 
+    bond_universe_refresh_task = None
     async with httpx.AsyncClient(timeout=10) as client:
         application.state.a_share_quote_source = TencentQuoteSource(client)
         with httpx.Client(timeout=10) as history_client:
@@ -500,10 +510,10 @@ async def lifespan(application: FastAPI):
                 universe_source=EastmoneyBondUniverseSource(client=client),
                 universe_repository=bond_universe_repository,
             )
-            try:
-                await application.state.bond_service.sync_universe()
-            except Exception:
-                logger.warning("convertible-bond universe sync unavailable", exc_info=True)
+            bond_universe_refresh_task = asyncio.create_task(
+                _refresh_bond_universe(application.state.bond_service),
+                name="bond-universe-refresh",
+            )
             log_startup_stage("bond-universe-ready")
             application.state.news_service = NewsIngestionService(
                 EastmoneyGlobalNewsSource(client=client),
@@ -915,6 +925,10 @@ async def lifespan(application: FastAPI):
                     universe_refresh_task.cancel()
                     with suppress(asyncio.CancelledError):
                         await universe_refresh_task
+                if bond_universe_refresh_task is not None:
+                    bond_universe_refresh_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await bond_universe_refresh_task
                 if scheduler_task is not None:
                     scheduler_task.cancel()
                     with suppress(asyncio.CancelledError):
