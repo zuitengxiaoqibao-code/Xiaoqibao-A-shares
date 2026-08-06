@@ -56,8 +56,18 @@ describe("workspace insights", () => {
     } as MarketOverviewResponse;
     const insights = buildWorkspaceInsights("游资动向", emptySeats, buildWorkspaceMarketModel(emptySeats));
 
-    expect(insights.every((item) => item.quality === "unavailable")).toBe(true);
+    expect(insights.filter((item) => item.key !== "review-date").every((item) => item.quality === "unavailable")).toBe(true);
     expect(insights.map((item) => item.value)).not.toContain("+0.00亿");
+  });
+
+  it("does not treat an empty warning-free dragon-tiger list as evidence", () => {
+    const emptySeats = {
+      ...data,
+      review: { ...data.review!, dragon_tiger: [], warnings: [] },
+    } as unknown as MarketOverviewResponse;
+    const insights = buildWorkspaceInsights("龙虎榜", emptySeats, buildWorkspaceMarketModel(emptySeats));
+
+    expect(insights.filter((item) => item.key !== "review-date").every((item) => item.quality === "unavailable")).toBe(true);
   });
 
   it("does not report zero history coverage as a verified historical metric", () => {
@@ -100,5 +110,46 @@ describe("workspace insights", () => {
     const highest = insights.find((item) => item.key === "top-board");
     expect(highest?.quality).toBe("unavailable");
     expect(highest?.value).not.toBe("0板");
+  });
+
+  it("marks sentiment and regime unavailable when their scores are missing", () => {
+    const missingScores = {
+      ...data,
+      sentiment: { ...data.sentiment, score: null, band: "数据不足", quality: "partial" },
+      regime: null,
+    } as unknown as MarketOverviewResponse;
+    const insights = buildWorkspaceInsights("情绪周期", missingScores, buildWorkspaceMarketModel(missingScores));
+
+    expect(insights.find((item) => item.key === "sentiment")).toMatchObject({ quality: "unavailable", value: "未接入" });
+    expect(insights.find((item) => item.key === "regime")).toMatchObject({ quality: "unavailable", value: "未接入" });
+    expect(insights.find((item) => item.key === "risk-score")).toMatchObject({ quality: "unavailable", value: "未接入" });
+    expect(insights.find((item) => item.key === "heat-score")).toMatchObject({ quality: "unavailable", value: "未接入" });
+  });
+
+  it("does not claim review quality before a review snapshot exists", () => {
+    const withoutReview = { ...data, review: null } as unknown as MarketOverviewResponse;
+    const insights = buildWorkspaceInsights("复盘统计大全", withoutReview, buildWorkspaceMarketModel(withoutReview));
+
+    expect(insights.find((item) => item.key === "review-quality")).toMatchObject({ quality: "unavailable", value: "未接入" });
+  });
+
+  it("does not turn an empty market sample into verified counts or a theme leader", () => {
+    const emptyMarket = {
+      ...data,
+      breadth: { rising_count: 0, falling_count: 0, flat_count: 0, valid_count: 0 },
+      liquidity: { total_amount_yi: null, baseline_amount_yi: null, relative_amount: null },
+      market_stocks: [],
+      live_feed: [],
+      anomalies: [],
+    } as unknown as MarketOverviewResponse;
+    const model = buildWorkspaceMarketModel(emptyMarket);
+    const insights = buildWorkspaceInsights("复盘统计大全", emptyMarket, model);
+
+    expect(insights.find((item) => item.key === "rising")).toMatchObject({ quality: "unavailable", value: "未接入" });
+    expect(insights.find((item) => item.key === "falling")).toMatchObject({ quality: "unavailable", value: "未接入" });
+    expect(insights.find((item) => item.key === "market-amount")).toMatchObject({ quality: "unavailable", value: "未接入" });
+
+    const stockDetail = buildWorkspaceInsights("个股详情", emptyMarket, model).find((item) => item.key === "theme-stock-top");
+    expect(stockDetail).toMatchObject({ quality: "unavailable", value: "未接入" });
   });
 });

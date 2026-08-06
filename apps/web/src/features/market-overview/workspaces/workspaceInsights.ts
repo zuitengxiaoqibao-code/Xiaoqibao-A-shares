@@ -118,7 +118,7 @@ function metric(key: MetricKey, data: MarketOverviewResponse, model: WorkspaceMa
   const topSector = model.sectors[0];
   const topStock = [...model.stocks].filter((item) => known(item.change)).sort((a, b) => compareDesc(a.change, b.change))[0];
   const topAttention = [...model.stocks].filter((item) => known(item.attentionScore)).sort((a, b) => compareDesc(a.attentionScore, b.attentionScore))[0];
-  const topThemeStock = [...model.stocks].sort((a, b) => b.themes.length - a.themes.length)[0];
+  const topThemeStock = [...model.stocks].filter((item) => item.themes.length > 0).sort((a, b) => b.themes.length - a.themes.length)[0];
   const topAmplitude = [...model.stocks].filter((item) => known(item.amplitude)).sort((a, b) => compareDesc(a.amplitude, b.amplitude))[0];
   const gapsUp = model.stocks.filter((item) => known(item.gap) && item.gap >= 2);
   const gapsDown = model.stocks.filter((item) => known(item.gap) && item.gap <= -2);
@@ -159,18 +159,34 @@ function metric(key: MetricKey, data: MarketOverviewResponse, model: WorkspaceMa
     case "top-sector": return topSector && known(topSector.strengthScore) ? ready(key, "综合强度第一", topSector.name, `强度 ${topSector.strengthScore.toFixed(0)} / 100`, "positive", "sector") : unavailable(key, "综合强度第一", "板块强度所需字段不足", "sector");
     case "top-sector-breadth": return topSector && known(topSector.breadthPercent) ? ready(key, "领涨板块广度", `${topSector.breadthPercent.toFixed(0)}%`, topSector.name, "positive", "sector") : unavailable(key, "领涨板块广度", "板块上涨/下跌家数不足", "sector");
     case "top-sector-amount": return topSector && known(topSector.amount) ? ready(key, "板块成交活跃", `${topSector.amount.toFixed(0)}亿`, "仅表示成交额，不代表净流入", "neutral", "sector") : unavailable(key, "板块成交活跃", "板块成交额不可用", "sector");
-    case "sentiment": return ready(key, "市场情绪", data.sentiment.score ?? "--", data.sentiment.band, "neutral", "pulse");
-    case "rising": return ready(key, "上涨家数", String(data.breadth.rising_count), `${data.breadth.valid_count} 只有效行情`, "positive", "pulse");
-    case "falling": return ready(key, "下跌家数", String(data.breadth.falling_count), `${data.breadth.valid_count} 只有效行情`, "danger", "pulse");
-    case "market-amount": return ready(key, "两市成交", data.liquidity.total_amount_yi ? `${data.liquidity.total_amount_yi}亿` : "--", data.liquidity.relative_amount ? `基准 ${data.liquidity.relative_amount}x` : "历史基准不足", "neutral", "pulse");
-    case "regime": return ready(key, "市场风格", data.regime?.regime ?? "待确认", data.regime ? `仓位系数 ${data.regime.market_coef}` : "因子覆盖不足", "neutral", "pulse");
-    case "risk-score": return ready(key, "市场风险分", data.regime?.risk_score ?? "--", data.regime?.quality === "ready" ? "风格模型已核验" : "等待因子", "danger", "risk");
-    case "heat-score": return ready(key, "市场热度分", data.regime?.heat_score ?? "--", data.regime?.quality === "ready" ? "风格模型已核验" : "等待因子", "positive", "pulse");
+    case "sentiment": return numberValue(data.sentiment.score) !== null
+      ? ready(key, "市场情绪", data.sentiment.score as string, data.sentiment.band, "neutral", "pulse")
+      : unavailable(key, "市场情绪", "情绪分数缺失，不能生成市场情绪结论", "pulse");
+    case "rising": return data.breadth.valid_count > 0
+      ? ready(key, "上涨家数", String(data.breadth.rising_count), `${data.breadth.valid_count} 只有效行情`, "positive", "pulse")
+      : unavailable(key, "上涨家数", "有效行情样本为 0，暂不统计", "pulse");
+    case "falling": return data.breadth.valid_count > 0
+      ? ready(key, "下跌家数", String(data.breadth.falling_count), `${data.breadth.valid_count} 只有效行情`, "danger", "pulse")
+      : unavailable(key, "下跌家数", "有效行情样本为 0，暂不统计", "pulse");
+    case "market-amount": return numberValue(data.liquidity.total_amount_yi) !== null
+      ? ready(key, "两市成交", `${data.liquidity.total_amount_yi}亿`, data.liquidity.relative_amount ? `基准 ${data.liquidity.relative_amount}x` : "历史基准不足", "neutral", "pulse")
+      : unavailable(key, "两市成交", "全市场成交额字段不可用", "pulse");
+    case "regime": return data.regime?.regime
+      ? ready(key, "市场风格", data.regime.regime, `仓位系数 ${data.regime.market_coef}`, "neutral", "pulse")
+      : unavailable(key, "市场风格", "风格判定缺少有效因子或规则未匹配", "pulse");
+    case "risk-score": return numberValue(data.regime?.risk_score) !== null
+      ? ready(key, "市场风险分", data.regime?.risk_score as string, data.regime?.quality === "ready" ? "风格模型已核验" : "因子部分可用", "danger", "risk")
+      : unavailable(key, "市场风险分", "风险因子不足，暂不计算", "risk");
+    case "heat-score": return numberValue(data.regime?.heat_score) !== null
+      ? ready(key, "市场热度分", data.regime?.heat_score as string, data.regime?.quality === "ready" ? "风格模型已核验" : "因子部分可用", "positive", "pulse")
+      : unavailable(key, "市场热度分", "热度因子不足，暂不计算", "pulse");
     case "active-stocks": return ready(key, "行情样本", String(model.stocks.length), "接口返回的代表股票", "neutral", "stock");
     case "top-stock": return topStock && known(topStock.change) ? ready(key, "涨幅领先", topStock.name, `${topStock.symbol} ${topStock.change >= 0 ? "+" : ""}${topStock.change.toFixed(2)}%`, "positive", "stock") : unavailable(key, "涨幅领先", "行情样本缺少涨跌幅", "stock");
     case "high-amplitude": return topAmplitude && known(topAmplitude.amplitude) ? ready(key, "最大振幅", `${topAmplitude.amplitude.toFixed(2)}%`, `${topAmplitude.name} ${topAmplitude.symbol}`, "warning", "stock") : unavailable(key, "最大振幅", "行情样本缺少高低价", "stock");
     case "attention-top": return topAttention && known(topAttention.attentionScore) ? ready(key, "观察热度第一", topAttention.name, `量价资讯合成分 ${topAttention.attentionScore.toFixed(0)}`, "positive", "stock") : unavailable(key, "观察热度第一", "行情与关联证据不足", "stock");
-    case "theme-stock-top": return ready(key, "题材叠加最多", topThemeStock?.name ?? "--", topThemeStock ? `${topThemeStock.themes.length} 个已关联题材` : "行情样本为空", "warning", "theme");
+    case "theme-stock-top": return topThemeStock
+      ? ready(key, "题材叠加最多", topThemeStock.name, `${topThemeStock.themes.length} 个已关联题材`, "warning", "theme")
+      : unavailable(key, "题材叠加最多", "没有股票同时具备已关联题材证据", "theme");
     case "history-coverage": return review && review.universe_count > 0 && review.history_ready_count > 0 && coverage !== null
       ? ready(key, "日线覆盖", `${coverage.toFixed(1)}%`, `${review.history_ready_count}/${review.universe_count}`, coverage >= 80 ? "positive" : "warning", "history")
       : unavailable(key, "日线覆盖", "本地日线没有可用历史样本", "history");
@@ -199,8 +215,12 @@ function metric(key: MetricKey, data: MarketOverviewResponse, model: WorkspaceMa
     case "sector-flow-direction": return unavailable(key, "主买方向", "板块成交额不能判断买卖方向", "data");
     case "sector-flow-persistence": return unavailable(key, "资金持续性", "没有连续净流入序列，不能测算持续性", "data");
     case "iwencai": return unavailable(key, "问财语义结果", "当前执行的是本地规则，不冒充问财官方结果", "data");
-    case "review-date": return ready(key, "复盘交易日", review?.latest_trade_date ?? "--", review ? "本地日线复盘日期" : "复盘尚未完成", "neutral", "history");
-    case "review-quality": return ready(key, "复盘质量", review?.quality === "ready" ? "完整" : review?.quality === "partial" ? "部分" : "待准备", review?.source ?? "暂无复盘来源", review?.quality === "ready" ? "positive" : "warning", "data");
+    case "review-date": return review?.latest_trade_date
+      ? ready(key, "复盘交易日", review.latest_trade_date, "本地日线复盘日期", "neutral", "history")
+      : unavailable(key, "复盘交易日", "本地日线复盘尚未完成", "history");
+    case "review-quality": return review
+      ? ready(key, "复盘质量", review.quality === "ready" ? "完整" : review.quality === "partial" ? "部分" : "待准备", review.source ?? "暂无复盘来源", review.quality === "ready" ? "positive" : "warning", "data")
+      : unavailable(key, "复盘质量", "本地日线复盘尚未完成", "data");
   }
 }
 
