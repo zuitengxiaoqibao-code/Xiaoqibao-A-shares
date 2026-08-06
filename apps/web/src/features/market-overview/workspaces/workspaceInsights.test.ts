@@ -59,4 +59,17 @@ describe("workspace insights", () => {
     expect(insights.every((item) => item.quality === "unavailable")).toBe(true);
     expect(insights.map((item) => item.value)).not.toContain("+0.00亿");
   });
+
+  it("does not report zero history coverage as a verified historical metric", () => {
+    const emptyHistory = {
+      ...data,
+      review: { ...data.review!, universe_count: 5200, history_ready_count: 0, quality: "partial" },
+    } as MarketOverviewResponse;
+    const insights = buildWorkspaceInsights("百日新高", emptyHistory, buildWorkspaceMarketModel(emptyHistory));
+    const coverage = insights.find((item) => item.key === "history-coverage");
+
+    expect(coverage?.quality).toBe("unavailable");
+    expect(coverage?.value).toBe("未接入");
+    expect(coverage?.value).not.toBe("0.0%");
+  });
 });

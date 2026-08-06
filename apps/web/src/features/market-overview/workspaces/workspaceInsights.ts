@@ -163,7 +163,9 @@ function metric(key: MetricKey, data: MarketOverviewResponse, model: WorkspaceMa
     case "high-amplitude": return ready(key, "最大振幅", topAmplitude ? `${topAmplitude.amplitude.toFixed(2)}%` : "--", topAmplitude ? `${topAmplitude.name} ${topAmplitude.symbol}` : "行情样本为空", "warning", "stock");
     case "attention-top": return ready(key, "观察热度第一", topAttention?.name ?? "--", topAttention ? `量价资讯合成分 ${topAttention.attentionScore.toFixed(0)}` : "行情样本为空", "positive", "stock");
     case "theme-stock-top": return ready(key, "题材叠加最多", topThemeStock?.name ?? "--", topThemeStock ? `${topThemeStock.themes.length} 个已关联题材` : "行情样本为空", "warning", "theme");
-    case "history-coverage": return review ? ready(key, "日线覆盖", `${coverage.toFixed(1)}%`, `${review.history_ready_count}/${review.universe_count}`, coverage >= 80 ? "positive" : "warning", "history") : unavailable(key, "日线覆盖", "本地日线复盘尚未完成", "history");
+    case "history-coverage": return review && review.universe_count > 0 && review.history_ready_count > 0
+      ? ready(key, "日线覆盖", `${coverage.toFixed(1)}%`, `${review.history_ready_count}/${review.universe_count}`, coverage >= 80 ? "positive" : "warning", "history")
+      : unavailable(key, "日线覆盖", "本地日线没有可用历史样本", "history");
     case "history-new-high": return unavailable(key, "百日新高清单", "当前响应未返回百日新高逐股结果", "history");
     case "history-previous-limit": return unavailable(key, "昨涨停反馈", "当前响应未返回上一交易日涨停名单", "history");
     case "interval-result": return unavailable(key, "区间统计结果", "尚未选择并计算明确起止区间", "history");
