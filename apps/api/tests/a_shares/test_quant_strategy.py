@@ -376,6 +376,70 @@ def test_service_keeps_daily_candidate_scan_cached_while_strategy_refreshes() ->
     assert second.candidate_scan_age_seconds == 6
 
 
+def test_service_can_defer_first_candidate_scan_without_blocking_request() -> None:
+    started = False
+    release = __import__("threading").Event()
+
+    def load_board(_as_of, _limit):
+        nonlocal started
+        started = True
+        release.wait(timeout=2)
+        return board()
+
+    service = QuantStrategyService(
+        SimpleNamespace(current=lambda now: overview()),
+        SimpleNamespace(candidates=load_board),
+        SimpleNamespace(resolve=lambda symbol: None),
+        defer_initial_scan=True,
+    )
+
+    pending = service.current(NOW)
+
+    assert started is True
+    assert pending.candidate_scan_state == "pending"
+    assert pending.candidates == ()
+    assert "candidate_scan_pending" in pending.missing_data
+
+    release.set()
+    for _ in range(20):
+        if service.candidate_scan_ready(NOW):
+            break
+        __import__("time").sleep(0.01)
+    ready = service.current(NOW + timedelta(seconds=1))
+
+    assert ready.candidate_scan_state == "ready"
+    assert ready.candidates[0].symbol == "600001"
+    service.close()
+
+
+def test_deferred_scan_failure_is_safe_and_explicit() -> None:
+    release = __import__("threading").Event()
+
+    def load_board(_as_of, _limit):
+        release.wait(timeout=2)
+        raise RuntimeError("secret database path=C:/private/token")
+
+    service = QuantStrategyService(
+        SimpleNamespace(current=lambda now: overview()),
+        SimpleNamespace(candidates=load_board),
+        SimpleNamespace(resolve=lambda symbol: None),
+        defer_initial_scan=True,
+    )
+
+    service.current(NOW)
+    release.set()
+    for _ in range(20):
+        if service.candidate_scan_ready(NOW):
+            break
+        __import__("time").sleep(0.01)
+    failed = service.current(NOW + timedelta(seconds=1))
+
+    assert failed.candidate_scan_state == "failed"
+    assert failed.candidate_scan_error == "本地候选扫描失败，请检查日线覆盖和数据源状态"
+    assert "secret database path" not in failed.candidate_scan_error
+    service.close()
+
+
 def test_service_reports_trigger_evidence_cache_age_separately() -> None:
     calls = 0
 

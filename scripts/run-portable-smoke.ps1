@@ -160,10 +160,20 @@ try {
         }
         $QuantStrategyStatus = $QuantStrategy.status
     }
+    if ($null -ne $QuantStrategy -and $QuantStrategy.candidate_scan_state -eq "pending") {
+        $QuantBackgroundDeadline = [DateTime]::UtcNow.AddSeconds(30)
+        while ($QuantStrategy.candidate_scan_state -eq "pending" -and [DateTime]::UtcNow -lt $QuantBackgroundDeadline) {
+            Start-Sleep -Milliseconds 250
+            $QuantStrategy = Invoke-RestMethod -Uri ("http://127.0.0.1:{0}/api/v1/a-shares/quant-strategy?limit=12" -f $Port) -TimeoutSec 10
+        }
+        if ($QuantStrategy.candidate_scan_state -eq "pending") {
+            throw "background candidate scan did not settle within 30 seconds"
+        }
+        $QuantStrategyStatus = $QuantStrategy.status
+    }
     $StageStartedMs = $StartedAt.ElapsedMilliseconds
-    $Professional = Invoke-RestMethod `
-        -Uri "http://127.0.0.1:$Port/api/v1/tdx/local/professional?method=get_financial_data&table_list=Fn193&stock_codes=600000" `
-        -TimeoutSec 30
+    $ProfessionalUri = "http://127.0.0.1:{0}/api/v1/tdx/local/professional?method=get_financial_data&table_list=Fn193&stock_codes=600000" -f $Port
+    $Professional = Invoke-RestMethod -Uri $ProfessionalUri -TimeoutSec 30
     $ProfessionalRequestMs = $StartedAt.ElapsedMilliseconds - $StageStartedMs
     if ($Professional.status -notin @("ready", "partial", "unavailable")) {
         throw "Portable TDX professional probe did not return an honest data status"

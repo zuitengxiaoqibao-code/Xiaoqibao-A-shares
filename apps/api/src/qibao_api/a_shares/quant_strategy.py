@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from threading import RLock
@@ -21,6 +22,7 @@ ZERO = Decimal()
 ONE = Decimal("1")
 TWO_PLACES = Decimal("0.01")
 CHINA_TZ = ZoneInfo("Asia/Shanghai")
+SAFE_CANDIDATE_SCAN_ERROR = "本地候选扫描失败，请检查日线覆盖和数据源状态"
 
 STRATEGY_MODEL_REGIMES = {
     "0轴低吸模型": ("情绪主升", "轮动震荡"),
@@ -446,6 +448,9 @@ def build_quant_strategy_dashboard(
     candidate_scan_cached: bool = False,
     trigger_evidence_at: datetime | None = None,
     trigger_evidence_cached: bool = False,
+    candidate_scan_state: str = "ready",
+    candidate_scan_started_at: datetime | None = None,
+    candidate_scan_error: str | None = None,
     limit: int = 12,
 ) -> QuantStrategyDashboard:
     if limit < 1 or limit > 50:
@@ -468,6 +473,9 @@ def build_quant_strategy_dashboard(
         "candidate_scan_at": candidate_scan_timestamp,
         "candidate_scan_age_seconds": candidate_scan_age,
         "candidate_scan_cached": candidate_scan_cached,
+        "candidate_scan_state": candidate_scan_state,
+        "candidate_scan_started_at": candidate_scan_started_at,
+        "candidate_scan_error": candidate_scan_error,
         "trigger_evidence_at": trigger_evidence_timestamp,
         "trigger_evidence_age_seconds": trigger_evidence_age,
         "trigger_evidence_cached": trigger_evidence_cached,
@@ -476,6 +484,8 @@ def build_quant_strategy_dashboard(
     missing = tuple(dict.fromkeys((
         *overview.regime.missing_factors,
         *(("candidate_history",) if not board.short_term else ()),
+        *((f"candidate_scan_{candidate_scan_state}",)
+          if candidate_scan_state != "ready" else ()),
     )))
     if regime is None:
         return QuantStrategyDashboard(
@@ -553,6 +563,7 @@ class QuantStrategyService:
         trigger_evidence_source=None,
         cache_seconds: int = 30,
         evidence_cache_seconds: int = 5,
+        defer_initial_scan: bool = False,
     ) -> None:
         self.overview_service = overview_service
         self.candidate_service = candidate_service
@@ -560,6 +571,7 @@ class QuantStrategyService:
         self.trigger_evidence_source = trigger_evidence_source
         self.cache_ttl = timedelta(seconds=max(0, cache_seconds))
         self.evidence_cache_ttl = timedelta(seconds=max(0, evidence_cache_seconds))
+        self.defer_initial_scan = defer_initial_scan
         self._candidate_cache: dict[
             tuple[date, int],
             tuple[datetime, datetime, CandidateBoard, dict[str, str]],
@@ -568,6 +580,77 @@ class QuantStrategyService:
             tuple[date, int], tuple[datetime, datetime, dict[str, TriggerEvidence]]
         ] = {}
         self._candidate_cache_lock = RLock()
+        self._candidate_scan_executor = (
+            ThreadPoolExecutor(max_workers=1, thread_name_prefix="quant-candidate-scan")
+            if defer_initial_scan else None
+        )
+        self._candidate_scan_jobs: dict[tuple[date, int], Future] = {}
+        self._candidate_scan_started: dict[tuple[date, int], datetime] = {}
+        self._candidate_scan_errors: dict[tuple[date, int], str] = {}
+
+    def close(self) -> None:
+        executor = self._candidate_scan_executor
+        self._candidate_scan_executor = None
+        if executor is not None:
+            executor.shutdown(wait=True, cancel_futures=True)
+
+    def candidate_scan_ready(
+        self, now: datetime, *, as_of: date | None = None, limit: int = 12
+    ) -> bool:
+        """检查后台候选扫描是否结束，不在调用线程执行扫描。"""
+        key = (as_of or now.astimezone(CHINA_TZ).date(), limit)
+        with self._candidate_cache_lock:
+            job = self._candidate_scan_jobs.get(key)
+        return job is not None and job.done()
+
+    def _scan_candidates(self, selected_date: date, limit: int):
+        board = self.candidate_service.candidates(selected_date, limit)
+        names = {}
+        for item in board.short_term:
+            instrument = self.instrument_directory.resolve(item.symbol)
+            if instrument is not None:
+                names[item.symbol] = instrument.name
+        return board, names
+
+    def _start_deferred_scan(
+        self, cache_key: tuple[date, int], selected_date: date, limit: int, now: datetime
+    ) -> None:
+        if self._candidate_scan_executor is None:
+            return
+        with self._candidate_cache_lock:
+            existing = self._candidate_scan_jobs.get(cache_key)
+            if existing is not None:
+                return
+            self._candidate_scan_errors.pop(cache_key, None)
+            self._candidate_scan_started[cache_key] = now
+            self._candidate_scan_jobs[cache_key] = self._candidate_scan_executor.submit(
+                self._scan_candidates, selected_date, limit
+            )
+
+    def _consume_deferred_scan(self, cache_key: tuple[date, int], now: datetime):
+        with self._candidate_cache_lock:
+            job = self._candidate_scan_jobs.get(cache_key)
+            started = self._candidate_scan_started.get(cache_key, now)
+        if job is None or not job.done():
+            return None, None, "pending", started, None
+        try:
+            board, names = job.result()
+        except Exception:
+            message = SAFE_CANDIDATE_SCAN_ERROR
+            with self._candidate_cache_lock:
+                self._candidate_scan_errors[cache_key] = message
+                self._candidate_scan_jobs.pop(cache_key, None)
+                self._candidate_scan_started.pop(cache_key, None)
+            return None, None, "failed", started, message
+        with self._candidate_cache_lock:
+            self._candidate_cache[cache_key] = (
+                now + self.cache_ttl, now, board, names
+            )
+            self._candidate_scan_jobs.pop(cache_key, None)
+            self._candidate_scan_started.pop(cache_key, None)
+            self._candidate_scan_errors.pop(cache_key, None)
+            self._evidence_cache.pop(cache_key, None)
+        return board, names, "ready", now, None
 
     def current(
         self, now: datetime, *, as_of: date | None = None, limit: int = 12
@@ -582,6 +665,9 @@ class QuantStrategyService:
         cached = None
         candidate_scan_cached = False
         candidate_scan_at = now
+        candidate_scan_state = "ready"
+        candidate_scan_started_at = now
+        candidate_scan_error = None
         if self.cache_ttl > timedelta(0):
             with self._candidate_cache_lock:
                 cached = self._candidate_cache.get(cache_key)
@@ -589,24 +675,38 @@ class QuantStrategyService:
                     self._candidate_cache.pop(cache_key, None)
                     cached = None
         if cached is None:
-            board = self.candidate_service.candidates(selected_date, limit)
-            names = {}
-            for item in board.short_term:
-                instrument = self.instrument_directory.resolve(item.symbol)
-                if instrument is not None:
-                    names[item.symbol] = instrument.name
-            if self.cache_ttl > timedelta(0):
-                with self._candidate_cache_lock:
-                    self._candidate_cache[cache_key] = (
-                        now + self.cache_ttl,
-                        now,
-                        board,
-                        names,
+            if self.defer_initial_scan:
+                self._start_deferred_scan(cache_key, selected_date, limit, now)
+                (
+                    board, names, candidate_scan_state,
+                    candidate_scan_started_at, candidate_scan_error,
+                ) = self._consume_deferred_scan(cache_key, now)
+                if board is None:
+                    board = CandidateBoard(
+                        as_of=selected_date,
+                        universe_size=0,
+                        eligible_size=0,
+                        sources=(),
+                        short_term=[],
+                        swing=[],
                     )
-                    self._evidence_cache.pop(cache_key, None)
+                    names = {}
+            else:
+                board, names = self._scan_candidates(selected_date, limit)
+                if self.cache_ttl > timedelta(0):
+                    with self._candidate_cache_lock:
+                        self._candidate_cache[cache_key] = (
+                            now + self.cache_ttl,
+                            now,
+                            board,
+                            names,
+                        )
+                        self._evidence_cache.pop(cache_key, None)
         else:
             _expires_at, candidate_scan_at, board, names = cached
             candidate_scan_cached = True
+            candidate_scan_state = "ready"
+            candidate_scan_started_at = candidate_scan_at
         evidence: dict[str, TriggerEvidence] = {}
         trigger_evidence_cached = False
         trigger_evidence_at: datetime | None = None
@@ -645,5 +745,8 @@ class QuantStrategyService:
             candidate_scan_cached=candidate_scan_cached,
             trigger_evidence_at=trigger_evidence_at,
             trigger_evidence_cached=trigger_evidence_cached,
+            candidate_scan_state=candidate_scan_state,
+            candidate_scan_started_at=candidate_scan_started_at,
+            candidate_scan_error=candidate_scan_error,
             limit=limit,
         )

@@ -944,6 +944,7 @@ async def lifespan(application: FastAPI):
                         poll_state_repository,
                         fund_flow_repository,
                     ),
+                    defer_initial_scan=is_portable_runtime,
                 )
                 application.state.stock_timeline_service = StockTimelineService(
                     bar_repository,
@@ -1020,6 +1021,11 @@ async def lifespan(application: FastAPI):
                     full_market_history_service.request_shutdown()
                 if local_tdx_overview_source is not None:
                     local_tdx_overview_source.close()
+                quant_strategy_service = getattr(
+                    application.state, "quant_strategy_service", None
+                )
+                if quant_strategy_service is not None:
+                    quant_strategy_service.close()
                 if local_market_review_source is not None:
                     local_market_review_source.close()
                 if history_symbol_reconciliation_task is not None:

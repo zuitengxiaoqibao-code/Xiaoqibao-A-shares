@@ -97,6 +97,15 @@ def test_portable_smoke_reports_individual_request_timings() -> None:
     assert "requests home={3}ms overview={4}ms quant={5}ms professional={6}ms" in script
 
 
+def test_portable_smoke_waits_for_deferred_quant_scan_to_settle() -> None:
+    smoke_path = _project_root() / "scripts" / "run-portable-smoke.ps1"
+    script = smoke_path.read_text(encoding="utf-8")
+
+    assert 'candidate_scan_state -eq "pending"' in script
+    assert "$QuantBackgroundDeadline" in script
+    assert "background candidate scan" in script
+
+
 def test_portable_spec_does_not_collect_cross_platform_or_unused_tool_submodules() -> None:
     spec_path = _project_root() / "packaging" / "xiaoqibao.spec"
     source = spec_path.read_text(encoding="utf-8")

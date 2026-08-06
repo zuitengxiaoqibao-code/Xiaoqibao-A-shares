@@ -73,6 +73,7 @@ const quantStrategy: QuantStrategyDashboard = {
   generated_at: "2026-07-31T14:00:00+08:00", market_observed_at: "2026-07-31T14:00:00+08:00",
   data_age_seconds: 0, refresh_mode: "live", next_refresh_at: "2026-07-31T14:00:05+08:00",
   candidate_scan_at: "2026-07-31T14:00:00+08:00", candidate_scan_age_seconds: 0, candidate_scan_cached: false,
+  candidate_scan_state: "ready", candidate_scan_started_at: "2026-07-31T14:00:00+08:00", candidate_scan_error: null,
   trigger_evidence_at: "2026-07-31T14:00:00+08:00", trigger_evidence_age_seconds: 0, trigger_evidence_cached: false,
   formula_version: "a-share-short-strategy-v2.0",
   metrics: {
