@@ -29,6 +29,7 @@
 | 发布 smoke 的通达信专业字段探针 | 已完成 | `/api/v1/tdx/local/professional` 返回真实 `unavailable` 状态和原因 |
 | 本轮 API/前端/生产构建回归 | 已完成 | API `1130 passed, 1 skipped`；前端 `469 passed`；Vite 与 PyInstaller 通过 |
 | 本轮 EXE 交付 | 已完成 | SHA-256 `83CD95D5E750AEBBDAF84DD6F01875144F7E3CFA75E12A34B2D5F21AD8027930` |
+| 首屏 ECharts 按需加载实验 | 已完成（保留） | 首屏块约 `483KB`，ECharts 独立块约 `1.04MB`；EXE smoke 窗口 `115ms`、API `2676ms` |
 
 ## Remaining Goals
 
@@ -60,6 +61,7 @@
 - [x] 延后 DuckDB、mootdx、pandas 和 numpy 的顶层导入；BarRepository 首次真实日线操作时才初始化 DuckDB，备份和通达信客户端保持兼容的懒加载入口。便携 smoke 改为先等待 `lifespan-ready` 日志再发起 HTTP，避免 Windows 预绑定 socket 的早期取消连接触发 `WinError 64`。
 - [ ] 继续压缩冷启动等待：窗口首帧已满足 3 秒目标，热启动 API 本轮 2688ms；首次冷盘仍可能受 Windows 首次加载/安全扫描影响，后续继续审计 PyInstaller 冷磁盘读取和剩余重型模块导入，同时保留缓存优先和健康检查先可用。
 - [ ] 在真实专业字段可用后，继续对财务、交易、板块、市场和量化专题逐字段做来源切换回归。
+- [x] 评估首屏 ECharts 依赖拆分：按需加载不阻塞桌面窗口，图表加载期间显示动态状态；EXE smoke 未出现启动回归，保留该优化。
 - [x] 延后 SQLAlchemy/SQLite 相关导入：`qibao_api.main` 冷导入不再加载 `sqlalchemy`，新增子进程回归；累计导入时间由约 817ms 降至约 626ms，减少约 191ms。
 - [x] 缓存官方 TdxQuant Python 模块加载结果：同一安装路径的重复只读专业查询只初始化模块一次，仍在每次查询后关闭 `tq` 会话，避免重复导入和句柄泄漏。
 - [x] 对非首屏工作区实施路由级懒加载：量化分析、公司研究、首次涨停、可转债、设置、新闻、复盘和今日研判均通过 `React.lazy + Suspense` 分离；首屏入口 JS 从约 1.69MB 降至约 1.52MB，加载期间展示明确状态。

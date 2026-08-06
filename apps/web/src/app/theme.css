@@ -1311,6 +1311,34 @@ body { font-size: 14px; }
   height: 300px;
   min-height: 280px;
 }
+.quant-chart[data-chart-state="loading"]::after {
+  content: "图表引擎载入中";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: .04em;
+  background: linear-gradient(110deg, transparent 25%, rgba(52, 214, 255, .06) 50%, transparent 75%);
+  background-size: 220% 100%;
+  animation: chart-engine-loading 1.25s linear infinite;
+  pointer-events: none;
+}
+.quant-chart[data-chart-state="unavailable"]::after {
+  content: "图表引擎暂不可用";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--status-warning);
+  font-size: 12px;
+  pointer-events: none;
+}
+@keyframes chart-engine-loading { to { background-position: -220% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .quant-chart[data-chart-state="loading"]::after { animation: none; }
+}
 .quant-tick-panel .quant-chart { padding-top: 34px; }
 .quant-price-overlay {
   position: absolute;

@@ -1,4 +1,4 @@
-import { act, render } from "@testing-library/react";
+import { act, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { setOption, resize, dispose, init } = vi.hoisted(() => {
@@ -34,7 +34,7 @@ describe("QuantChart", () => {
 
   afterEach(() => vi.unstubAllGlobals());
 
-  it("waits for a measurable container, then initializes and disposes ECharts", () => {
+  it("waits for a measurable container, then lazy-loads and disposes ECharts", async () => {
     const { unmount } = render(<QuantChart option={{ series: [] }} ariaLabel="测试图表" />);
     expect(init).not.toHaveBeenCalled();
 
@@ -42,18 +42,20 @@ describe("QuantChart", () => {
     height = 320;
     act(() => notifyResize?.());
 
-    expect(init).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(init).toHaveBeenCalledTimes(1));
+    expect(document.querySelector(".quant-chart")).toHaveAttribute("data-chart-state", "ready");
     expect(setOption).toHaveBeenCalledWith({ series: [] }, { notMerge: true });
     unmount();
     expect(dispose).toHaveBeenCalledTimes(1);
   });
 
-  it("reuses the chart instance when the option changes", () => {
+  it("reuses the chart instance when the option changes", async () => {
     const { rerender } = render(<QuantChart option={{ series: [{ data: [1] }] }} ariaLabel="测试图表" />);
 
     width = 640;
     height = 320;
     act(() => notifyResize?.());
+    await waitFor(() => expect(init).toHaveBeenCalledTimes(1));
     rerender(<QuantChart option={{ series: [{ data: [2] }] }} ariaLabel="测试图表" />);
 
     expect(init).toHaveBeenCalledTimes(1);

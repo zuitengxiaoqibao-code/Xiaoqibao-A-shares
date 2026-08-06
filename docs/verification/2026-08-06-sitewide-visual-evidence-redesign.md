@@ -180,8 +180,19 @@
 - 默认隔离 smoke：窗口首帧 `124ms`、API `/health` 就绪 `2620ms`、完整验证 `3500ms`；信息总览 `ready`；量化策略 `unavailable`；通达信专业字段 `unavailable`，原因是本机没有可用的专业数据响应。
 - 真实发布数据 smoke：窗口首帧 `61ms`、API `/health` 就绪 `2018ms`、完整验证 `9430ms`；信息总览 `ready`；量化策略 `partial`，真实候选 `7` 只、市场风格覆盖 `85.00%`；通达信专业字段 `unavailable`（真实桥接/专业调用仍不可用）。
 - 本轮 API 全量 `1130 passed, 1 skipped`；前端全量 `72` 个测试文件、`469 passed`；生产构建通过。
-- 便携 EXE 已重建，SHA-256：`83CD95D5E750AEBBDAF84DD6F01875144F7E3CFA75E12A34B2D5F21AD8027930`。
+- 便携 EXE 已重建，SHA-256：`2AB32C12962D25FE9839FFA8169C7D12AACC230F0207BB3E6DA3660FC0B3425A`。
 - smoke 结束后确认桌面进程已释放、`127.0.0.1:17709` 未被本程序占用；`config/data/news/cache/logs/models/exports/backups` 均保留。
+
+## 2026-08-07 首屏 ECharts 按需加载增量
+
+- `QuantChart` 改为运行时按需加载 ECharts；容器先显示 `图表引擎载入中` 的动态状态，成功后切换 `ready`，异常时显示 `图表引擎暂不可用`。
+- Vite 入口从单块约 `1.52MB` 拆为约 `483KB` 首屏块和约 `1.04MB` ECharts 块；量化、分时、事件 K 线、回测和公司研究继续共用同一图表组件。
+- 前端全量回归：72 个测试文件、`469 passed`；生产构建通过。
+- EXE smoke：窗口 `115ms`、API `/health` `2676ms`、完整验证 `3529ms`；真实发布数据 smoke 为窗口 `60ms`、API `/health` `2002ms`、完整验证 `9545ms`；两种模式均未出现启动回归，真实发布数据仍为信息总览 `ready`、量化策略 `partial`（7 只候选、85.00% 覆盖）。
+
+### 评估结论
+
+- 保留 ECharts 按需加载：它降低首屏脚本阻塞并提供明确加载状态，但没有显著改变 Python API 冷启动；后端冷盘波动继续单独追踪。
 
 ## 未完成目标
 
