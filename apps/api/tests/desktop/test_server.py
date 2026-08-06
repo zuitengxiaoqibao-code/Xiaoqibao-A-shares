@@ -35,7 +35,7 @@ def test_local_api_server_uses_loopback_and_stops_cleanly() -> None:
     assert not server.is_alive
 
 
-def test_local_api_server_can_launch_before_waiting_for_health() -> None:
+def test_local_api_server_can_launch_before_waiting_for_startup() -> None:
     app = FastAPI()
 
     @app.get("/health")
@@ -53,29 +53,10 @@ def test_local_api_server_can_launch_before_waiting_for_health() -> None:
         server.stop()
 
 
-def test_local_api_server_does_not_probe_health_before_uvicorn_started(
-    monkeypatch,
-) -> None:
+def test_local_api_server_waits_for_uvicorn_before_returning(monkeypatch) -> None:
     server = LocalApiServer(app=FastAPI(), port=0, startup_timeout=5)
     server._thread = SimpleNamespace(is_alive=lambda: True, ident=None)
     server._server.started = False
-    calls: list[str] = []
-
-    class Response:
-        status = 200
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args) -> None:
-            return None
-
-    def open_health(*_args, **_kwargs):
-        assert server._server.started
-        calls.append("health")
-        return Response()
-
-    monkeypatch.setattr("qibao_desktop.server.urlopen", open_health)
     monkeypatch.setattr(
         "qibao_desktop.server.time.sleep",
         lambda _seconds: setattr(server._server, "started", True),
@@ -86,4 +67,15 @@ def test_local_api_server_does_not_probe_health_before_uvicorn_started(
     finally:
         server._socket.close()
 
-    assert calls == ["health"]
+
+def test_local_api_server_returns_once_uvicorn_lifespan_is_ready(
+    monkeypatch,
+) -> None:
+    server = LocalApiServer(app=FastAPI(), port=0, startup_timeout=5)
+    server._thread = SimpleNamespace(is_alive=lambda: True, ident=1)
+    server._server.started = True
+
+    try:
+        server.wait_until_ready()
+    finally:
+        server._socket.close()

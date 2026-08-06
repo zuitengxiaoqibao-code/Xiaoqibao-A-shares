@@ -497,13 +497,17 @@ class LocalTdxOverviewSource:
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         refresh_seconds: int = 15,
         max_workers: int = 16,
+        initial_delay_seconds: float = 0,
         fallback=None,
     ) -> None:
+        if initial_delay_seconds < 0:
+            raise ValueError("initial_delay_seconds must not be negative")
         self.cache_path = cache_path
         self.rpc = rpc
         self.clock = clock
         self.refresh_seconds = refresh_seconds
         self.max_workers = max_workers
+        self.initial_delay_seconds = initial_delay_seconds
         self.fallback = fallback
         self._lock = threading.RLock()
         self._snapshot = self._load_cache()
@@ -582,6 +586,8 @@ class LocalTdxOverviewSource:
         return snapshot
 
     def _refresh_loop(self) -> None:
+        if self._stop.wait(self.initial_delay_seconds):
+            return
         while not self._stop.is_set():
             try:
                 self.refresh()

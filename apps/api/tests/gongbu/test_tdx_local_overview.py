@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from decimal import Decimal
+from threading import Event
 
 from qibao_api.gongbu.tdx_local_overview import (
     LocalTdxOverviewSource,
@@ -238,6 +239,28 @@ def test_local_overview_does_not_create_an_rpc_client_when_disabled(
 
     assert source.refresh() == expected
     source.close()
+
+
+def test_local_overview_refresh_loop_honors_startup_delay(tmp_path) -> None:
+    source = LocalTdxOverviewSource(
+        cache_path=tmp_path / "overview.json",
+        rpc=None,
+        fallback=None,
+        initial_delay_seconds=2.0,
+    )
+    waits: list[float] = []
+
+    def wait(seconds: float) -> bool:
+        waits.append(seconds)
+        source._stop.set()
+        return True
+
+    source._stop = Event()
+    source._stop.wait = wait  # type: ignore[method-assign]
+
+    source._refresh_loop()
+
+    assert waits == [2.0]
 
 
 def test_probe_tdx_capabilities_reports_real_read_only_methods_and_partial_support() -> None:

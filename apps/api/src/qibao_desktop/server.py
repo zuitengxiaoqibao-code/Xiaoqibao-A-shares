@@ -1,8 +1,6 @@
 import socket
 import threading
 import time
-from urllib.error import URLError
-from urllib.request import urlopen
 
 import uvicorn
 
@@ -58,17 +56,15 @@ class LocalApiServer:
         while time.monotonic() < deadline:
             if not self._thread.is_alive():
                 raise RuntimeError("local API exited during startup")
-            if not self._server.started:
-                time.sleep(0.05)
-                continue
-            try:
-                with urlopen(f"{self.url}/health", timeout=0.5) as response:
-                    if response.status == 200:
-                        return
-            except (OSError, URLError):
-                time.sleep(0.05)
+            if self._server.started:
+                # Uvicorn flips `started` only after lifespan has completed and
+                # the pre-bound loopback socket is serving.  A second HTTP
+                # request here adds avoidable cold-start latency and can be
+                # delayed independently by Windows' first localhost request.
+                return
+            time.sleep(0.05)
         self.stop()
-        raise TimeoutError("local API health check timed out")
+        raise TimeoutError("local API startup timed out")
 
     def start(self) -> None:
         self.launch()

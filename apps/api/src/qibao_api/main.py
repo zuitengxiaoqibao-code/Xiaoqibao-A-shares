@@ -781,6 +781,7 @@ async def lifespan(application: FastAPI):
                     rpc=tdx_rpc,
                     clock=lambda: datetime.now(timezone.utc),
                     refresh_seconds=5,
+                    initial_delay_seconds=2 if is_portable_runtime else 0,
                     fallback=SelfContainedOverviewProvider(
                         catalog_loader=MootdxAShareCatalogSource(
                             directory=a_share_instrument_directory,
