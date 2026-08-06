@@ -341,3 +341,25 @@ def test_tdx_rpc_reports_client_process_separately_from_bridge(
         "detail": "检测到通达信客户端进程；这不代表 17709 JSON-RPC 桥已经监听",
     }
     assert body["reachable"] is False
+
+
+def test_tdx_rpc_client_detail_uses_configured_bridge_port(
+    tmp_path: Path, monkeypatch
+) -> None:
+    executable = Path(r"D:\new_tdx64\TdxW.exe")
+    monkeypatch.setattr(
+        "qibao_api.routes.settings.running_tdx_process_paths",
+        lambda: (executable,),
+    )
+
+    response = client(tmp_path).put("/api/v1/settings/data-sources", json={
+        "auto_discovery": True,
+        "tdx_install_paths": [],
+        "ths_install_paths": [],
+        "tdx_rpc_enabled": True,
+        "tdx_rpc_url": "http://127.0.0.1:19001/",
+    })
+
+    assert response.status_code == 200
+    body = response.json()["tdx_rpc"]
+    assert body["client"]["detail"] == "检测到通达信客户端进程；这不代表 19001 JSON-RPC 桥已经监听"

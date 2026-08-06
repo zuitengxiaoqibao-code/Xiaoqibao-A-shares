@@ -56,6 +56,16 @@ const clientStatusLabel = {
   unknown: "未确认",
 } as const;
 
+function bridgePortLabel(endpoint: string | null | undefined): string {
+  if (!endpoint) return "本地桥接端口";
+  try {
+    const parsed = new URL(endpoint);
+    return parsed.port || (parsed.protocol === "https:" ? "443" : "80");
+  } catch {
+    return "本地桥接端口";
+  }
+}
+
 export function LocalSourceSettingsSection({ load, detect, save }: Props) {
   const [draft, setDraft] = useState<LocalSourceSettings>(defaultSettings);
   const [result, setResult] = useState<LocalSourceSettingsView | null>(null);
@@ -106,6 +116,7 @@ export function LocalSourceSettingsSection({ load, detect, save }: Props) {
   });
 
   const rpcStatus = result?.tdx_rpc;
+  const bridgePort = bridgePortLabel(rpcStatus?.endpoint ?? draft.tdx_rpc_url);
 
   const run = async (operation: LocalSourceSettingsWriter, saved: boolean) => {
     controller.current?.abort();
@@ -226,7 +237,7 @@ export function LocalSourceSettingsSection({ load, detect, save }: Props) {
           </article>
           <article data-status={rpcStatus.reachable ? "ready" : "unavailable"}>
             {rpcStatus.reachable ? <CheckCircle2 size={15} /> : <AlertCircle size={15} />}
-            <span><strong>JSON-RPC 桥</strong><b>{rpcStatus.reachable ? "17709 已监听" : "17709 未监听"}</b><small>{rpcStatus.reachable ? "端口可达，正在探测只读能力" : "端口不可达；客户端运行也不会自动等同于桥接可用"}</small></span>
+            <span><strong>JSON-RPC 桥</strong><b>{rpcStatus.reachable ? `${bridgePort} 已监听` : `${bridgePort} 未监听`}</b><small>{rpcStatus.reachable ? "端口可达，正在探测只读能力" : "端口不可达；客户端运行也不会自动等同于桥接可用"}</small></span>
           </article>
         </div>
         <div className="tdx-rpc-capability-grid">

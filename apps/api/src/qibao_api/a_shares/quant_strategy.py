@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
+from threading import RLock
 from typing import Mapping
 from zoneinfo import ZoneInfo
 
@@ -525,11 +526,23 @@ class QuantStrategyService:
         candidate_service,
         instrument_directory,
         trigger_evidence_source=None,
+        cache_seconds: int = 30,
+        evidence_cache_seconds: int = 5,
     ) -> None:
         self.overview_service = overview_service
         self.candidate_service = candidate_service
         self.instrument_directory = instrument_directory
         self.trigger_evidence_source = trigger_evidence_source
+        self.cache_ttl = timedelta(seconds=max(0, cache_seconds))
+        self.evidence_cache_ttl = timedelta(seconds=max(0, evidence_cache_seconds))
+        self._candidate_cache: dict[
+            tuple[date, int],
+            tuple[datetime, CandidateBoard, dict[str, str]],
+        ] = {}
+        self._evidence_cache: dict[
+            tuple[date, int], tuple[datetime, dict[str, TriggerEvidence]]
+        ] = {}
+        self._candidate_cache_lock = RLock()
 
     def current(
         self, now: datetime, *, as_of: date | None = None, limit: int = 12
@@ -540,18 +553,54 @@ class QuantStrategyService:
             raise ValueError(
                 "historical market regime is unavailable for the requested date"
             )
-        board = self.candidate_service.candidates(selected_date, limit)
-        names = {}
-        stocks = {item.symbol: item for item in overview.market_stocks}
-        evidence = {}
-        for item in board.short_term:
-            instrument = self.instrument_directory.resolve(item.symbol)
-            if instrument is not None:
-                names[item.symbol] = instrument.name
-            if self.trigger_evidence_source is not None:
-                evidence[item.symbol] = self.trigger_evidence_source.get(
-                    item.symbol, selected_date, now, stocks.get(item.symbol)
-                )
+        cache_key = (selected_date, limit)
+        cached = None
+        if self.cache_ttl > timedelta(0):
+            with self._candidate_cache_lock:
+                cached = self._candidate_cache.get(cache_key)
+                if cached is not None and now >= cached[0]:
+                    self._candidate_cache.pop(cache_key, None)
+                    cached = None
+        if cached is None:
+            board = self.candidate_service.candidates(selected_date, limit)
+            names = {}
+            for item in board.short_term:
+                instrument = self.instrument_directory.resolve(item.symbol)
+                if instrument is not None:
+                    names[item.symbol] = instrument.name
+            if self.cache_ttl > timedelta(0):
+                with self._candidate_cache_lock:
+                    self._candidate_cache[cache_key] = (
+                        now + self.cache_ttl,
+                        board,
+                        names,
+                    )
+                    self._evidence_cache.pop(cache_key, None)
+        else:
+            _expires_at, board, names = cached
+        evidence: dict[str, TriggerEvidence] = {}
+        if self.trigger_evidence_source is not None:
+            evidence_cached = None
+            if self.evidence_cache_ttl > timedelta(0):
+                with self._candidate_cache_lock:
+                    evidence_cached = self._evidence_cache.get(cache_key)
+                    if evidence_cached is not None and now >= evidence_cached[0]:
+                        self._evidence_cache.pop(cache_key, None)
+                        evidence_cached = None
+            if evidence_cached is not None:
+                _evidence_expires_at, evidence = evidence_cached
+            else:
+                stocks = {item.symbol: item for item in overview.market_stocks}
+                for item in board.short_term:
+                    evidence[item.symbol] = self.trigger_evidence_source.get(
+                        item.symbol, selected_date, now, stocks.get(item.symbol)
+                    )
+                if self.evidence_cache_ttl > timedelta(0):
+                    with self._candidate_cache_lock:
+                        self._evidence_cache[cache_key] = (
+                            now + self.evidence_cache_ttl,
+                            evidence,
+                        )
         return build_quant_strategy_dashboard(
             overview,
             board,

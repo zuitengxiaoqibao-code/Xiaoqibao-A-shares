@@ -323,6 +323,49 @@ def test_service_rejects_historical_candidates_mixed_with_current_regime() -> No
         service.current(NOW, as_of=date(2026, 7, 30))
 
 
+def test_service_reuses_candidate_evidence_within_refresh_window() -> None:
+    calls = 0
+
+    def load_board(_as_of, _limit):
+        nonlocal calls
+        calls += 1
+        return board()
+
+    service = QuantStrategyService(
+        SimpleNamespace(current=lambda now: overview()),
+        SimpleNamespace(candidates=load_board),
+        SimpleNamespace(resolve=lambda symbol: None),
+        cache_seconds=5,
+    )
+
+    first = service.current(NOW)
+    second = service.current(NOW + timedelta(seconds=4))
+    third = service.current(NOW + timedelta(seconds=6))
+
+    assert calls == 2
+    assert first.candidates == second.candidates == third.candidates
+
+
+def test_service_keeps_daily_candidate_scan_cached_while_strategy_refreshes() -> None:
+    calls = 0
+
+    def load_board(_as_of, _limit):
+        nonlocal calls
+        calls += 1
+        return board()
+
+    service = QuantStrategyService(
+        SimpleNamespace(current=lambda now: overview()),
+        SimpleNamespace(candidates=load_board),
+        SimpleNamespace(resolve=lambda symbol: None),
+    )
+
+    service.current(NOW)
+    service.current(NOW + timedelta(seconds=6))
+
+    assert calls == 1
+
+
 def test_candidate_contract_rejects_missing_trigger_with_nonzero_score() -> None:
     with pytest.raises(ValidationError):
         QuantStrategyCandidate(

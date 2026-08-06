@@ -254,6 +254,37 @@ describe("DataSettingsView", () => {
     expect(screen.getByText(/这不代表 17709 JSON-RPC 桥已经监听/)).toBeInTheDocument();
   });
 
+  it("uses the configured bridge port in the runtime status", async () => {
+    const localSources = {
+      settings_state: "ready" as const,
+      settings: { auto_discovery: true, tdx_install_paths: [], ths_install_paths: [], tdx_rpc_enabled: true, tdx_rpc_url: "http://127.0.0.1:19001/" },
+      scanned_at: "2026-07-30T02:00:00Z",
+      terminals: [],
+      active_tdx_vipdoc: null,
+      tdx_rpc: {
+        status: "unavailable" as const,
+        reachable: false,
+        endpoint: "http://127.0.0.1:19001/",
+        observed_at: "2026-07-30T02:00:00Z",
+        client: { status: "running" as const, executable_path: "D:\\\\new_tdx64\\\\TdxW.exe", detail: "检测到通达信客户端进程；这不代表 19001 JSON-RPC 桥已经监听" },
+        capabilities: [],
+        direct_python: { status: "detected_only" as const, detail: "已发现官方模块；等待通达信进程返回可验证专业字段", module_path: "D:\\\\new_tdx64\\\\PYPlugins\\\\user\\\\tqcenter.py" },
+      },
+      restart_required: false,
+    };
+
+    render(<DataSettingsView
+      loadAI={() => Promise.resolve(emptySettings)}
+      saveAI={vi.fn()}
+      deleteAI={vi.fn()}
+      loadLocalSources={() => Promise.resolve(localSources)}
+      detectLocalSources={vi.fn()}
+      saveLocalSources={vi.fn()}
+    />);
+
+    expect(await screen.findByText("19001 未监听")).toBeInTheDocument();
+  });
+
   it("shows masked AI state without rendering the secret", async () => {
     render(<DataSettingsView
       loadAI={() => Promise.resolve({ configured: true, base_url: "http://localhost:11434/v1", model: "local-model", api_key_hint: "****alue" })}

@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Literal
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -116,18 +117,31 @@ def _local_source_view(
     )
 
 
+def _bridge_port_label(endpoint: str | None) -> str:
+    if not endpoint:
+        return "本地桥接端口"
+    try:
+        parsed = urlparse(endpoint)
+        if parsed.port is not None:
+            return str(parsed.port)
+    except ValueError:
+        pass
+    return "本地桥接端口"
+
+
 def _tdx_rpc_view(
     settings: LocalSourceSettings,
     discovery: LocalTerminalDiscoveryResult,
 ) -> TdxRpcStatus:
     observed_at = datetime.now(timezone.utc).isoformat()
     catalog = tdx_read_only_capability_catalog()
+    bridge_port = _bridge_port_label(settings.tdx_rpc_url)
     process_paths = running_tdx_process_paths()
     client = TdxClientStatus(
         status="running" if process_paths else "not_running",
         executable_path=process_paths[0] if process_paths else None,
         detail=(
-            "检测到通达信客户端进程；这不代表 17709 JSON-RPC 桥已经监听"
+            f"检测到通达信客户端进程；这不代表 {bridge_port} JSON-RPC 桥已经监听"
             if process_paths
             else "未检测到通达信客户端进程；目录或缓存文件存在不代表客户端已运行"
         ),
