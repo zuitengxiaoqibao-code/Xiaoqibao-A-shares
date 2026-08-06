@@ -1,6 +1,8 @@
 import {
+  AlertCircle,
   ArrowDown,
   ArrowUp,
+  CheckCircle2,
   Database,
   FolderSearch,
   Plus,
@@ -40,6 +42,13 @@ const originLabel = {
   process: "运行进程",
   registry: "系统注册",
   common: "常见目录",
+} as const;
+
+const rpcStatusLabel = {
+  ready: "全部只读能力可用",
+  partial: "部分只读能力可用",
+  unavailable: "桥接不可用",
+  disabled: "桥接未启用",
 } as const;
 
 export function LocalSourceSettingsSection({ load, detect, save }: Props) {
@@ -87,6 +96,8 @@ export function LocalSourceSettingsSection({ load, detect, save }: Props) {
       ? (draft.tdx_rpc_url?.trim() || "http://127.0.0.1:17709/")
       : null,
   });
+
+  const rpcStatus = result?.tdx_rpc;
 
   const run = async (operation: LocalSourceSettingsWriter, saved: boolean) => {
     controller.current?.abort();
@@ -179,6 +190,16 @@ export function LocalSourceSettingsSection({ load, detect, save }: Props) {
         />
       </label>}
       <p>这是可选的本机通达信 JSON-RPC 桥接地址，不是 EXE 的界面地址；关闭时不会访问该端口。</p>
+      {rpcStatus && <section className={`tdx-rpc-capability-status status-${rpcStatus.status}`} aria-label="通达信只读能力探测">
+        <header><span><strong>只读能力探测</strong><small>{rpcStatus.endpoint ?? "未配置桥接地址"}</small></span><b>{rpcStatusLabel[rpcStatus.status]}</b></header>
+        <div className="tdx-rpc-capability-grid">
+          {rpcStatus.capabilities.map((capability) => <article key={capability.key} data-status={capability.status}>
+            {capability.status === "ready" ? <CheckCircle2 size={15} /> : capability.status === "disabled" ? <AlertCircle size={15} /> : <AlertCircle size={15} />}
+            <span><strong>{capability.label}</strong><small>{capability.status === "disabled" ? "桥接未启用" : capability.detail}</small></span>
+          </article>)}
+        </div>
+        <footer>最近探测：{new Date(rpcStatus.observed_at).toLocaleString("zh-CN", { hour12: false })} · 仅探测只读接口，不连接券商、不下单</footer>
+      </section>}
     </details>
 
     {message && <p className="local-source-message" role="status">{message}</p>}

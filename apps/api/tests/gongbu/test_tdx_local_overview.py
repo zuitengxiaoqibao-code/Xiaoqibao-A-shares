@@ -6,6 +6,7 @@ from qibao_api.gongbu.tdx_local_overview import (
     TdxRealtimeQuote,
     build_market_statistics,
     parse_tdx_snapshot,
+    probe_tdx_capabilities,
 )
 
 
@@ -202,3 +203,50 @@ def test_local_overview_does_not_create_an_rpc_client_when_disabled(
 
     assert source.refresh() == expected
     source.close()
+
+
+def test_probe_tdx_capabilities_reports_real_read_only_methods_and_partial_support() -> None:
+    class FakeRpc:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def available(self) -> bool:
+            return True
+
+        def call(self, method: str, params: dict) -> object:
+            self.calls.append(method)
+            if method == "get_stock_list":
+                return {"ErrorId": "0", "Value": [{"Code": "600000.SH", "Name": "浦发银行"}]}
+            if method == "get_market_snapshot":
+                return {"ErrorId": "0", "Now": "9.28"}
+            if method == "get_sector_list":
+                return {"ErrorId": "0", "Value": []}
+            raise OSError("unsupported method")
+
+    rpc = FakeRpc()
+    result = probe_tdx_capabilities(rpc, stock_code="600000.SH")
+
+    assert result["status"] == "partial"
+    assert result["reachable"] is True
+    assert {item["key"] for item in result["capabilities"]} >= {
+        "catalog", "snapshot", "sectors", "more_info", "stock_info", "formula",
+    }
+    assert {item["key"] for item in result["capabilities"] if item["status"] == "ready"} == {
+        "catalog", "snapshot", "sectors",
+    }
+    assert "get_more_info" in rpc.calls
+
+
+def test_probe_tdx_capabilities_marks_everything_unavailable_when_bridge_is_down() -> None:
+    class MissingRpc:
+        def available(self) -> bool:
+            return False
+
+        def call(self, method: str, params: dict) -> object:
+            raise AssertionError("unreachable bridge must not receive probes")
+
+    result = probe_tdx_capabilities(MissingRpc())
+
+    assert result["status"] == "unavailable"
+    assert result["reachable"] is False
+    assert all(item["status"] == "unavailable" for item in result["capabilities"])

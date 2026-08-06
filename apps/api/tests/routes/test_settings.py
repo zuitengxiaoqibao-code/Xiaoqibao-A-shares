@@ -171,6 +171,8 @@ def test_data_source_settings_default_to_discovery_without_rpc(tmp_path: Path) -
     assert body["settings"]["tdx_rpc_enabled"] is False
     assert body["active_tdx_vipdoc"] is None
     assert body["restart_required"] is False
+    assert body["tdx_rpc"]["status"] == "disabled"
+    assert body["tdx_rpc"]["capabilities"]
 
 
 def test_detect_validates_draft_without_persisting_it(tmp_path: Path) -> None:
@@ -239,3 +241,70 @@ def test_put_rejects_non_loopback_rpc_address(tmp_path: Path) -> None:
     })
 
     assert response.status_code == 422
+
+
+def test_enabled_tdx_rpc_reports_partial_capabilities_without_echoing_errors(
+    tmp_path: Path, monkeypatch
+) -> None:
+    secret = "private-token-should-not-leak"
+
+    class FakeRpc:
+        def __init__(self, endpoint: str) -> None:
+            self.endpoint = endpoint
+
+        def available(self) -> bool:
+            return True
+
+        def call(self, method: str, params: dict) -> object:
+            if method == "get_stock_list":
+                return {"ErrorId": "0", "Value": []}
+            raise OSError(secret)
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr("qibao_api.routes.settings.TdxJsonRpcClient", FakeRpc)
+    response = client(tmp_path).put("/api/v1/settings/data-sources", json={
+        "auto_discovery": True,
+        "tdx_install_paths": [],
+        "ths_install_paths": [],
+        "tdx_rpc_enabled": True,
+        "tdx_rpc_url": "http://127.0.0.1:17709/",
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["tdx_rpc"]["status"] == "partial"
+    assert secret not in response.text
+    assert all(secret not in item["detail"] for item in body["tdx_rpc"]["capabilities"])
+
+
+def test_enabled_tdx_rpc_reports_unavailable_when_bridge_cannot_connect(
+    tmp_path: Path, monkeypatch
+) -> None:
+    class FakeRpc:
+        def __init__(self, endpoint: str) -> None:
+            self.endpoint = endpoint
+
+        def available(self) -> bool:
+            return False
+
+        def call(self, method: str, params: dict) -> object:
+            raise AssertionError("unreachable bridge must not be probed")
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr("qibao_api.routes.settings.TdxJsonRpcClient", FakeRpc)
+    response = client(tmp_path).put("/api/v1/settings/data-sources", json={
+        "auto_discovery": True,
+        "tdx_install_paths": [],
+        "ths_install_paths": [],
+        "tdx_rpc_enabled": True,
+        "tdx_rpc_url": "http://127.0.0.1:17709/",
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["tdx_rpc"]["status"] == "unavailable"
+    assert body["tdx_rpc"]["reachable"] is False

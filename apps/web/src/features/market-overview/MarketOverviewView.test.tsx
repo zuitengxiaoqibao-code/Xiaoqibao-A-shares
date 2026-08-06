@@ -185,6 +185,8 @@ describe("MarketOverviewView", () => {
 
     expect(await screen.findByRole("dialog", { name: "信息总览实时更新失败" })).toHaveTextContent("实时更新失败，继续使用缓存");
     expect(screen.getByRole("region", { name: "A 股市场情绪与核心指数" })).toHaveTextContent("76");
+    fireEvent.click(screen.getByRole("button", { name: "继续使用缓存" }));
+    expect(screen.queryByRole("dialog", { name: "信息总览实时更新失败" })).not.toBeInTheDocument();
     localStorage.clear();
   });
 

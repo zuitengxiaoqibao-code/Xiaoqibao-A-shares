@@ -95,7 +95,22 @@ export type LocalSourceSettingsView = {
   scanned_at: string;
   terminals: LocalTerminalStatus[];
   active_tdx_vipdoc: string | null;
+  tdx_rpc: TdxRpcStatus;
   restart_required: boolean;
+};
+export type TdxRpcCapability = {
+  key: string;
+  label: string;
+  method: string;
+  status: "ready" | "unavailable" | "disabled";
+  detail: string;
+};
+export type TdxRpcStatus = {
+  status: "ready" | "partial" | "unavailable" | "disabled";
+  reachable: boolean;
+  endpoint: string | null;
+  observed_at: string;
+  capabilities: TdxRpcCapability[];
 };
 export type LocalSourceSettingsLoader = (signal?: AbortSignal) => Promise<LocalSourceSettingsView>;
 export type LocalSourceSettingsWriter = (

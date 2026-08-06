@@ -99,6 +99,87 @@ class TdxJsonRpcClient:
         self.client.close()
 
 
+_TDX_READ_ONLY_PROBES: tuple[tuple[str, str, str, dict], ...] = (
+    ("catalog", "证券目录", "get_stock_list", {"market": "5", "list_type": 1}),
+    ("snapshot", "实时行情", "get_market_snapshot", {"stock_code": "{stock_code}", "field_list": []}),
+    ("sectors", "板块目录", "get_sector_list", {"list_type": 1}),
+    ("more_info", "扩展行情与估值", "get_more_info", {"stock_code": "{stock_code}"}),
+    ("stock_info", "基础财务与行业", "get_stock_info", {"stock_code": "{stock_code}"}),
+    ("ipo", "新股与新债日历", "get_ipo_info", {"market": "5"}),
+    ("kzz", "可转债条款", "get_kzz_info", {"stock_code": "{stock_code}"}),
+    ("formula", "通达信公式计算", "formula_process_mul_zb", {"stock_list": ["{stock_code}"]}),
+)
+
+
+def tdx_read_only_capability_catalog() -> tuple[dict[str, str], ...]:
+    return tuple(
+        {"key": key, "label": label, "method": method}
+        for key, label, method, _params in _TDX_READ_ONLY_PROBES
+    )
+
+
+def probe_tdx_capabilities(rpc, *, stock_code: str = "600000.SH") -> dict[str, object]:
+    """Probe only read-only TDX methods and return honest capability state.
+
+    The probe intentionally treats unsupported methods and missing professional
+    data packages as unavailable; it never substitutes a different field or
+    calls any trading/account endpoint.
+    """
+    capabilities: list[dict[str, str]] = []
+    reachable = bool(getattr(rpc, "available", lambda: False)())
+    if not reachable:
+        for key, label, method, _params in _TDX_READ_ONLY_PROBES:
+            capabilities.append({
+                "key": key,
+                "label": label,
+                "method": method,
+                "status": "unavailable",
+                "detail": "本地桥接端口不可达",
+            })
+        return {
+            "status": "unavailable",
+            "reachable": False,
+            "capabilities": tuple(capabilities),
+        }
+
+    for key, label, method, template in _TDX_READ_ONLY_PROBES:
+        params = {
+            name: (
+                [stock_code for _ in value]
+                if isinstance(value, list)
+                else value.replace("{stock_code}", stock_code)
+                if isinstance(value, str)
+                else value
+            )
+            for name, value in template.items()
+        }
+        try:
+            rpc.call(method, params)
+        except Exception as error:  # probe must continue and report each method independently
+            capabilities.append({
+                "key": key,
+                "label": label,
+                "method": method,
+                "status": "unavailable",
+                "detail": f"接口不可用（{type(error).__name__}）",
+            })
+        else:
+            capabilities.append({
+                "key": key,
+                "label": label,
+                "method": method,
+                "status": "ready",
+                "detail": "只读接口返回响应",
+            })
+
+    ready_count = sum(item["status"] == "ready" for item in capabilities)
+    return {
+        "status": "ready" if ready_count == len(capabilities) else "partial" if ready_count else "unavailable",
+        "reachable": True,
+        "capabilities": tuple(capabilities),
+    }
+
+
 def _decimal(value: object) -> Decimal | None:
     if value in (None, "", "--"):
         return None

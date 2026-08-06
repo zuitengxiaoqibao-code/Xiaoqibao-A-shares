@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -19,6 +20,11 @@ from qibao_api.local_sources.repository import (
     LocalSourceSettingsRepository,
     LocalSourceSettingsRecord,
 )
+from qibao_api.gongbu.tdx_local_overview import (
+    TdxJsonRpcClient,
+    probe_tdx_capabilities,
+    tdx_read_only_capability_catalog,
+)
 
 
 # Local-admin trust boundary: the application binds locally and intentionally supports
@@ -39,7 +45,24 @@ class LocalSourceSettingsView(BaseModel):
     scanned_at: str
     terminals: tuple[LocalTerminalStatus, ...]
     active_tdx_vipdoc: Path | None
+    tdx_rpc: "TdxRpcStatus"
     restart_required: bool = False
+
+
+class TdxRpcCapability(BaseModel):
+    key: str
+    label: str
+    method: str
+    status: Literal["ready", "unavailable", "disabled"]
+    detail: str
+
+
+class TdxRpcStatus(BaseModel):
+    status: Literal["ready", "partial", "unavailable", "disabled"]
+    reachable: bool
+    endpoint: str | None
+    observed_at: str
+    capabilities: tuple[TdxRpcCapability, ...]
 
 
 def get_ai_settings_repository(request: Request) -> AISettingsRepository:
@@ -72,7 +95,37 @@ def _local_source_view(
         scanned_at=discovery.scanned_at.isoformat(),
         terminals=discovery.terminals,
         active_tdx_vipdoc=discovery.active_tdx_vipdoc,
+        tdx_rpc=_tdx_rpc_view(record.settings),
         restart_required=restart_required,
+    )
+
+
+def _tdx_rpc_view(settings: LocalSourceSettings) -> TdxRpcStatus:
+    observed_at = datetime.now(timezone.utc).isoformat()
+    catalog = tdx_read_only_capability_catalog()
+    if not settings.tdx_rpc_enabled or settings.tdx_rpc_url is None:
+        return TdxRpcStatus(
+            status="disabled",
+            reachable=False,
+            endpoint=settings.tdx_rpc_url,
+            observed_at=observed_at,
+            capabilities=tuple(
+                TdxRpcCapability(**item, status="disabled", detail="本地通达信桥接未启用")
+                for item in catalog
+            ),
+        )
+
+    rpc = TdxJsonRpcClient(endpoint=settings.tdx_rpc_url)
+    try:
+        report = probe_tdx_capabilities(rpc)
+    finally:
+        rpc.close()
+    return TdxRpcStatus(
+        status=report["status"],
+        reachable=bool(report["reachable"]),
+        endpoint=settings.tdx_rpc_url,
+        observed_at=observed_at,
+        capabilities=tuple(TdxRpcCapability(**item) for item in report["capabilities"]),
     )
 
 

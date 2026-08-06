@@ -133,9 +133,14 @@ export function HomepageStartupOverlay({ data, error, loading, liveReady = Boole
           <small>{stage.detail}</small>
         </div>)}
       </div>
-      {overlayError && <button type="button" aria-label="重试首页数据" onClick={onRetry} disabled={loading}>
-        <RotateCw size={15} />重新读取关键数据
-      </button>}
+      {overlayError && <div className="homepage-startup-actions">
+        {cacheFailed && data && <button type="button" aria-label="继续使用缓存" onClick={() => setVisible(false)}>
+          <Database size={15} />继续使用缓存
+        </button>}
+        <button type="button" aria-label="重试首页数据" onClick={() => { setVisible(true); onRetry(); }} disabled={loading}>
+          <RotateCw size={15} />重新读取关键数据
+        </button>
+      </div>}
       <footer>百分比逐点平滑更新，已完成值不会超过真实任务节点</footer>
     </div>
   </section>;

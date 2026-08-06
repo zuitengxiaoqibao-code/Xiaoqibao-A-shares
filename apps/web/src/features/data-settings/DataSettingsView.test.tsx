@@ -123,6 +123,15 @@ describe("DataSettingsView", () => {
         { vendor: "ths" as const, install_path: "C:\\THS", data_path: null, origin: "manual" as const, status: "detected_only" as const, sh_daily_count: 0, sz_daily_count: 0, latest_modified_at: null },
       ],
       active_tdx_vipdoc: "D:\\new_tdx_mock\\vipdoc",
+      tdx_rpc: {
+        status: "disabled" as const,
+        reachable: false,
+        endpoint: null,
+        observed_at: "2026-07-30T02:00:00Z",
+        capabilities: [
+          { key: "snapshot", label: "实时行情", method: "get_market_snapshot", status: "disabled" as const, detail: "本地通达信桥接未启用" },
+        ],
+      },
       restart_required: false,
     };
     const detectLocalSources = vi.fn().mockResolvedValue(localSources);
@@ -143,6 +152,9 @@ describe("DataSettingsView", () => {
     expect(screen.getByText("已发现，暂未读取本地行情")).toBeInTheDocument();
     expect(screen.getByLabelText("自动发现本机行情软件")).toBeChecked();
     expect(screen.getByLabelText("启用本地实时桥接")).not.toBeChecked();
+    expect(screen.getByText("只读能力探测")).toBeInTheDocument();
+    expect(screen.getByText("实时行情")).toBeInTheDocument();
+    expect(screen.getAllByText("桥接未启用")).toHaveLength(2);
 
     fireEvent.click(screen.getByRole("button", { name: "重新检测" }));
     await waitFor(() => expect(detectLocalSources).toHaveBeenCalledWith(

@@ -442,18 +442,19 @@
 .homepage-startup-stages [data-state="active"] b { color: var(--status-warning); }
 .homepage-startup-stages [data-state="error"] span,
 .homepage-startup-stages [data-state="error"] b { color: var(--market-up); }
-.homepage-startup-copy > button {
+.homepage-startup-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 14px; }
+.homepage-startup-actions button {
   display: inline-flex;
   align-items: center;
   gap: 7px;
   min-height: 34px;
-  margin-top: 14px;
   padding: 0 12px;
   border: 1px solid var(--market-up);
   background: transparent;
   color: var(--market-up);
   cursor: pointer;
 }
+.homepage-startup-actions button:first-child { border-color: var(--status-warning); color: var(--status-warning); }
 .homepage-startup-copy footer { margin-top: 13px; color: var(--text-muted); font-size: 12px; }
 .homepage-startup-overlay.is-error .homepage-startup-progress > span { background: var(--market-up); box-shadow: 0 0 14px color-mix(in srgb, var(--market-up) 45%, transparent); }
 .homepage-startup-overlay.is-error .homepage-startup-current svg,
