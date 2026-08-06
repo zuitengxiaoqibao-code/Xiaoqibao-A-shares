@@ -259,12 +259,21 @@ class TdxFinanceSource:
             code = f"{symbol}.{exchange}"
             more_info = rpc.call("get_more_info", {"stock_code": code})
             stock_info = rpc.call("get_stock_info", {"stock_code": code})
-            return parse_tdx_rpc_security(
+            snapshot = parse_tdx_rpc_security(
                 more_info=more_info,
                 stock_info=stock_info,
                 symbol=symbol,
                 observed_at=self.clock(),
             )
+            if not any(
+                getattr(snapshot, field) is not None
+                for field in (
+                    "pe_ttm", "pb", "market_cap_yi", "eps", "roe", "revenue",
+                    "net_profit", "book_value_per_share", "total_shares",
+                )
+            ):
+                return None
+            return snapshot
         except Exception:
             # The optional local bridge must never hide the established mootdx fallback.
             return None

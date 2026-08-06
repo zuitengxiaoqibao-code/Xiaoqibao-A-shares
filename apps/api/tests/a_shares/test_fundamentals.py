@@ -176,3 +176,23 @@ def test_tdx_finance_prefers_local_rpc_detail_when_available() -> None:
     assert snapshot.source == "tdx-local-rpc-detail"
     assert snapshot.pe_ttm == Decimal("12.5")
     assert snapshot.industry == "银行"
+
+
+def test_tdx_finance_does_not_replace_full_finance_with_industry_only_rpc_detail() -> None:
+    class IndustryOnlyRpc:
+        def available(self):
+            return True
+
+        def call(self, method, params):
+            return {"ErrorId": "0", "Value": {"industry_name": "银行"}}
+
+        def close(self):
+            pass
+
+    snapshot = TdxFinanceSource(
+        client_factory=FinanceClient,
+        local_rpc_factory=IndustryOnlyRpc,
+    ).fetch("600000")
+
+    assert snapshot.source == "mootdx-finance"
+    assert snapshot.industry is None
