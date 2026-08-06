@@ -6,8 +6,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
 
-import edge_tts
-
 from qibao_api.speech.models import SpeechSettings
 
 
@@ -24,6 +22,8 @@ CommunicatorFactory = Callable[[str, str, str], Communicator]
 
 
 def _edge_communicator(text: str, voice: str, rate: str) -> Communicator:
+    import edge_tts
+
     return edge_tts.Communicate(text=text, voice=voice, rate=rate)
 
 

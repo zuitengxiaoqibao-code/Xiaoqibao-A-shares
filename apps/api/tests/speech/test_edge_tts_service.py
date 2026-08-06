@@ -1,9 +1,26 @@
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
 from qibao_api.speech.edge_tts_service import EdgeTTSService
 from qibao_api.speech.models import SpeechSettings
+
+
+def test_edge_tts_dependency_is_deferred_until_speech_is_requested() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; import qibao_api.speech.edge_tts_service; print('edge_tts' in sys.modules)",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout.strip() == "False"
 
 
 class FakeCommunicator:
