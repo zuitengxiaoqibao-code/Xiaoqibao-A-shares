@@ -1,0 +1,48 @@
+from datetime import date
+from decimal import Decimal
+
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+
+
+class TdxIpoEventView(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    code: str = Field(pattern=r"^\d{6}$")
+    name: str = Field(min_length=1)
+    kind: str = Field(min_length=1)
+    subscription_date: date
+    listing_date: date | None = None
+    allotment_date: date | None = None
+    fetched_at: AwareDatetime
+    source: str = "tdx-local-rpc"
+
+
+class TdxIpoCalendarResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    status: str
+    events: tuple[TdxIpoEventView, ...] = ()
+    fetched_at: AwareDatetime | None = None
+    source: str = "tdx-local-rpc"
+    detail: str | None = None
+
+
+class TdxFormulaPointView(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    symbol: str = Field(pattern=r"^\d{6}$")
+    name: str | None = None
+    formula_name: str = Field(pattern=r"^formula_process_mul_[A-Za-z0-9_]+$")
+    values: dict[str, Decimal] = Field(default_factory=dict)
+    fetched_at: AwareDatetime
+    source: str = "tdx-local-rpc"
+
+
+class TdxFormulaResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    status: str
+    points: tuple[TdxFormulaPointView, ...] = ()
+    fetched_at: AwareDatetime | None = None
+    source: str = "tdx-local-rpc"
+    detail: str | None = None

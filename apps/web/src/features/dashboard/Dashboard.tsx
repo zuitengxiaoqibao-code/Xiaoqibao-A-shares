@@ -38,7 +38,7 @@ import { DataSettingsView } from "../data-settings/DataSettingsView";
 import { FirstLimitUpView } from "../first-limit-up/FirstLimitUpView";
 import type { FirstLimitUpBoard } from "../first-limit-up/types";
 import { QuantAnalysisDashboard } from "../quant-analysis/QuantAnalysisDashboard";
-import type { QuantForecastLoader, QuantStrategyLoader, QuantTickLoader } from "../quant-analysis/types";
+import type { QuantForecastLoader, QuantStrategyLoader, QuantTickLoader, TdxFormulaLoader } from "../quant-analysis/types";
 import { MarketOverviewView } from "../market-overview/MarketOverviewView";
 import type { MarketOverviewLoader } from "../market-overview/types";
 import type { StockTimelineLoader } from "../stock-timeline/types";
@@ -124,6 +124,7 @@ type Props = {
   loadQuantTicks?: QuantTickLoader;
   loadKronosForecast?: QuantForecastLoader;
   loadQuantStrategy?: QuantStrategyLoader;
+  loadTdxFormula?: TdxFormulaLoader;
   loadMarketOverview?: MarketOverviewLoader;
   loadBreakingNewsAlerts?: BreakingNewsAlertLoader;
   loadSpeechSettings?: SpeechSettingsLoader;
@@ -229,7 +230,7 @@ function SelectedGovernanceWorkspace(props: ComponentProps<typeof GovernanceView
   return <div className="selected-governance-workspace"><div className="selected-symbol-context"><b>全局 / 资产级治理数据</b><span>不按单股过滤{symbol ? ` · 导航代码 ${symbol}` : ""}</span></div><GovernanceView {...props} /></div>;
 }
 
-export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, loadCompliance, loadAudit, complianceAction, loadBondDashboard, loadBondDiagnosis, loadCachedBondDiagnosis, loadBondCandidates, diagnoseBondBatch, loadNewsIntelligence, syncNews, syncHotspots, createNewsCorrection, loadOperationsStatus, setSchedulerPaused, createBackup, verifyBackup, runManualJob, loadAShareCandidates, loadAShareCandidateScores, loadAShareDiagnosis, loadDecisionCurrent, loadDecisionDate, loadMarketSentiment, refreshMarketSentiment, loadCandidateSentiments, refreshCandidateSentiments, searchAShareInstruments, loadStockCockpit, loadStockCockpitAI, loadStockTimeline, prepareStockData, loadAISettings, saveAISettings, deleteAISettings, loadLocalSourceSettings, detectLocalSourceSettings, saveLocalSourceSettings, syncAShareUniverse, loadSourceHealth, loadHistorySync, loadHistoryCoverage, startHistoryBackfill, pauseHistorySync, resumeHistorySync, loadFirstLimitUp, refreshFirstLimitUp, loadQuantTicks, loadKronosForecast, loadQuantStrategy, loadMarketOverview, loadBreakingNewsAlerts, loadSpeechSettings, loadSpeechVoices, saveSpeechSettings, synthesizeSpeech, loadCompanyResearch }: Props) {
+export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, loadCompliance, loadAudit, complianceAction, loadBondDashboard, loadBondDiagnosis, loadCachedBondDiagnosis, loadBondCandidates, diagnoseBondBatch, loadNewsIntelligence, syncNews, syncHotspots, createNewsCorrection, loadOperationsStatus, setSchedulerPaused, createBackup, verifyBackup, runManualJob, loadAShareCandidates, loadAShareCandidateScores, loadAShareDiagnosis, loadDecisionCurrent, loadDecisionDate, loadMarketSentiment, refreshMarketSentiment, loadCandidateSentiments, refreshCandidateSentiments, searchAShareInstruments, loadStockCockpit, loadStockCockpitAI, loadStockTimeline, prepareStockData, loadAISettings, saveAISettings, deleteAISettings, loadLocalSourceSettings, detectLocalSourceSettings, saveLocalSourceSettings, syncAShareUniverse, loadSourceHealth, loadHistorySync, loadHistoryCoverage, startHistoryBackfill, pauseHistorySync, resumeHistorySync, loadFirstLimitUp, refreshFirstLimitUp, loadQuantTicks, loadKronosForecast, loadQuantStrategy, loadTdxFormula, loadMarketOverview, loadBreakingNewsAlerts, loadSpeechSettings, loadSpeechVoices, saveSpeechSettings, synthesizeSpeech, loadCompanyResearch }: Props) {
   const selectedInstrument = useOptionalSelectedInstrument();
   const [state, setState] = useState<ViewState>({ kind: "idle" });
   const [symbol, setSymbol] = useState("600000");
@@ -317,7 +318,7 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, lo
       {activeView === "first_limit_up" && loadFirstLimitUp && refreshFirstLimitUp && <FirstLimitUpView load={loadFirstLimitUp} refresh={refreshFirstLimitUp} />}
       {activeView === "first_limit_up" && (!loadFirstLimitUp || !refreshFirstLimitUp) && <main className="beginner-page"><header><p className="eyebrow">A 股 / 盘后筛选</p><h1>首次涨停</h1><p>首次涨停筛选服务暂不可用，请检查本地 API 和日线数据后重试。</p></header></main>}
 
-      {activeView === "quant_analysis" && loadFirstLimitUp && loadQuantTicks && runBacktest && <QuantAnalysisDashboard loadBoard={loadFirstLimitUp} refreshBoard={refreshFirstLimitUp} loadTicks={loadQuantTicks} runBacktest={runBacktest} loadKronosForecast={loadKronosForecast} loadQuantStrategy={loadQuantStrategy} loadTimeline={loadStockTimeline} selectedSymbol={selectedSymbol} searchInstruments={searchAShareInstruments} onSelectSymbol={(nextSymbol) => selectedInstrument?.select(nextSymbol, "search")} />}
+      {activeView === "quant_analysis" && loadFirstLimitUp && loadQuantTicks && runBacktest && <QuantAnalysisDashboard loadBoard={loadFirstLimitUp} refreshBoard={refreshFirstLimitUp} loadTicks={loadQuantTicks} runBacktest={runBacktest} loadKronosForecast={loadKronosForecast} loadQuantStrategy={loadQuantStrategy} loadTdxFormula={loadTdxFormula} loadTimeline={loadStockTimeline} selectedSymbol={selectedSymbol} searchInstruments={searchAShareInstruments} onSelectSymbol={(nextSymbol) => selectedInstrument?.select(nextSymbol, "search")} />}
       {activeView === "quant_analysis" && (!loadFirstLimitUp || !loadQuantTicks || !runBacktest) && <main className="quant-analysis-page"><header><p className="eyebrow">FIRST LIMIT-UP / QUANT LAB</p><h1>量化分析仪表盘</h1><p>量化证据链暂不完整，请检查首次涨停、盘中 TICK 与回测服务。</p></header></main>}
 
       {activeView === "bonds" && loadBondDashboard && loadBondDiagnosis && loadBondCandidates && <ConvertibleBondView loadDashboard={loadBondDashboard} loadDiagnosis={loadBondDiagnosis} loadCachedDiagnosis={loadCachedBondDiagnosis} loadCandidates={loadBondCandidates} diagnoseDiscovered={diagnoseBondBatch} openBondCompliance={() => navigate("settings")} />}

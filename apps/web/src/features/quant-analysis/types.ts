@@ -133,6 +133,26 @@ export type QuantStrategyDashboard = {
 
 export type QuantStrategyLoader = (limit?: number) => Promise<QuantStrategyDashboard>;
 
+export type TdxFormulaResponse = {
+  status: "ready" | "unavailable";
+  points: Array<{
+    symbol: string;
+    name: string | null;
+    formula_name: string;
+    values: Record<string, string>;
+    fetched_at: string;
+    source: string;
+  }>;
+  fetched_at: string | null;
+  source: string;
+  detail: string | null;
+};
+
+export type TdxFormulaLoader = (
+  formulaName: string,
+  stockCodes: string[],
+) => Promise<TdxFormulaResponse>;
+
 export type SignalMetric = {
   key: "vol" | "score" | "win_rate" | "odds" | "risk" | "position" | "ev";
   label: string;

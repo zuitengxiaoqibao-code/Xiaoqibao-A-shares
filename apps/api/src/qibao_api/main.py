@@ -58,6 +58,8 @@ from qibao_api.gongbu.tdx_local_overview import (
     LocalTdxOverviewSource,
     TdxJsonRpcClient,
 )
+from qibao_api.gongbu.tdx_local_calendar import TdxLocalIpoSource
+from qibao_api.gongbu.tdx_formula import TdxLocalFormulaSource
 from qibao_api.gongbu.self_contained_overview import (
     MootdxAShareCatalogSource,
     SelfContainedOverviewProvider,
@@ -135,6 +137,7 @@ from qibao_api.routes.market_sentiment import router as market_sentiment_router
 from qibao_api.routes.market_overview import router as market_overview_router
 from qibao_api.routes.quant_strategy import router as quant_strategy_router
 from qibao_api.routes.first_limit_up import router as first_limit_up_router
+from qibao_api.routes.tdx_local import router as tdx_local_router
 from qibao_api.routes.speech import router as speech_router
 from qibao_api.settings import Settings
 from qibao_api.static_frontend import install_static_frontend
@@ -755,6 +758,14 @@ async def lifespan(application: FastAPI):
                     and local_source_settings.tdx_rpc_url is not None
                     else None
                 )
+                def tdx_rpc_factory():
+                    current = local_source_settings_record.settings
+                    if not current.tdx_rpc_enabled or current.tdx_rpc_url is None:
+                        return None
+                    return TdxJsonRpcClient(endpoint=current.tdx_rpc_url)
+
+                application.state.tdx_ipo_source = TdxLocalIpoSource(tdx_rpc_factory)
+                application.state.tdx_formula_source = TdxLocalFormulaSource(tdx_rpc_factory)
                 local_tdx_overview_source = LocalTdxOverviewSource(
                     cache_path=portable_root / "cache" / "tdx-market-overview.json",
                     rpc=tdx_rpc,
@@ -976,5 +987,6 @@ app.include_router(market_sentiment_router)
 app.include_router(market_overview_router)
 app.include_router(quant_strategy_router)
 app.include_router(first_limit_up_router)
+app.include_router(tdx_local_router)
 app.include_router(speech_router)
 install_static_frontend(app, Settings().web_dir)

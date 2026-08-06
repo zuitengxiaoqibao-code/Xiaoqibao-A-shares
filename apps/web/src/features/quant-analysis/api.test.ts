@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { loadKronosForecast, loadQuantStrategy } from "./api";
+import { loadKronosForecast, loadQuantStrategy, loadTdxFormula } from "./api";
 
 describe("loadKronosForecast", () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -39,5 +39,20 @@ describe("loadQuantStrategy", () => {
 
     await expect(loadQuantStrategy(8)).resolves.toEqual(payload);
     expect(fetchMock).toHaveBeenCalledWith("/api/v1/a-shares/quant-strategy?limit=8");
+  });
+});
+
+describe("loadTdxFormula", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("sends a read-only formula name and each selected code", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ status: "unavailable" }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await loadTdxFormula("formula_process_mul_zb", ["600000", "000001"]);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/tdx/local/formula?formula_name=formula_process_mul_zb&stock_codes=600000&stock_codes=000001",
+    );
   });
 });

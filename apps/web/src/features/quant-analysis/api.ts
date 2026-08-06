@@ -1,4 +1,4 @@
-import type { IntradayTick, KronosForecastResponse, QuantStrategyDashboard } from "./types";
+import type { IntradayTick, KronosForecastResponse, QuantStrategyDashboard, TdxFormulaResponse } from "./types";
 
 export async function loadQuantTicks(
   symbol: string,
@@ -40,4 +40,15 @@ export async function loadQuantStrategy(limit = 12): Promise<QuantStrategyDashbo
     throw new Error(`短线策略请求失败 (${response.status})`);
   }
   return response.json() as Promise<QuantStrategyDashboard>;
+}
+
+export async function loadTdxFormula(
+  formulaName: string,
+  stockCodes: string[],
+): Promise<TdxFormulaResponse> {
+  const params = new URLSearchParams({ formula_name: formulaName });
+  stockCodes.forEach((code) => params.append("stock_codes", code));
+  const response = await fetch(`/api/v1/tdx/local/formula?${params.toString()}`);
+  if (!response.ok) throw new Error(`通达信公式请求失败 (${response.status})`);
+  return response.json() as Promise<TdxFormulaResponse>;
 }

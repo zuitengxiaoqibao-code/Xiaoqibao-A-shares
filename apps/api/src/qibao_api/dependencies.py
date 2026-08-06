@@ -132,6 +132,14 @@ def get_kronos_forecast_service(request: Request):
     return request.app.state.kronos_forecast_service
 
 
+def get_tdx_ipo_source(request: Request):
+    return request.app.state.tdx_ipo_source
+
+
+def get_tdx_formula_source(request: Request):
+    return request.app.state.tdx_formula_source
+
+
 def get_decision_repository(request: Request):
     return request.app.state.decision_repository
 

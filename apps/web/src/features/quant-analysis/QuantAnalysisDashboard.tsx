@@ -12,6 +12,7 @@ import { QuantInstrumentSelector } from "./QuantInstrumentSelector";
 import { QuantLiveStatusBar } from "./QuantLiveStatusBar";
 import { QuantChart } from "./QuantChart";
 import { ShortTermStrategyWorkbench } from "./ShortTermStrategyWorkbench";
+import { TdxFormulaPanel } from "./TdxFormulaPanel";
 import { StockEventKline } from "../stock-timeline/StockEventKline";
 import type { StockTimelineLoader } from "../stock-timeline/types";
 import { useQuantLiveResource } from "./useQuantLiveRefresh";
@@ -22,6 +23,7 @@ import type {
   QuantForecastLoader,
   QuantStrategyLoader,
   QuantTickLoader,
+  TdxFormulaLoader,
 } from "./types";
 
 type Props = {
@@ -31,6 +33,7 @@ type Props = {
   runBacktest: (symbol: string, signal?: AbortSignal) => Promise<BacktestResult>;
   loadKronosForecast?: QuantForecastLoader;
   loadQuantStrategy?: QuantStrategyLoader;
+  loadTdxFormula?: TdxFormulaLoader;
   loadTimeline?: StockTimelineLoader;
   selectedSymbol?: string | null;
   searchInstruments?: (query: string) => Promise<InstrumentSearchResponse>;
@@ -138,7 +141,7 @@ function candidatesFrom(board: FirstLimitUpBoard | null): FirstLimitUpCandidate[
   });
 }
 
-export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, runBacktest, loadKronosForecast, loadQuantStrategy, loadTimeline, selectedSymbol, searchInstruments, onSelectSymbol }: Props) {
+export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, runBacktest, loadKronosForecast, loadQuantStrategy, loadTdxFormula, loadTimeline, selectedSymbol, searchInstruments, onSelectSymbol }: Props) {
   const [selected, setSelected] = useState<string | null>(selectedSymbol ?? null);
   const [selectedIdentity, setSelectedIdentity] = useState<AShareInstrument | null>(null);
   const [backtest, setBacktest] = useState<BacktestResult | null>(null);
@@ -342,5 +345,6 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
       loading={strategyResource.status === "loading" && !strategyDashboard}
       error={strategyResource.error}
     />}
+    <TdxFormulaPanel symbol={selected} load={loadTdxFormula} />
   </main>;
 }
