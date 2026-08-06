@@ -1,4 +1,4 @@
-param([int]$Port = 18765)
+param([int]$Port = 18765, [switch]$KeepSmokeRoot)
 
 $ErrorActionPreference = "Stop"
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
@@ -119,6 +119,7 @@ try {
     $IsSmokeDirectory = (Split-Path -Leaf $ResolvedSmokeRoot) -like `
         "xiaoqibao-smoke-*"
     if (
+        -not $KeepSmokeRoot -and
         $IsSmokeDirectory -and
         $ResolvedSmokeRoot.StartsWith(
             $ResolvedTempRoot,
@@ -140,5 +141,8 @@ try {
                 Start-Sleep -Milliseconds 100
             }
         } while (Test-Path -LiteralPath $ResolvedSmokeRoot)
+    }
+    if ($KeepSmokeRoot) {
+        Write-Host ("Portable smoke root retained: {0}" -f $SmokeRoot)
     }
 }

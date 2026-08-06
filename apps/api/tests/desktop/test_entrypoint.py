@@ -76,7 +76,8 @@ def test_entrypoint_sets_portable_paths_and_stops_after_window(
     server = FakeServer.instances[-1]
     assert result == 0
     assert server.started and server.stopped
-    assert seen["server_created_before_window"] is False
+    assert seen["server_created_before_window"] is True
+    assert server.launched
     assert seen["url"] == server.url
     assert (tmp_path / "config").is_dir()
     assert entrypoint.os.environ["QIBAO_DATA_DIR"] == str(tmp_path / "data")
@@ -85,7 +86,9 @@ def test_entrypoint_sets_portable_paths_and_stops_after_window(
     assert not previous_data.exists()
 
 
-def test_gui_enters_window_before_runtime_disk_setup(tmp_path: Path, monkeypatch) -> None:
+def test_gui_prepares_runtime_and_launches_api_before_window(
+    tmp_path: Path, monkeypatch
+) -> None:
     order: list[str] = []
 
     class TrackedLayout:
@@ -114,7 +117,8 @@ def test_gui_enters_window_before_runtime_disk_setup(tmp_path: Path, monkeypatch
     monkeypatch.setattr(entrypoint, "run_window", run_window)
 
     assert entrypoint.main(["--portable-root", str(tmp_path)]) == 0
-    assert order[:3] == ["window-started", "layout-ready", "logging-ready"]
+    assert order[:3] == ["layout-ready", "logging-ready", "window-started"]
+    assert FakeServer.instances[-1].launched
 
 
 def test_entrypoint_preserves_current_data_and_archives_previous_conflicts(

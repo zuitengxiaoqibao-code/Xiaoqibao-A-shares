@@ -38,3 +38,18 @@ def test_portable_spec_shows_boot_splash_before_python_startup() -> None:
         and argument.attr == "binaries"
         for argument in collect_call.args
     )
+
+
+def test_portable_spec_keeps_python_modules_in_the_cold_start_archive() -> None:
+    spec_path = _project_root() / "packaging" / "xiaoqibao.spec"
+    tree = ast.parse(spec_path.read_text(encoding="utf-8"))
+
+    analysis_call = _assignment_call(tree, "a")
+    noarchive = next(
+        keyword.value
+        for keyword in analysis_call.keywords
+        if keyword.arg == "noarchive"
+    )
+
+    assert isinstance(noarchive, ast.Constant)
+    assert noarchive.value is False

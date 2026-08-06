@@ -57,12 +57,17 @@ def main(argv: list[str] | None = None) -> int:
                 server.start()
                 server.wait()
             else:
+                # Prepare the portable paths and launch the API thread before
+                # creating the webview.  The visible shell and Python API
+                # import/initialization can then overlap instead of making the
+                # user wait for the API after the window has appeared.
+                layout = _prepare_runtime(args.portable_root)
+                promote_previous_data_layout(layout)
+                server = _create_local_api_server(args.port)
+                server.launch()
+
                 def start_application() -> str:
-                    nonlocal server
-                    layout = _prepare_runtime(args.portable_root)
-                    promote_previous_data_layout(layout)
-                    server = _create_local_api_server(args.port)
-                    server.start()
+                    server.wait_until_ready()
                     return server.url
 
                 run_window(start_application)
