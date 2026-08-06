@@ -101,4 +101,13 @@ describe("ShortTermStrategyWorkbench", () => {
     render(<ShortTermStrategyWorkbench dashboard={null} loading={false} error="短线策略数据暂不可用" />);
     expect(screen.getByText("短线策略数据暂不可用")).toBeInTheDocument();
   });
+
+  it("marks unavailable score bars explicitly", () => {
+    const incomplete = {
+      ...dashboard,
+      regime: { ...dashboard.regime, emotion_score: null },
+    } as unknown as QuantStrategyDashboard;
+    render(<ShortTermStrategyWorkbench dashboard={incomplete} loading={false} error="" />);
+    expect(screen.getByText("情绪分").closest("div")).toHaveAttribute("data-state", "unavailable");
+  });
 });

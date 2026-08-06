@@ -33,4 +33,12 @@ describe("MarketRegimeDashboard", () => {
     expect(screen.getByText("85% 因子权重可用")).toBeInTheDocument();
     expect(screen.getByText("a-share-short-regime-v2.0")).toBeInTheDocument();
   });
+
+  it("marks missing score and position values as unavailable instead of empty zero bars", () => {
+    const incompleteRegime = { ...regime, emotion_score: null, market_coef: null, coverage_percent: null } as unknown as OverviewRegimeAssessment;
+    render(<MarketRegimeDashboard metrics={metrics} regime={incompleteRegime} />);
+    expect(screen.getByText("暂无可信数据")).toBeInTheDocument();
+    expect(screen.getByText("--", { selector: ".regime-hero strong" })).toBeInTheDocument();
+    expect(screen.getByText("情绪分").closest("article")).toHaveAttribute("data-state", "unavailable");
+  });
 });

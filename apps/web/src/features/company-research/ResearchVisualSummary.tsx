@@ -40,7 +40,7 @@ function safeRatio(value: number | null, total: number | null): number | null {
 
 function Donut({ label, value, total, tone }: { label: string; value: number | null; total: number | null; tone: "liability" | "equity" }) {
   const ratio = safeRatio(value, total);
-  return <div className={`research-donut research-capital-donut ${tone} ${ratio === null ? "unavailable" : ""}`} style={{ "--donut-value": `${(ratio ?? 0) * 3.6}deg` } as CSSProperties}>
+  return <div className={`research-donut research-capital-donut ${tone} ${ratio === null ? "unavailable" : ""}`} data-state={ratio === null ? "unavailable" : "ready"} style={{ "--donut-value": `${(ratio ?? 0) * 3.6}deg` } as CSSProperties}>
     <div><strong>{ratio === null ? "--" : `${ratio.toFixed(1)}%`}</strong><span>{label}</span></div>
   </div>;
 }
@@ -150,7 +150,7 @@ function ResearchVisualSummary({ value }: Props) {
         <header><h3>综合能力剖面</h3><small>九维研究矩阵</small></header>
         <div className="research-profile-bars">{dimensions.map((item) => {
           const current = score(item);
-          return <div className={`research-profile-row ${item.status}`} key={item.key}><span title={item.label}>{item.label}</span><i><b style={{ width: `${current ?? 0}%` }} /></i><strong>{current === null ? "--" : current.toFixed(0)}</strong></div>;
+          return <div className={`research-profile-row ${item.status}`} data-state={current === null ? "unavailable" : "ready"} key={item.key}><span title={item.label}>{item.label}</span><i data-state={current === null ? "unavailable" : "ready"}><b style={{ width: `${current ?? 0}%` }} /></i><strong>{current === null ? "--" : current.toFixed(0)}</strong></div>;
         })}</div>
       </article>
 

@@ -35,6 +35,12 @@ function scoreTone(value: string | null, risk = false): string {
   return number >= 70 ? "safe" : number >= 45 ? "warning" : "danger";
 }
 
+function numericText(value: string | null, digits = 1): string {
+  if (value === null) return "--";
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed.toFixed(digits) : "--";
+}
+
 export function MarketRegimeDashboard({ metrics, regime }: {
   metrics: OverviewRegimeMetrics;
   regime: OverviewRegimeAssessment;
@@ -48,11 +54,11 @@ export function MarketRegimeDashboard({ metrics, regime }: {
   return <section className="regime-dashboard" aria-label="A 股市场风格识别工作台">
     <header className="regime-hero">
       <div><span>A-SHARE REGIME ENGINE</span><h2>{regime.regime ? `${regime.regime}${regime.rule_matched ? "" : "（低置信近似）"}` : "风格待确认"}</h2><p>{regime.reasons.join("；") || "等待 A 股全市场有效行情"}</p></div>
-      <div><small>建议市场系数</small><strong>{Number(regime.market_coef).toFixed(1)}</strong><b>{regime.coverage_percent}% 因子权重可用</b></div>
+      <div><small>建议市场系数</small><strong>{numericText(regime.market_coef)}</strong><b>{regime.coverage_percent === null ? "--" : `${regime.coverage_percent}%`} 因子权重可用</b></div>
     </header>
 
     <div className="regime-scores">
-      {scores.map(([label, value, risk, Icon]) => <article key={label} className={scoreTone(value, risk)}>
+      {scores.map(([label, value, risk, Icon]) => <article key={label} className={scoreTone(value, risk)} data-state={value === null || !Number.isFinite(Number(value)) ? "unavailable" : "ready"}>
         <Icon size={17} /><span><small>{label}</small><b>{value === null ? "--" : Number(value).toFixed(2)}</b></span>
         <i><em style={{ width: `${Math.max(0, Math.min(100, Number(value) || 0))}%` }} /></i>
       </article>)}

@@ -1,6 +1,6 @@
 import type { MarketOverviewResponse } from "../types";
 import { hasDragonTigerEvidence } from "./workspaceEvidence";
-import type { WorkspaceMarketModel } from "./workspaceSelectors";
+import { numberValue, type WorkspaceMarketModel } from "./workspaceSelectors";
 
 export type InsightQuality = "ready" | "partial" | "unavailable";
 export type InsightTone = "positive" | "warning" | "danger" | "neutral";
@@ -112,8 +112,9 @@ function metric(key: MetricKey, data: MarketOverviewResponse, model: WorkspaceMa
   const review = data.review;
   const seatEvidenceReady = hasDragonTigerEvidence(review);
   const seats = review?.dragon_tiger.flatMap((item) => item.seats) ?? [];
-  const seatNet = seats.reduce((sum, item) => sum + Number(item.net_amount_yi || 0), 0);
-  const topSeat = [...seats].sort((a, b) => Math.abs(Number(b.net_amount_yi)) - Math.abs(Number(a.net_amount_yi)))[0];
+  const seatNetValues = seats.map((item) => numberValue(item.net_amount_yi)).filter((value): value is number => value !== null);
+  const seatNet = seatNetValues.length ? seatNetValues.reduce((sum, value) => sum + value, 0) : null;
+  const topSeat = [...seats].filter((item) => numberValue(item.net_amount_yi) !== null).sort((a, b) => Math.abs(numberValue(b.net_amount_yi) as number) - Math.abs(numberValue(a.net_amount_yi) as number))[0];
   const topSector = model.sectors[0];
   const topStock = [...model.stocks].filter((item) => known(item.change)).sort((a, b) => compareDesc(a.change, b.change))[0];
   const topAttention = [...model.stocks].filter((item) => known(item.attentionScore)).sort((a, b) => compareDesc(a.attentionScore, b.attentionScore))[0];
@@ -123,7 +124,7 @@ function metric(key: MetricKey, data: MarketOverviewResponse, model: WorkspaceMa
   const gapsDown = model.stocks.filter((item) => known(item.gap) && item.gap <= -2);
   const auctionPass = model.stocks.filter((item) => known(item.gap) && known(item.change) && known(item.closePosition) && known(item.amount) && item.gap >= -1 && item.gap <= 4 && item.change >= item.gap - 1 && item.closePosition >= 50 && item.amount > 0);
   const riskStocks = model.stocks.filter((item) => item.state === "broken_limit_up" || item.state === "limit_down" || (known(item.change) && item.change <= -3));
-  const coverage = review && review.universe_count > 0 ? review.history_ready_count / review.universe_count * 100 : 0;
+  const coverage = review && review.universe_count > 0 ? review.history_ready_count / review.universe_count * 100 : null;
 
   if ((data.status === "unavailable" || data.market_data.quality === "unavailable") && MARKET_DEPENDENT_METRICS[key]) {
     return unavailable(key, MARKET_DEPENDENT_METRICS[key], "行情主源不可用，暂不计算该指标", "data");
@@ -170,22 +171,25 @@ function metric(key: MetricKey, data: MarketOverviewResponse, model: WorkspaceMa
     case "high-amplitude": return topAmplitude && known(topAmplitude.amplitude) ? ready(key, "最大振幅", `${topAmplitude.amplitude.toFixed(2)}%`, `${topAmplitude.name} ${topAmplitude.symbol}`, "warning", "stock") : unavailable(key, "最大振幅", "行情样本缺少高低价", "stock");
     case "attention-top": return topAttention && known(topAttention.attentionScore) ? ready(key, "观察热度第一", topAttention.name, `量价资讯合成分 ${topAttention.attentionScore.toFixed(0)}`, "positive", "stock") : unavailable(key, "观察热度第一", "行情与关联证据不足", "stock");
     case "theme-stock-top": return ready(key, "题材叠加最多", topThemeStock?.name ?? "--", topThemeStock ? `${topThemeStock.themes.length} 个已关联题材` : "行情样本为空", "warning", "theme");
-    case "history-coverage": return review && review.universe_count > 0 && review.history_ready_count > 0
+    case "history-coverage": return review && review.universe_count > 0 && review.history_ready_count > 0 && coverage !== null
       ? ready(key, "日线覆盖", `${coverage.toFixed(1)}%`, `${review.history_ready_count}/${review.universe_count}`, coverage >= 80 ? "positive" : "warning", "history")
       : unavailable(key, "日线覆盖", "本地日线没有可用历史样本", "history");
     case "history-new-high": return unavailable(key, "百日新高清单", "当前响应未返回百日新高逐股结果", "history");
     case "history-previous-limit": return unavailable(key, "昨涨停反馈", "当前响应未返回上一交易日涨停名单", "history");
     case "interval-result": return unavailable(key, "区间统计结果", "尚未选择并计算明确起止区间", "history");
     case "consecutive-count": return review ? ready(key, "连续涨停", String(review.consecutive_limit_up.length), "至少 2 个交易日连续收盘涨停", "positive", "history") : unavailable(key, "连续涨停", "本地日线复盘尚未完成", "history");
-    case "top-board": return review ? ready(key, "最高连板", `${Math.max(0, ...review.consecutive_limit_up.map((item) => item.board_count ?? 0))}板`, "来自本地连续日线", "positive", "history") : unavailable(key, "最高连板", "本地日线复盘尚未完成", "history");
+    case "top-board": {
+      const boardHeights = review?.consecutive_limit_up.map((item) => item.board_count).filter((value): value is number => known(value)) ?? [];
+      return boardHeights.length ? ready(key, "最高连板", `${Math.max(...boardHeights)}板`, "来自本地连续日线", "positive", "history") : unavailable(key, "最高连板", "本地连续日线没有可用连板高度", "history");
+    }
     case "first-board": return review ? ready(key, "首板股票", String(review.first_limit_up.length), "当日涨停且上一日未涨停", "positive", "history") : unavailable(key, "首板股票", "本地日线复盘尚未完成", "history");
     case "volume-breakout": return review ? ready(key, "放量突破", String(review.volume_breakouts.length), "60 日收盘新高且量能 >= 1.8x", "positive", "history") : unavailable(key, "放量突破", "本地日线复盘尚未完成", "history");
     case "previous-high": return review ? ready(key, "突破前高", String(review.previous_high_breakouts.length), "突破前 20 日高点并放量", "positive", "history") : unavailable(key, "突破前高", "本地日线复盘尚未完成", "history");
     case "low-volume": return review ? ready(key, "低位放量", String(review.low_position_volume.length), "120 日区间下部且放量", "warning", "history") : unavailable(key, "低位放量", "本地日线复盘尚未完成", "history");
     case "seat-stocks": return seatEvidenceReady ? ready(key, "上榜股票", String(review!.dragon_tiger.length), "东方财富公开龙虎榜", "neutral", "seat") : unavailable(key, "上榜股票", "龙虎榜接口和本地缓存均不可用", "seat");
     case "seat-count": return seatEvidenceReady ? ready(key, "可验证席位", String(seats.length), "含席位名称及买卖金额", "neutral", "seat") : unavailable(key, "可验证席位", "龙虎榜席位尚未取得", "seat");
-    case "seat-net": return seatEvidenceReady ? ready(key, "席位净买额", signedMoney(seatNet), "按公开席位净额合计", seatNet >= 0 ? "positive" : "danger", "seat") : unavailable(key, "席位净买额", "龙虎榜席位尚未取得", "seat");
-    case "top-seat": return seatEvidenceReady ? ready(key, "净额最大席位", topSeat?.seat_name ?? "--", topSeat ? signedMoney(Number(topSeat.net_amount_yi)) : "当日无席位明细", "neutral", "seat") : unavailable(key, "净额最大席位", "龙虎榜席位尚未取得", "seat");
+    case "seat-net": return seatEvidenceReady && seatNet !== null ? ready(key, "席位净买额", signedMoney(seatNet), "按公开席位净额合计", seatNet >= 0 ? "positive" : "danger", "seat") : unavailable(key, "席位净买额", "龙虎榜席位净额字段不足", "seat");
+    case "top-seat": return seatEvidenceReady && topSeat ? ready(key, "净额最大席位", topSeat.seat_name, signedMoney(numberValue(topSeat.net_amount_yi) as number), "neutral", "seat") : unavailable(key, "净额最大席位", "龙虎榜席位净额字段不足", "seat");
     case "large-order": return unavailable(key, "逐笔大单方向", "当前响应没有逐笔方向和真实净流入", "data");
     case "large-order-buy": return unavailable(key, "大单买入额", "缺少逐笔方向，不能从总成交额推算", "data");
     case "large-order-sell": return unavailable(key, "大单卖出额", "缺少逐笔方向，不能从总成交额推算", "data");

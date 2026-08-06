@@ -65,6 +65,11 @@ function finiteNumber(value: string | number | null | undefined): number | null 
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function percentText(value: string | number | null | undefined): string {
+  const parsed = finiteNumber(value);
+  return parsed === null ? "--" : `${(parsed * 100).toFixed(1)}%`;
+}
+
 function tickOption(ticks: IntradayTick[]): EChartsOption {
   return {
     ...panelOption(),
@@ -334,7 +339,7 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
 
       <section className="quant-panel quant-backtest-panel" role="region" aria-label="回测风险收益">
         <header><div><span>Q4 / RISK RETURN</span><h2>回测风险收益</h2></div>{selectedBacktest && <small>{selectedBacktest.metrics.closed_trade_count} 笔闭合交易</small>}</header>
-        {selectedBacktest && equity.length > 0 ? <><QuantChart option={backtestOption(selectedBacktest)} ariaLabel={`${selectedName ?? selected ?? "当前股票"}历史回测权益和回撤`} /><div className="quant-backtest-stats"><span>总收益<b>{(Number(selectedBacktest.total_return) * 100).toFixed(1)}%</b></span><span>最大回撤<b>{(Number(selectedBacktest.max_drawdown) * 100).toFixed(1)}%</b></span><span>样本状态<b>{selectedBacktest.metrics.closed_trade_count ? "可计算" : "不足"}</b></span></div></> : <div className="quant-empty"><AlertTriangle size={24} /><b>{backtestError || "等待历史回测"}</b><p>需要完整日线和闭合交易样本，胜率、赔率与 EV 才会显示。</p></div>}
+        {selectedBacktest && equity.length > 0 ? <><QuantChart option={backtestOption(selectedBacktest)} ariaLabel={`${selectedName ?? selected ?? "当前股票"}历史回测权益和回撤`} /><div className="quant-backtest-stats"><span>总收益<b data-state={finiteNumber(selectedBacktest.total_return) === null ? "unavailable" : "ready"}>{percentText(selectedBacktest.total_return)}</b></span><span>最大回撤<b data-state={finiteNumber(selectedBacktest.max_drawdown) === null ? "unavailable" : "ready"}>{percentText(selectedBacktest.max_drawdown)}</b></span><span>样本状态<b>{selectedBacktest.metrics.closed_trade_count ? "可计算" : "不足"}</b></span></div></> : <div className="quant-empty"><AlertTriangle size={24} /><b>{backtestError || "等待历史回测"}</b><p>需要完整日线和闭合交易样本，胜率、赔率与 EV 才会显示。</p></div>}
       </section>
 
       <KronosForecastPanel forecast={selectedForecast} loading={forecastLoading} error={forecastError} />

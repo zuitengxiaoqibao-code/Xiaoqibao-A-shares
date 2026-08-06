@@ -185,7 +185,7 @@ export function ShortTermStrategyWorkbench({ dashboard, loading, error }: Props)
       <section className="strategy-score-dashboard" role="region" aria-label="市场风格评分">
         {scoreItems.map(([label, raw]) => {
           const value = number(raw);
-          return <div className={scoreTone(label, value)} key={label}><span>{label}</span><strong>{value === null ? "--" : value.toFixed(1)}</strong><i><b style={{ width: `${value ?? 0}%` }} /></i></div>;
+          return <div className={scoreTone(label, value)} data-state={value === null ? "unavailable" : "ready"} key={label}><span>{label}</span><strong>{value === null ? "--" : value.toFixed(1)}</strong><i><b style={{ width: `${value ?? 0}%` }} /></i></div>;
         })}
       </section>
       <section className="strategy-model-fit">

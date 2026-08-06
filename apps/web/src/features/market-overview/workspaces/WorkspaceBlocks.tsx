@@ -137,7 +137,7 @@ function NewsWire({ model, variant }: { model: WorkspaceMarketModel; variant: st
 }
 
 function AuctionGap({ model, variant, onOpenAShare }: { model: WorkspaceMarketModel; variant: string; onOpenAShare?: (symbol: string) => void }) {
-  const stocks = stocksForVariant(model, variant).slice(0, 16);
+  const stocks = stocksForVariant(model, variant).filter((stock) => known(stock.gap)).slice(0, 16);
   if (!stocks.length) return <Empty>当前代表股票快照为空，无法计算开盘价相对昨收的缺口。</Empty>;
   const max = Math.max(1, ...stocks.map((stock) => Math.abs(stock.gap ?? 0)));
   return <div className="auction-gap-chart">{stocks.map((stock) => <article key={stock.symbol} {...interactiveTargetProps(onOpenAShare ? () => onOpenAShare(stock.symbol) : undefined, `查看 ${stock.symbol} ${stock.name}`)}>
@@ -269,8 +269,8 @@ function ReviewSummary({ data, variant }: { data: MarketOverviewResponse; varian
     ["历史覆盖", coverageLabel, `${review.history_ready_count}/${review.universe_count}`],
   ] : variant === "first-board" ? [
     ["首板数量", review.first_limit_up.length, "上一日未涨停"],
-    ["成交过亿", review.first_limit_up.filter((item) => Number(item.amount_yi) >= 1).length, "日成交额"],
-    ["平均涨幅", optionalValue(average(review.first_limit_up.map((item) => Number(item.change_percent))), "%"), "最新交易日"],
+    ["成交过亿", review.first_limit_up.filter((item) => { const value = numberValue(item.amount_yi); return value !== null && value >= 1; }).length, "日成交额"],
+    ["平均涨幅", optionalValue(average(review.first_limit_up.map((item) => numberValue(item.change_percent)).filter((value): value is number => value !== null)), "%"), "最新交易日"],
     ["历史覆盖", coverageLabel, `${review.history_ready_count}/${review.universe_count}`],
   ] : variant === "dragon-tiger" ? [
     ["上榜股票", review.dragon_tiger.length, "公开榜单"],
@@ -282,12 +282,12 @@ function ReviewSummary({ data, variant }: { data: MarketOverviewResponse; varian
       : variant === "previous-high" ? review.previous_high_breakouts : review.low_position_volume;
     return [
       ["规则命中", target.length, "严格筛选"],
-      ["最大量能", optionalValue(maxNullable(target.map((item) => Number(item.volume_multiple))), "x"), "相对前 5 日均量"],
-      ["成交过亿", target.filter((item) => Number(item.amount_yi) >= 1).length, "日成交额"],
+      ["最大量能", optionalValue(maxNullable(target.map((item) => numberValue(item.volume_multiple)).filter((value): value is number => value !== null)), "x"), "相对前 5 日均量"],
+      ["成交过亿", target.filter((item) => { const value = numberValue(item.amount_yi); return value !== null && value >= 1; }).length, "日成交额"],
       ["历史覆盖", coverageLabel, `${review.history_ready_count}/${review.universe_count}`],
     ];
   })();
-  return <div className="review-summary-grid">{rows.map(([label, value, note], index) => { const parsed = Number(value); const meter = index === 3 ? coverage : Number.isFinite(parsed) ? parsed : null; return <article key={String(label)} style={{ "--meter": `${Math.min(100, Math.max(6, meter ?? 6))}%` } as CSSProperties}><i /><span>{label}</span><b>{value}</b><small>{note}</small></article>; })}</div>;
+  return <div className="review-summary-grid">{rows.map(([label, value, note], index) => { const parsed = numberValue(value); const meter = index === 3 ? coverage : parsed; return <article key={String(label)} data-state={meter === null ? "unavailable" : "ready"} style={{ "--meter": `${meter === null ? 0 : Math.min(100, Math.max(6, meter))}%` } as CSSProperties}><i /><span>{label}</span><b>{value}</b><small>{note}</small></article>; })}</div>;
 }
 
 function average(values: number[]): number | null {
@@ -309,14 +309,15 @@ function ReviewStockLink({ item, onOpenAShare }: { item: MarketReviewStock; onOp
 function LimitLadder({ data, onOpenAShare }: { data: MarketOverviewResponse; onOpenAShare?: (symbol: string) => void }) {
   const rows = data.review?.consecutive_limit_up ?? [];
   if (!rows.length) return <Empty>{reviewDate(data)} 没有检测到至少 2 个交易日连续收盘涨停的股票。</Empty>;
-  const groups = [...new Map(rows.map((item) => [item.board_count ?? 0, rows.filter((row) => row.board_count === item.board_count).length])).entries()].sort((a, b) => b[0] - a[0]);
-  return <div className="review-ladder"><div className="review-height-badges">{groups.map(([height, count]) => <span key={height}><b>{height}板</b><strong>× {count}</strong></span>)}</div><div className="distinct-table-scroll"><table className="distinct-table review-detail-table"><thead><tr><th>连板</th><th>代码 / 名称</th><th>涨停统计</th><th>收盘</th><th>涨跌幅</th><th>换手率</th><th>封板资金</th><th>炸板次数</th><th>首次封板</th></tr></thead><tbody>{rows.map((item) => <tr key={item.symbol} {...interactiveTargetProps(onOpenAShare ? () => onOpenAShare(item.symbol) : undefined, `查看 ${item.symbol} ${item.name}`)}><td><em className="board-badge">{item.board_count}板</em></td><td><span>{item.symbol}<ReviewStockLink item={item} onOpenAShare={onOpenAShare} /></span></td><td>{optionalValue(item.limit_statistics)}</td><td>{item.close}</td><td className={tone(Number(item.change_percent))}>{signedPercent(Number(item.change_percent))}</td><td>{optionalValue(item.turnover_rate, "%")}</td><td>{optionalValue(item.seal_amount_yi, "亿")}</td><td>{optionalValue(item.failed_limit_count)}</td><td>{optionalValue(item.first_seal_time)}</td></tr>)}</tbody></table></div><footer>交易日 {reviewDate(data)} · 封板资金、炸板次数和首次封板时间仅在盘中源提供时展示</footer></div>;
+  const validRows = rows.filter((item) => item.board_count !== null && Number.isFinite(item.board_count));
+  const groups = [...new Map(validRows.map((item) => [item.board_count as number, validRows.filter((row) => row.board_count === item.board_count).length])).entries()].sort((a, b) => b[0] - a[0]);
+  return <div className="review-ladder"><div className="review-height-badges">{groups.map(([height, count]) => <span key={height}><b>{height}板</b><strong>× {count}</strong></span>)}</div>{!groups.length && <Empty>连板记录存在，但连板高度字段不可用。</Empty>}<div className="distinct-table-scroll"><table className="distinct-table review-detail-table"><thead><tr><th>连板</th><th>代码 / 名称</th><th>涨停统计</th><th>收盘</th><th>涨跌幅</th><th>换手率</th><th>封板资金</th><th>炸板次数</th><th>首次封板</th></tr></thead><tbody>{rows.map((item) => <tr key={item.symbol} {...interactiveTargetProps(onOpenAShare ? () => onOpenAShare(item.symbol) : undefined, `查看 ${item.symbol} ${item.name}`)}><td><em className="board-badge">{optionalValue(item.board_count, "板")}</em></td><td><span>{item.symbol}<ReviewStockLink item={item} onOpenAShare={onOpenAShare} /></span></td><td>{optionalValue(item.limit_statistics)}</td><td>{optionalValue(item.close)}</td><td className={tone(numberValue(item.change_percent))}>{signedPercent(numberValue(item.change_percent))}</td><td>{optionalValue(item.turnover_rate, "%")}</td><td>{optionalValue(item.seal_amount_yi, "亿")}</td><td>{optionalValue(item.failed_limit_count)}</td><td>{optionalValue(item.first_seal_time)}</td></tr>)}</tbody></table></div><footer>交易日 {reviewDate(data)} · 封板资金、炸板次数和首次封板时间仅在盘中源提供时展示</footer></div>;
 }
 
 function FirstBoardTable({ data, onOpenAShare }: { data: MarketOverviewResponse; onOpenAShare?: (symbol: string) => void }) {
   const rows = data.review?.first_limit_up ?? [];
   if (!rows.length) return <Empty>{reviewDate(data)} 没有检测到“当日收盘涨停且前一交易日未涨停”的股票。</Empty>;
-  return <div className="review-first-board"><div className="distinct-table-scroll"><table className="distinct-table review-detail-table"><thead><tr><th>代码 / 名称</th><th>收盘</th><th>涨跌幅</th><th>成交额</th><th>换手率</th><th>封板资金</th><th>炸板次数</th><th>首次封板</th></tr></thead><tbody>{rows.slice(0, 60).map((item) => <tr key={item.symbol} {...interactiveTargetProps(onOpenAShare ? () => onOpenAShare(item.symbol) : undefined, `查看 ${item.symbol} ${item.name}`)}><td><span>{item.symbol}<ReviewStockLink item={item} onOpenAShare={onOpenAShare} /></span></td><td>{item.close}</td><td className={tone(Number(item.change_percent))}>{signedPercent(Number(item.change_percent))}</td><td>{item.amount_yi}亿</td><td>{optionalValue(item.turnover_rate, "%")}</td><td>{optionalValue(item.seal_amount_yi, "亿")}</td><td>{optionalValue(item.failed_limit_count)}</td><td>{optionalValue(item.first_seal_time)}</td></tr>)}</tbody></table></div><footer>共 {rows.length} 只 · 当前显示前 {Math.min(60, rows.length)} 只 · 交易日 {reviewDate(data)}</footer></div>;
+  return <div className="review-first-board"><div className="distinct-table-scroll"><table className="distinct-table review-detail-table"><thead><tr><th>代码 / 名称</th><th>收盘</th><th>涨跌幅</th><th>成交额</th><th>换手率</th><th>封板资金</th><th>炸板次数</th><th>首次封板</th></tr></thead><tbody>{rows.slice(0, 60).map((item) => <tr key={item.symbol} {...interactiveTargetProps(onOpenAShare ? () => onOpenAShare(item.symbol) : undefined, `查看 ${item.symbol} ${item.name}`)}><td><span>{item.symbol}<ReviewStockLink item={item} onOpenAShare={onOpenAShare} /></span></td><td>{optionalValue(item.close)}</td><td className={tone(numberValue(item.change_percent))}>{signedPercent(numberValue(item.change_percent))}</td><td>{optionalValue(item.amount_yi, "亿")}</td><td>{optionalValue(item.turnover_rate, "%")}</td><td>{optionalValue(item.seal_amount_yi, "亿")}</td><td>{optionalValue(item.failed_limit_count)}</td><td>{optionalValue(item.first_seal_time)}</td></tr>)}</tbody></table></div><footer>共 {rows.length} 只 · 当前显示前 {Math.min(60, rows.length)} 只 · 交易日 {reviewDate(data)}</footer></div>;
 }
 
 function SectorPerformance({ data, model }: { data: MarketOverviewResponse; model: WorkspaceMarketModel }) {
@@ -333,7 +334,7 @@ function BreakoutTable({ data, variant, onOpenAShare }: { data: MarketOverviewRe
   const emptyText = variant === "volume-breakout" ? "没有股票同时满足 60 日收盘新高和量能 >= 1.8 倍。"
     : variant === "previous-high" ? "没有股票同时突破前 20 日最高价并得到量能确认。" : "没有股票同时位于 120 日区间下部 30% 且量能 >= 1.5 倍。";
   if (!rows.length) return <Empty>{reviewDate(data)} {emptyText}</Empty>;
-  return <div className="breakout-review"><header>{variant === "volume-breakout" ? "收盘达到此前 60 日最高收盘 · 成交量 / 前 5 日均量 >= 1.8" : variant === "previous-high" ? "收盘突破此前 20 日最高价 · 成交量 / 前 5 日均量 >= 1.2" : "120 日区间位置 <= 30% · 成交量 / 前 5 日均量 >= 1.5"}</header><div className="distinct-table-scroll"><table className="distinct-table review-detail-table"><thead><tr><th>代码 / 名称</th><th>收盘</th><th>涨跌幅</th><th>量能倍数</th><th>成交额</th>{variant !== "low-position" && <th>参考前高</th>}{variant === "low-position" && <th>区间位置</th>}<th>窗口</th></tr></thead><tbody>{rows.map((item) => <tr key={item.symbol} {...interactiveTargetProps(onOpenAShare ? () => onOpenAShare(item.symbol) : undefined, `查看 ${item.symbol} ${item.name}`)}><td><span>{item.symbol}<ReviewStockLink item={item} onOpenAShare={onOpenAShare} /></span></td><td>{item.close}</td><td className={tone(Number(item.change_percent))}>{signedPercent(Number(item.change_percent))}</td><td><em className="volume-multiple">{Number(item.volume_multiple).toFixed(2)}x</em></td><td>{item.amount_yi}亿</td>{variant !== "low-position" && <td>{optionalValue(item.reference_high)}</td>}{variant === "low-position" && <td>{optionalValue(item.range_position_percent, "%")}</td>}<td>{optionalValue(item.window_days, "日")}</td></tr>)}</tbody></table></div></div>;
+  return <div className="breakout-review"><header>{variant === "volume-breakout" ? "收盘达到此前 60 日最高收盘 · 成交量 / 前 5 日均量 >= 1.8" : variant === "previous-high" ? "收盘突破此前 20 日最高价 · 成交量 / 前 5 日均量 >= 1.2" : "120 日区间位置 <= 30% · 成交量 / 前 5 日均量 >= 1.5"}</header><div className="distinct-table-scroll"><table className="distinct-table review-detail-table"><thead><tr><th>代码 / 名称</th><th>收盘</th><th>涨跌幅</th><th>量能倍数</th><th>成交额</th>{variant !== "low-position" && <th>参考前高</th>}{variant === "low-position" && <th>区间位置</th>}<th>窗口</th></tr></thead><tbody>{rows.map((item) => { const volume = numberValue(item.volume_multiple); return <tr key={item.symbol} {...interactiveTargetProps(onOpenAShare ? () => onOpenAShare(item.symbol) : undefined, `查看 ${item.symbol} ${item.name}`)}><td><span>{item.symbol}<ReviewStockLink item={item} onOpenAShare={onOpenAShare} /></span></td><td>{optionalValue(item.close)}</td><td className={tone(numberValue(item.change_percent))}>{signedPercent(numberValue(item.change_percent))}</td><td><em className="volume-multiple">{volume === null ? "--" : `${volume.toFixed(2)}x`}</em></td><td>{optionalValue(item.amount_yi, "亿")}</td>{variant !== "low-position" && <td>{optionalValue(item.reference_high)}</td>}{variant === "low-position" && <td>{optionalValue(item.range_position_percent, "%")}</td>}<td>{optionalValue(item.window_days, "日")}</td></tr>; })}</tbody></table></div></div>;
 }
 
 function DragonTigerBoard({ data, onOpenAShare }: { data: MarketOverviewResponse; onOpenAShare?: (symbol: string) => void }) {
@@ -342,7 +343,8 @@ function DragonTigerBoard({ data, onOpenAShare }: { data: MarketOverviewResponse
   if (!hasDragonTigerEvidence(data.review)) return <Empty>龙虎榜公开接口当前不可用，且本地没有可用的真实缓存。</Empty>;
   if (!rows.length) return <Empty>{reviewDate(data)} 公开龙虎榜没有上榜股票。</Empty>;
   const selected = rows.find((item) => item.symbol === selectedSymbol) ?? rows[0];
-  return <div className="dragon-tiger-workbench"><aside>{rows.map((item) => <button type="button" className={item.symbol === selected.symbol ? "active" : ""} key={`${item.trade_date}-${item.symbol}`} onClick={() => setSelectedSymbol(item.symbol)}><span><b>{item.name}</b><small>{item.symbol} · {item.trade_date}</small></span><strong className={tone(Number(item.net_amount_yi))}>{Number(item.net_amount_yi) >= 0 ? "+" : ""}{item.net_amount_yi}亿</strong></button>)}</aside><section><header><div>{onOpenAShare ? <button type="button" onClick={() => onOpenAShare(selected.symbol)}>{selected.name} <small>{selected.symbol}</small></button> : <h4>{selected.name} <small>{selected.symbol}</small></h4>}<p>{selected.reason}</p></div><span><small>榜单净额</small><b className={tone(Number(selected.net_amount_yi))}>{Number(selected.net_amount_yi) >= 0 ? "+" : ""}{selected.net_amount_yi}亿</b></span></header><div className="dragon-tiger-totals"><article><small>买入额</small><b>{selected.buy_amount_yi}亿</b></article><article><small>卖出额</small><b>{selected.sell_amount_yi}亿</b></article><article><small>净额</small><b className={tone(Number(selected.net_amount_yi))}>{selected.net_amount_yi}亿</b></article><article><small>涨跌幅</small><b className={tone(Number(selected.change_percent ?? 0))}>{selected.change_percent === null ? "--" : signedPercent(Number(selected.change_percent))}</b></article></div>{selected.seats.length ? <div className="distinct-table-scroll"><table className="distinct-table"><thead><tr><th>方向</th><th>席位</th><th>买入额</th><th>卖出额</th><th>净额</th></tr></thead><tbody>{selected.seats.map((seat, index) => <tr key={`${seat.seat_name}-${index}`}><td>{seat.direction === "buy" ? "买入" : seat.direction === "sell" ? "卖出" : "双向"}</td><td>{seat.seat_name}</td><td>{seat.buy_amount_yi}亿</td><td>{seat.sell_amount_yi}亿</td><td className={tone(Number(seat.net_amount_yi))}>{Number(seat.net_amount_yi) >= 0 ? "+" : ""}{seat.net_amount_yi}亿</td></tr>)}</tbody></table></div> : <Empty>榜单股票真实可用，但席位明细接口未返回记录。</Empty>}</section></div>;
+  const money = (value: string | null | undefined) => { const parsed = numberValue(value); return parsed === null ? "--" : `${parsed >= 0 ? "+" : ""}${parsed}亿`; };
+  return <div className="dragon-tiger-workbench"><aside>{rows.map((item) => <button type="button" className={item.symbol === selected.symbol ? "active" : ""} key={`${item.trade_date}-${item.symbol}`} onClick={() => setSelectedSymbol(item.symbol)}><span><b>{item.name}</b><small>{item.symbol} · {item.trade_date}</small></span><strong className={tone(numberValue(item.net_amount_yi))}>{money(item.net_amount_yi)}</strong></button>)}</aside><section><header><div>{onOpenAShare ? <button type="button" onClick={() => onOpenAShare(selected.symbol)}>{selected.name} <small>{selected.symbol}</small></button> : <h4>{selected.name} <small>{selected.symbol}</small></h4>}<p>{selected.reason}</p></div><span><small>榜单净额</small><b className={tone(numberValue(selected.net_amount_yi))}>{money(selected.net_amount_yi)}</b></span></header><div className="dragon-tiger-totals"><article><small>买入额</small><b>{optionalValue(selected.buy_amount_yi, "亿")}</b></article><article><small>卖出额</small><b>{optionalValue(selected.sell_amount_yi, "亿")}</b></article><article><small>净额</small><b className={tone(numberValue(selected.net_amount_yi))}>{money(selected.net_amount_yi)}</b></article><article><small>涨跌幅</small><b className={tone(numberValue(selected.change_percent))}>{signedPercent(numberValue(selected.change_percent))}</b></article></div>{selected.seats.length ? <div className="distinct-table-scroll"><table className="distinct-table"><thead><tr><th>方向</th><th>席位</th><th>买入额</th><th>卖出额</th><th>净额</th></tr></thead><tbody>{selected.seats.map((seat, index) => <tr key={`${seat.seat_name}-${index}`}><td>{seat.direction === "buy" ? "买入" : seat.direction === "sell" ? "卖出" : "双向"}</td><td>{seat.seat_name}</td><td>{optionalValue(seat.buy_amount_yi, "亿")}</td><td>{optionalValue(seat.sell_amount_yi, "亿")}</td><td className={tone(numberValue(seat.net_amount_yi))}>{money(seat.net_amount_yi)}</td></tr>)}</tbody></table></div> : <Empty>榜单股票真实可用，但席位明细接口未返回记录。</Empty>}</section></div>;
 }
 
 function SeatTracker({ data }: { data: MarketOverviewResponse }) {
@@ -352,9 +354,12 @@ function SeatTracker({ data }: { data: MarketOverviewResponse }) {
   const grouped = new Map<string, { buy: number; sell: number; net: number; symbols: Set<string> }>();
   seats.forEach((seat) => {
     const current = grouped.get(seat.seat_name) ?? { buy: 0, sell: 0, net: 0, symbols: new Set<string>() };
-    current.buy += Number(seat.buy_amount_yi || 0);
-    current.sell += Number(seat.sell_amount_yi || 0);
-    current.net += Number(seat.net_amount_yi || 0);
+    const buy = numberValue(seat.buy_amount_yi);
+    const sell = numberValue(seat.sell_amount_yi);
+    const net = numberValue(seat.net_amount_yi);
+    if (buy !== null) current.buy += buy;
+    if (sell !== null) current.sell += sell;
+    if (net !== null) current.net += net;
     current.symbols.add(seat.symbol);
     grouped.set(seat.seat_name, current);
   });
@@ -366,13 +371,15 @@ function SeatDirection({ data }: { data: MarketOverviewResponse }) {
   const stocks = data.review?.dragon_tiger ?? [];
   if (!hasDragonTigerEvidence(data.review)) return <Empty>龙虎榜公开接口当前不可用，且本地没有可追溯缓存。</Empty>;
   if (!stocks.length) return <Empty>{reviewDate(data)} 龙虎榜没有上榜股票，不能生成席位方向。</Empty>;
+  const validStocks = stocks.filter((item) => numberValue(item.net_amount_yi) !== null);
+  if (!validStocks.length) return <Empty>{reviewDate(data)} 龙虎榜净额字段不可用，不能生成方向分组。</Empty>;
   const groups = [
-    ["净买入", stocks.filter((item) => Number(item.net_amount_yi) > 0), "up"],
-    ["净卖出", stocks.filter((item) => Number(item.net_amount_yi) < 0), "down"],
-    ["买卖平衡", stocks.filter((item) => Number(item.net_amount_yi) === 0), "flat"],
+    ["净买入", validStocks.filter((item) => Number(item.net_amount_yi) > 0), "up"],
+    ["净卖出", validStocks.filter((item) => Number(item.net_amount_yi) < 0), "down"],
+    ["买卖平衡", validStocks.filter((item) => Number(item.net_amount_yi) === 0), "flat"],
   ] as const;
   return <div className="seat-direction-dashboard">{groups.map(([label, rows, itemTone]) => {
-    const net = rows.reduce((sum, item) => sum + Number(item.net_amount_yi || 0), 0);
+    const net = rows.reduce((sum, item) => sum + Number(item.net_amount_yi), 0);
     const leader = [...rows].sort((a, b) => Math.abs(Number(b.net_amount_yi)) - Math.abs(Number(a.net_amount_yi)))[0];
     return <section key={label} className={itemTone}><header><span>{label}</span><b>{rows.length} 只</b></header><strong>{net >= 0 ? "+" : ""}{net.toFixed(2)}亿</strong><p>{leader ? `${leader.name} ${leader.symbol}` : "当前无记录"}</p><small>{leader ? `最大单股净额 ${Number(leader.net_amount_yi) >= 0 ? "+" : ""}${leader.net_amount_yi}亿` : "不生成替代数据"}</small></section>;
   })}</div>;
@@ -390,7 +397,9 @@ function HeightPyramid({ data }: { data: MarketOverviewResponse }) {
   if (!data.review) return <Empty>本地日线复盘尚未完成，不能用当前涨幅推断连板高度。</Empty>;
   const rows = data.review.consecutive_limit_up;
   if (!rows.length) return <Empty>{reviewDate(data)} 没有检测到连续 2 个交易日收盘涨停的股票。</Empty>;
-  const max = Math.max(...rows.map((item) => item.board_count ?? 0));
+  const heights = rows.map((item) => item.board_count).filter((value): value is number => value !== null && Number.isFinite(value));
+  if (!heights.length) return <Empty>{reviewDate(data)} 连板记录存在，但连板高度字段不可用。</Empty>;
+  const max = Math.max(...heights);
   return <div className="height-pyramid">{Array.from({ length: Math.max(1, max - 1) }, (_, index) => max - index).map((level, index) => {
     const count = rows.filter((item) => item.board_count === level).length;
     return <div key={level} style={{ width: `${Math.min(96, 38 + index * 12)}%` }}><b>{level} 板</b><span>{count}</span><small>{count ? "真实日线验证" : "该高度为空"}</small></div>;

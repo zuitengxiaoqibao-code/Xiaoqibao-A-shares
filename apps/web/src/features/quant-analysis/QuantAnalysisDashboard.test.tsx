@@ -377,6 +377,18 @@ describe("QuantAnalysisDashboard", () => {
     expect(screen.getByRole("region", { name: "信号引擎" })).toHaveTextContent("72.5");
   });
 
+  it("does not render invalid backtest totals as zero percentages", async () => {
+    render(<QuantAnalysisDashboard
+      loadBoard={async () => board}
+      loadTicks={async (symbol) => ticks(symbol)}
+      runBacktest={async () => ({ ...backtest("600001"), total_return: null, max_drawdown: "not-a-number" } as unknown as BacktestResult)}
+    />);
+    const panel = await screen.findByRole("region", { name: "回测风险收益" });
+    await waitFor(() => expect(panel).toHaveTextContent("总收益"));
+    expect(panel).toHaveTextContent("--");
+    expect(panel).not.toHaveTextContent("0.0%");
+  });
+
   it("loads the Kronos evidence panel independently for the selected candidate", async () => {
     const loadKronosForecast = vi.fn(async (symbol: string) => unavailableForecast(symbol));
     render(<QuantAnalysisDashboard

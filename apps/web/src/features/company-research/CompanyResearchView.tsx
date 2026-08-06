@@ -135,14 +135,14 @@ function ResearchDashboard({ value, peers, onOpenAShare }: { value: CompanyResea
     <div className="research-grid">
       <section className="research-card" aria-label="九维公司研究矩阵">
         <div className="research-card-header"><h2>九维研究矩阵</h2><span className="research-status partial">只对可核验数值评分</span></div>
-        <div className="dimension-list">{value.dimensions.map((item) => <article className="dimension-row" key={item.key}>
+        <div className="dimension-list">{value.dimensions.map((item) => { const dimensionScore = numeric(item.score); return <article className="dimension-row" data-state={dimensionScore === null ? "unavailable" : "ready"} key={item.key}>
           <div className="dimension-name">{item.label}<small> · {item.weight}%</small></div>
-          <div><div className="research-meter"><span style={{ width: `${numeric(item.score) ?? 0}%` }} /></div>
+          <div><div className="research-meter" data-state={dimensionScore === null ? "unavailable" : "ready"}><span style={{ width: `${dimensionScore ?? 0}%` }} /></div>
             <div className="dimension-summary">{item.summary}{item.reason ? ` · 未评分：${item.reason}` : ""}</div>
             {Object.entries(item.metrics).length > 0 && <div className="dimension-summary">{Object.entries(item.metrics).map(([key, metric]) => `${metricLabels[key] ?? key} ${displayMetric(key, metric)}`).join(" · ")}</div>}
           </div>
-          <div className={`dimension-score ${item.status}`}>{item.score === null ? "未评分" : Number(item.score).toFixed(1)}</div>
-        </article>)}</div>
+          <div className={`dimension-score ${item.status}`}>{dimensionScore === null ? "未评分" : dimensionScore.toFixed(1)}</div>
+        </article>; })}</div>
       </section>
       <section className="research-card" aria-label="估值观察">
         <div className="research-card-header"><h2>估值观察</h2><span className={`research-status ${value.valuation.status}`}>{value.valuation.status}</span></div>

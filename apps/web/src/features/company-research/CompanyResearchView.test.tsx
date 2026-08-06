@@ -128,6 +128,21 @@ describe("CompanyResearchView", () => {
     expect(screen.getByRole("region", { name: "研究来源账本" })).toHaveTextContent("多年财报三表");
   });
 
+  it("marks unscored dimension bars as unavailable instead of rendering a zero score", async () => {
+    const incomplete = {
+      ...research,
+      dimensions: research.dimensions.map((item, index) => index === 0 ? { ...item, score: null, status: "unavailable", reason: "缺少可核验字段" } : item),
+    } as CompanyResearchResponse;
+    render(<CompanyResearchView
+      selectedSymbol="600519"
+      load={vi.fn(async () => incomplete)}
+      search={vi.fn(async () => ({ query: "", items: [], server_time: "", source_status: "ready" as const }))}
+    />);
+    const row = (await screen.findAllByText(incomplete.dimensions[0].label)).map((item) => item.closest("article")).find((item) => item?.classList.contains("dimension-row"));
+    expect(row).toHaveAttribute("data-state", "unavailable");
+    expect(row?.querySelector(".research-meter")).toHaveAttribute("data-state", "unavailable");
+  });
+
   it("shows today's complete cache while refreshing and replaces it with the latest result", async () => {
     writeDailySnapshot("company-research", "600519", research, new Date());
     let finish!: (value: CompanyResearchResponse) => void;

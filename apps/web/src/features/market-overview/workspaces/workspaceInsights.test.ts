@@ -72,4 +72,33 @@ describe("workspace insights", () => {
     expect(coverage?.value).toBe("未接入");
     expect(coverage?.value).not.toBe("0.0%");
   });
+
+  it("does not aggregate missing seat amounts as verified zero", () => {
+    const missingSeatAmounts = {
+      ...data,
+      review: {
+        ...data.review!,
+        dragon_tiger: [{
+          ...data.review!.dragon_tiger[0],
+          net_amount_yi: null,
+          seats: [{ ...data.review!.dragon_tiger[0].seats[0], buy_amount_yi: null, sell_amount_yi: null, net_amount_yi: null }],
+        }],
+      },
+    } as unknown as MarketOverviewResponse;
+    const insights = buildWorkspaceInsights("游资动向", missingSeatAmounts, buildWorkspaceMarketModel(missingSeatAmounts));
+    expect(insights.find((item) => item.key === "seat-net")?.quality).toBe("unavailable");
+    expect(insights.find((item) => item.key === "top-seat")?.quality).toBe("unavailable");
+    expect(insights.map((item) => item.value)).not.toContain("+0.00亿");
+  });
+
+  it("does not report a zero highest board when every board height is missing", () => {
+    const missingBoardHeight = {
+      ...data,
+      review: { ...data.review!, consecutive_limit_up: [{ symbol: "600001", name: "样本股", board_count: null }] },
+    } as unknown as MarketOverviewResponse;
+    const insights = buildWorkspaceInsights("连板梯队", missingBoardHeight, buildWorkspaceMarketModel(missingBoardHeight));
+    const highest = insights.find((item) => item.key === "top-board");
+    expect(highest?.quality).toBe("unavailable");
+    expect(highest?.value).not.toBe("0板");
+  });
 });
