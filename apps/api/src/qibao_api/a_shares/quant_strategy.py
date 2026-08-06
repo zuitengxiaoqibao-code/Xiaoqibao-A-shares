@@ -400,7 +400,14 @@ def _refresh_metadata(
         0,
         int((generated_at - market_observed_at).total_seconds()),
     )
-    if overview.as_of < generated_at.astimezone(CHINA_TZ).date():
+    overview_freshness = getattr(overview.market_data, "freshness", "unknown")
+    if overview_freshness in {"previous_close", "final"}:
+        refresh_mode = "postclose"
+        refresh_seconds = 30
+    elif overview_freshness == "stale":
+        refresh_mode = "stale"
+        refresh_seconds = 30
+    elif overview.as_of < generated_at.astimezone(CHINA_TZ).date():
         refresh_mode = "postclose"
         refresh_seconds = 30
     elif (

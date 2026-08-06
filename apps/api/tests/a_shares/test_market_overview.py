@@ -202,6 +202,43 @@ class LocalMarketSource:
         )
 
 
+def test_overview_labels_previous_close_snapshot_before_open() -> None:
+    premarket = datetime(2026, 7, 30, 0, 30, tzinfo=timezone.utc)
+    result = service(
+        Source(),
+        clock=lambda: premarket,
+        local_market_source=LocalMarketSource(),
+    ).current(premarket)
+
+    assert result.market_data.phase == "premarket"
+    assert result.market_data.freshness == "previous_close"
+    assert result.market_data.quality == "ready"
+
+
+def test_overview_labels_same_day_snapshot_as_live_during_session() -> None:
+    intraday = datetime(2026, 7, 29, 2, 30, tzinfo=timezone.utc)
+    result = service(
+        Source(),
+        clock=lambda: intraday,
+        local_market_source=LocalMarketSource(),
+    ).current(intraday)
+
+    assert result.market_data.phase == "intraday"
+    assert result.market_data.freshness == "live"
+
+
+def test_overview_labels_same_day_snapshot_as_final_after_close() -> None:
+    postclose = datetime(2026, 7, 29, 8, 30, tzinfo=timezone.utc)
+    result = service(
+        Source(),
+        clock=lambda: postclose,
+        local_market_source=LocalMarketSource(),
+    ).current(postclose)
+
+    assert result.market_data.phase == "postclose"
+    assert result.market_data.freshness == "final"
+
+
 def service(
     source: Source,
     clock=lambda: NOW,

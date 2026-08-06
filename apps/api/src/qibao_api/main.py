@@ -934,6 +934,7 @@ async def lifespan(application: FastAPI):
                     clock=lambda: datetime.now(timezone.utc),
                     local_market_source=local_tdx_overview_source,
                     market_review_source=local_market_review_source,
+                    trading_calendar=trading_calendar,
                 )
                 application.state.quant_strategy_service = QuantStrategyService(
                     application.state.market_overview_service,

@@ -8,6 +8,7 @@ type Props = {
   error: string | null;
   loading: boolean;
   liveReady?: boolean;
+  snapshotReady?: boolean;
   onRetry: () => void;
 };
 
@@ -31,13 +32,20 @@ function reducedMotionRequested(): boolean {
     && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-export function HomepageStartupOverlay({ data, error, loading, liveReady = Boolean(data && !loading && !error), onRetry }: Props) {
+export function HomepageStartupOverlay({
+  data,
+  error,
+  loading,
+  liveReady = Boolean(data && !loading && !error),
+  snapshotReady = liveReady,
+  onRetry,
+}: Props) {
   const [visible, setVisible] = useState(true);
   const [progress, setProgress] = useState(initialProgress);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const failed = Boolean(error && !data);
   const cacheFailed = Boolean(error && data);
-  const verifiedTarget = data && liveReady ? 100 : 48;
+  const verifiedTarget = data && snapshotReady ? 100 : 48;
 
   useEffect(() => {
     if (progress >= verifiedTarget) return;
@@ -58,48 +66,59 @@ export function HomepageStartupOverlay({ data, error, loading, liveReady = Boole
   }, [verifiedTarget]);
 
   useEffect(() => {
-    if (liveReady || failed || !loading) return;
+    if (snapshotReady || failed || !loading) return;
     setElapsedSeconds(0);
     const timer = window.setInterval(() => setElapsedSeconds((current) => current + 1), 1000);
     return () => window.clearInterval(timer);
-  }, [data, failed, liveReady, loading]);
+  }, [data, failed, loading, snapshotReady]);
 
   useEffect(() => {
     if (!data || loading) {
       setVisible(true);
       return;
     }
-    if (progress < (liveReady ? 100 : 48)) return;
-    const timer = window.setTimeout(() => setVisible(false), liveReady ? 240 : 800);
+    if (progress < (snapshotReady ? 100 : 48)) return;
+    const timer = window.setTimeout(() => setVisible(false), snapshotReady ? 240 : 800);
     return () => window.clearTimeout(timer);
-  }, [data, liveReady, loading, progress]);
+  }, [data, loading, progress, snapshotReady]);
 
   if (!visible) return null;
 
+  const freshnessDetail = data?.market_data.freshness === "previous_close"
+    ? " · 上一交易日收盘"
+    : data?.market_data.freshness === "final"
+    ? " · 收盘最终数据"
+    : data?.market_data.freshness === "stale"
+    ? " · 数据较旧"
+    : liveReady ? " · 盘中实时" : " · 已验证快照";
   const marketDetail = data
-    ? `${data.market_data.quote_count.toLocaleString("zh-CN")} 条行情 / ${data.market_data.universe_count.toLocaleString("zh-CN")} 只标的${!liveReady ? " · 当日缓存" : ""}`
+    ? `${data.market_data.quote_count.toLocaleString("zh-CN")} 条行情 / ${data.market_data.universe_count.toLocaleString("zh-CN")} 只标的${freshnessDetail}`
     : failed ? error ?? "读取失败" : "正在读取通达信与本地缓存";
   const summaryDetail = data
-    ? `${data.indices.length} 个指数 · ${data.sectors.length} 个板块 · ${data.anomalies.length} 条异动${!liveReady ? " · 等待实时更新" : ""}`
+    ? `${data.indices.length} 个指数 · ${data.sectors.length} 个板块 · ${data.anomalies.length} 条异动${!snapshotReady ? " · 等待数据校验" : ""}`
     : "等待市场快照完成后校验";
   const stages: Stage[] = [
     { label: "桌面窗口", detail: "窗口框架已显示", state: "complete" },
     { label: "本地服务", detail: "本地 API 已就绪", state: "complete" },
     { label: "前端资源", detail: "React 资源已挂载", state: "complete" },
-    { label: "全市场快照", detail: marketDetail, state: data && liveReady ? "complete" : cacheFailed || failed ? "error" : "active" },
-    { label: "首页数据校验", detail: summaryDetail, state: data && liveReady ? "complete" : "waiting" },
+    { label: "全市场快照", detail: marketDetail, state: data && snapshotReady ? "complete" : cacheFailed || failed ? "error" : "active" },
+    { label: "首页数据校验", detail: summaryDetail, state: data && snapshotReady ? "complete" : "waiting" },
   ];
-  const currentStep = data && liveReady
-    ? "首页关键数据已完整加载"
+  const currentStep = data && snapshotReady
+    ? data.market_data.freshness === "previous_close"
+      ? "上一交易日完整快照已加载"
+      : data.market_data.freshness === "final"
+      ? "当日收盘完整快照已加载"
+      : liveReady ? "首页实时数据已完整加载" : "首页关键数据已完整加载"
     : cacheFailed ? "实时更新失败，继续使用缓存"
     : failed ? "关键数据加载失败"
-    : data && loading ? "缓存已展示，正在更新实时数据"
+    : data && loading ? "缓存已展示，正在更新最新数据"
     : data ? "数据证据不足，保留可用字段"
     : loading ? "读取本地 A 股全市场快照" : "等待数据任务启动";
   const overlayError = failed || cacheFailed;
 
   return <section
-    className={`homepage-startup-overlay ${overlayError ? "is-error" : data && liveReady ? "is-complete" : "is-loading"}`}
+    className={`homepage-startup-overlay ${overlayError ? "is-error" : data && snapshotReady ? "is-complete" : "is-loading"}`}
     role="dialog"
     aria-modal="true"
     aria-label={overlayError ? "信息总览实时更新失败" : "正在加载信息总览"}
@@ -111,9 +130,9 @@ export function HomepageStartupOverlay({ data, error, loading, liveReady = Boole
     </div>
     <div className="homepage-startup-copy">
       <p>REAL DATA STARTUP PIPELINE</p>
-      <h2>{overlayError ? "信息总览实时更新失败" : data && liveReady ? "首页数据准备完成" : data && loading ? "已展示当天缓存" : data ? "数据证据不足" : "正在建立 A 股数据视图"}</h2>
+      <h2>{overlayError ? "信息总览最新数据更新失败" : data && snapshotReady ? "首页数据准备完成" : data && loading ? "已展示可用缓存" : data ? "数据证据不足" : "正在建立 A 股数据视图"}</h2>
       <div className="homepage-startup-current">
-        {overlayError ? <AlertTriangle size={16} /> : data && liveReady ? <Check size={16} /> : <LoaderCircle className="spinning" size={16} />}
+        {overlayError ? <AlertTriangle size={16} /> : data && snapshotReady ? <Check size={16} /> : <LoaderCircle className="spinning" size={16} />}
         <span><b>{currentStep}</b>{loading && !overlayError && <small>已持续 {elapsedSeconds} 秒 · 数据任务运行中</small>}</span>
         <strong>{progress}%</strong>
       </div>

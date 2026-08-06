@@ -32,6 +32,22 @@ function qualityLabel(quality: MarketOverviewResponse["market_data"]["quality"])
   }
 }
 
+function workspaceStatus(marketData: MarketOverviewResponse["market_data"]): { label: string; detail: string } {
+  if (marketData.freshness === "previous_close") {
+    return { label: "上一交易日收盘快照", detail: "上一交易日收盘快照 · 等待开盘" };
+  }
+  if (marketData.freshness === "final") {
+    return { label: "当日收盘最终快照", detail: "收盘数据已确认 · 等待下一交易日" };
+  }
+  if (marketData.freshness === "stale") {
+    return { label: "历史快照待更新", detail: "数据时间较旧 · 不生成模拟值" };
+  }
+  return {
+    label: qualityLabel(marketData.quality),
+    detail: marketData.quality === "ready" ? "5 秒刷新 · 不生成模拟值" : "保留真实状态 · 不生成模拟值",
+  };
+}
+
 export function DistinctMarketWorkspace({ feature, data, onOpenAShare, loadIntervalReview }: {
   feature: string;
   data: MarketOverviewResponse;
@@ -44,6 +60,7 @@ export function DistinctMarketWorkspace({ feature, data, onOpenAShare, loadInter
   const coverage = data.market_data.universe_count > 0
     ? data.market_data.quote_count / data.market_data.universe_count * 100
     : null;
+  const status = workspaceStatus(data.market_data);
 
   return <section
     className={`distinct-workspace layout-${definition.layout}`}
@@ -52,7 +69,7 @@ export function DistinctMarketWorkspace({ feature, data, onOpenAShare, loadInter
   >
     <header className="distinct-workspace-hero">
       <div><span>{definition.family} / DISTINCT WORKSPACE</span><h2>{definition.label}</h2><p>{definition.question}</p></div>
-      <aside data-quality={data.market_data.quality}><Radio size={17} /><div><small>工作区状态</small><b>{qualityLabel(data.market_data.quality)}</b><span>{data.market_data.quality === "ready" ? "5 秒刷新 · 不生成模拟值" : "保留真实状态 · 不生成模拟值"}</span></div></aside>
+      <aside data-quality={data.market_data.quality}><Radio size={17} /><div><small>工作区状态</small><b>{status.label}</b><span>{status.detail}</span></div></aside>
     </header>
 
     <section className="distinct-provenance" aria-label={`${definition.label}数据来源`}>

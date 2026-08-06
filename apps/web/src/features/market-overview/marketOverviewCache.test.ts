@@ -16,9 +16,27 @@ describe("market overview cache", () => {
     });
   });
 
-  it("drops a snapshot from a previous trading day instead of showing stale market numbers", () => {
+  it("keeps the previous close before open but drops it once the session starts", () => {
     writeMarketOverviewCache({ ...payload, observed_at: "2026-08-05T15:00:00+08:00" }, new Date("2026-08-05T15:00:00+08:00"));
+    expect(readMarketOverviewCache(new Date("2026-08-06T09:20:00+08:00"))?.value.observed_at).toBe("2026-08-05T15:00:00+08:00");
     expect(readMarketOverviewCache(new Date("2026-08-06T09:30:00+08:00"))).toBeNull();
+  });
+
+  it("upgrades an older premarket cache with explicit previous-close metadata", () => {
+    const legacy = {
+      ...payload,
+      observed_at: "2026-08-05T15:00:00+08:00",
+      market_data: {
+        source: "tdx-local-rpc", quality: "ready", observed_at: "2026-08-05T15:00:00+08:00",
+        quote_count: 5100, universe_count: 5200,
+      },
+    } as MarketOverviewResponse;
+    writeMarketOverviewCache(legacy, new Date("2026-08-05T15:01:00+08:00"));
+
+    const restored = readMarketOverviewCache(new Date("2026-08-06T08:30:00+08:00"));
+
+    expect(restored?.value.market_data.phase).toBe("premarket");
+    expect(restored?.value.market_data.freshness).toBe("previous_close");
   });
 
   it("drops a snapshot with an invalid observation timestamp", () => {
@@ -34,6 +52,7 @@ describe("market overview cache", () => {
 
   it("recognizes the Shanghai trading day of a snapshot", () => {
     expect(isMarketOverviewSnapshotCurrent(payload, new Date("2026-08-06T23:59:00+08:00"))).toBe(true);
-    expect(isMarketOverviewSnapshotCurrent(payload, new Date("2026-08-07T00:01:00+08:00"))).toBe(false);
+    expect(isMarketOverviewSnapshotCurrent(payload, new Date("2026-08-07T00:01:00+08:00"))).toBe(true);
+    expect(isMarketOverviewSnapshotCurrent(payload, new Date("2026-08-07T09:30:00+08:00"))).toBe(false);
   });
 });

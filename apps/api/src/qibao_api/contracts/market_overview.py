@@ -8,6 +8,10 @@ from qibao_api.contracts.market_review import MarketReviewSnapshot
 
 
 OverviewQuality = Literal["ready", "partial", "stale", "unavailable"]
+OverviewMarketPhase = Literal["premarket", "intraday", "postclose", "closed"]
+OverviewMarketFreshness = Literal[
+    "live", "previous_close", "final", "stale", "unavailable", "unknown"
+]
 
 
 class OverviewSentiment(BaseModel):
@@ -209,6 +213,8 @@ class OverviewMarketDataStatus(BaseModel):
     observed_at: AwareDatetime | None = None
     quote_count: int = Field(default=0, ge=0)
     universe_count: int = Field(default=0, ge=0)
+    phase: OverviewMarketPhase = "closed"
+    freshness: OverviewMarketFreshness = "unknown"
 
 
 class OverviewMarketSnapshot(BaseModel):

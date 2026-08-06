@@ -163,11 +163,11 @@ describe("MarketOverviewView", () => {
     let resolveLatest: ((value: MarketOverviewResponse) => void) | undefined;
     render(<MarketOverviewView load={() => new Promise<MarketOverviewResponse>((resolve) => { resolveLatest = resolve; })} />);
 
-    await waitFor(() => expect(screen.getAllByText("正在更新实时数据").length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getAllByText("正在更新最新数据").length).toBeGreaterThan(0));
     expect(screen.getByRole("region", { name: "A 股市场情绪与核心指数" })).toHaveTextContent("76");
     expect(screen.getAllByText(/缓存/).length).toBeGreaterThan(0);
     expect(screen.getByRole("progressbar", { name: "首页数据加载进度" })).toHaveAttribute("data-verified-target", "48");
-    expect(screen.getByRole("dialog", { name: "正在加载信息总览" })).toHaveTextContent("缓存已展示，正在更新实时数据");
+    expect(screen.getByRole("dialog", { name: "正在加载信息总览" })).toHaveTextContent("缓存已展示，正在更新最新数据");
     await act(async () => resolveLatest?.(overview));
     localStorage.clear();
   });
@@ -176,6 +176,25 @@ describe("MarketOverviewView", () => {
     render(<MarketOverviewView load={() => Promise.resolve({ ...overview, status: "ready" })} />);
 
     expect(await screen.findByText("已加载最新数据 · 实时监控中")).toBeInTheDocument();
+  });
+
+  it("does not call a previous-close snapshot real-time before the session opens", async () => {
+    localStorage.clear();
+    const previousClose = {
+      ...overview,
+      market_data: {
+        ...overview.market_data,
+        phase: "premarket" as const,
+        freshness: "previous_close" as const,
+      },
+    };
+
+    render(<MarketOverviewView load={() => Promise.resolve(previousClose)} />);
+
+    expect(await screen.findByText("已加载上一交易日快照 · 等待开盘")).toBeInTheDocument();
+    expect(screen.queryByText("已加载最新数据 · 实时监控中")).not.toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: "首页数据加载进度" })).toHaveAttribute("data-verified-target", "100");
+    localStorage.clear();
   });
 
   it("keeps cached data visible and explains a failed live refresh", async () => {

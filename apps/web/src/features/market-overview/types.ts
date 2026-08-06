@@ -242,6 +242,8 @@ export type MarketOverviewResponse = {
     observed_at: string | null;
     quote_count: number;
     universe_count: number;
+    phase?: "premarket" | "intraday" | "postclose" | "closed";
+    freshness?: "live" | "previous_close" | "final" | "stale" | "unavailable" | "unknown";
   };
   indices: OverviewIndexQuote[];
   minute_series: OverviewMinutePoint[];

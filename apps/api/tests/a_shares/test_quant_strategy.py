@@ -197,6 +197,23 @@ def test_strategy_marks_old_market_snapshot_stale_without_changing_values() -> N
     assert result.metrics.up_ratio == Decimal("66")
 
 
+def test_strategy_preserves_previous_close_semantics_from_market_overview() -> None:
+    previous_close = overview().model_copy(update={
+        "market_data": overview().market_data.model_copy(update={
+            "phase": "premarket", "freshness": "previous_close",
+        }),
+    })
+
+    result = build_quant_strategy_dashboard(
+        previous_close,
+        board(),
+        names={"600001": "样本股份"},
+        generated_at=NOW,
+    )
+
+    assert result.refresh_mode == "postclose"
+
+
 def test_complete_real_trigger_evidence_can_reach_alert() -> None:
     result = build_quant_strategy_dashboard(
         overview(),

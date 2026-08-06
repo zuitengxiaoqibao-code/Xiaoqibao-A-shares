@@ -53,6 +53,22 @@ describe("DistinctMarketWorkspace", () => {
     expect(screen.getByRole("region", { name: "A 股事件日历" })).toHaveTextContent("算力需求增长");
   });
 
+  it("does not label a previous-close workspace as connected real-time evidence", () => {
+    const previousClose = {
+      ...overview,
+      market_data: {
+        ...overview.market_data,
+        phase: "premarket" as const,
+        freshness: "previous_close" as const,
+      },
+    } as MarketOverviewResponse;
+
+    render(<DistinctMarketWorkspace feature="盘中异动" data={previousClose} />);
+
+    expect(screen.getByText("上一交易日收盘快照 · 等待开盘")).toBeInTheDocument();
+    expect(screen.queryByText("5 秒刷新 · 不生成模拟值")).not.toBeInTheDocument();
+  });
+
   it("uses real public seat records for seat tracking without amount proxies", () => {
     render(<DistinctMarketWorkspace feature="游资追踪" data={overview} />);
     expect(screen.getByRole("region", { name: "席位净额追踪榜" })).toHaveTextContent("深股通专用");

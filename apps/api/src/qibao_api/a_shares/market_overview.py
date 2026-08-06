@@ -1,9 +1,10 @@
 import hashlib
 import threading
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Callable
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -27,6 +28,7 @@ from qibao_api.contracts.market_overview import (
 
 HUNDRED = Decimal("100")
 TWO_PLACES = Decimal("0.01")
+CHINA_TZ = ZoneInfo("Asia/Shanghai")
 
 
 class MarketOverviewService:
@@ -40,6 +42,7 @@ class MarketOverviewService:
         clock: Callable[[], datetime],
         local_market_source=None,
         market_review_source=None,
+        trading_calendar=None,
         cache_seconds: int = 5,
     ) -> None:
         self.sentiment_repository = sentiment_repository
@@ -49,6 +52,7 @@ class MarketOverviewService:
         self.clock = clock
         self.local_market_source = local_market_source
         self.market_review_source = market_review_source
+        self.trading_calendar = trading_calendar
         self.cache_ttl = timedelta(seconds=cache_seconds)
         self._lock = threading.RLock()
         self._cached_at: datetime | None = None
@@ -70,7 +74,9 @@ class MarketOverviewService:
             return response
 
     def _build(self, now: datetime) -> MarketOverviewResponse:
-        as_of = now.astimezone().date()
+        local_now = now.astimezone(CHINA_TZ)
+        as_of = local_now.date()
+        market_phase = self._market_phase(local_now)
         warnings: list[str] = []
         sources: list[str] = []
 
@@ -136,6 +142,10 @@ class MarketOverviewService:
                 observed_at=local_market.observed_at,
                 quote_count=local_market.quote_count,
                 universe_count=local_market.universe_count,
+                phase=market_phase,
+                freshness=self._market_freshness(
+                    local_market.observed_at, local_market.quality, local_now,
+                ),
             )
             market_stocks = local_market.market_stocks
         else:
@@ -146,6 +156,12 @@ class MarketOverviewService:
                 observed_at=(sentiment.observed_at if snapshot is not None else None),
                 quote_count=breadth.valid_count,
                 universe_count=breadth.valid_count,
+                phase=market_phase,
+                freshness=self._market_freshness(
+                    sentiment.observed_at if snapshot is not None else None,
+                    sentiment.quality if snapshot is not None else "unavailable",
+                    local_now,
+                ),
             )
             if self.local_market_source is not None:
                 warnings.append("tdx_local_market_warming_up")
@@ -262,6 +278,41 @@ class MarketOverviewService:
             warnings=tuple(dict.fromkeys(warnings)),
             sources=tuple(dict.fromkeys(sources)),
         )
+
+    def _market_phase(self, local_now: datetime) -> str:
+        if self.trading_calendar is not None:
+            try:
+                if not self.trading_calendar.is_trading_day(local_now.date()):
+                    return "closed"
+            except (OSError, RuntimeError, ValueError):
+                pass
+        if local_now.time() < time(9, 25):
+            return "premarket"
+        if local_now.time() < time(15, 0):
+            return "intraday"
+        return "postclose"
+
+    def _previous_trading_day(self, value):
+        if self.trading_calendar is not None:
+            try:
+                return self.trading_calendar.previous_trading_day(value)
+            except (OSError, RuntimeError, ValueError):
+                pass
+        return value - timedelta(days=1)
+
+    def _market_freshness(self, observed_at, quality: str, local_now: datetime) -> str:
+        if observed_at is None or quality == "unavailable":
+            return "unavailable"
+        observed_local = observed_at.astimezone(CHINA_TZ)
+        observed_day = observed_local.date()
+        phase = self._market_phase(local_now)
+        if phase == "intraday" and observed_day == local_now.date():
+            return "live"
+        if phase == "postclose" and observed_day == local_now.date():
+            return "final"
+        if phase in {"premarket", "closed"} and observed_day == self._previous_trading_day(local_now.date()):
+            return "previous_close"
+        return "stale"
 
     @staticmethod
     def _metrics(snapshot, name: str) -> dict:

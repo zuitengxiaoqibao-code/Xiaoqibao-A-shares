@@ -167,23 +167,44 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, synthesizeS
     : feedFeatures.has(activeFeature) ? "feed" : "sectors";
   const slots = useMemo(() => indexSlots(data?.indices ?? []), [data?.indices]);
   const selectedAnomaly = data?.anomalies.find((item) => item.anomaly_id === selectedAnomalyId) ?? null;
+  const marketData = data?.market_data;
+  const freshness = marketData?.freshness && marketData.freshness !== "unknown"
+    ? marketData.freshness
+    : marketData?.quality === "unavailable" ? "unavailable" : "live";
+  const snapshotReady = Boolean(
+    data
+    && data.status !== "unavailable"
+    && marketData?.quality !== "unavailable"
+    && !usingCache
+    && !loading
+    && !error
+  );
+  const liveReady = snapshotReady && freshness === "live";
 
   const statusLabel = data && loading
-    ? "正在更新实时数据"
+    ? "正在更新最新数据"
     : !data && loading
     ? "正在聚合 A 股市场数据"
     : error && !data ? "数据链路中断"
+    : freshness === "previous_close" ? "上一交易日数据可用"
+    : freshness === "final" ? "当日收盘数据可用"
+    : freshness === "stale" ? "历史快照可用"
     : data?.status === "ready" ? "实时数据就绪"
     : data?.status === "partial" ? "部分数据可用"
     : "当前数据不可用";
   const headerStatusLabel = data && loading
-    ? "正在更新实时数据"
+    ? "正在更新最新数据"
     : error && data
-    ? "实时更新失败，继续使用缓存"
-    : data && !usingCache
+    ? "最新数据更新失败 · 继续使用缓存"
+    : snapshotReady && freshness === "previous_close"
+    ? "已加载上一交易日快照 · 等待开盘"
+    : snapshotReady && freshness === "final"
+    ? "已加载收盘数据 · 等待下一交易日"
+    : snapshotReady && freshness === "stale"
+    ? "已加载历史快照 · 等待最新数据"
+    : snapshotReady && liveReady
     ? "已加载最新数据 · 实时监控中"
     : statusLabel;
-  const marketData = data?.market_data;
   const coverage = marketData
     ? `${marketData.quote_count.toLocaleString("zh-CN")} / ${marketData.universe_count.toLocaleString("zh-CN")}`
     : "-- / --";
@@ -195,7 +216,12 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, synthesizeS
   };
   const breadthTotal = data ? data.breadth.rising_count + data.breadth.falling_count + data.breadth.flat_count : 0;
   const risingRatio = hasVerifiedMarket && breadthTotal > 0 ? (data?.breadth.rising_count ?? 0) / breadthTotal * 100 : null;
-  const metricDetail = hasVerifiedMarket ? data?.status === "ready" ? "实时快照" : "部分快照" : "等待可用证据";
+  const metricDetail = hasVerifiedMarket
+    ? freshness === "previous_close" ? "上一交易日快照"
+    : freshness === "final" ? "收盘最终快照"
+    : freshness === "stale" ? "历史快照"
+    : data?.status === "ready" ? "实时快照" : "部分快照"
+    : "等待可用证据";
 
   const openSearchedSymbol = () => {
     const symbol = searchSymbol.trim();
@@ -207,7 +233,8 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, synthesizeS
       data={data}
       error={error}
       loading={loading}
-      liveReady={Boolean(data && data.status !== "unavailable" && data.market_data?.quality !== "unavailable" && !usingCache && !loading && !error)}
+      liveReady={liveReady}
+      snapshotReady={snapshotReady}
       onRetry={() => void refresh()}
     />
     <TerminalPageHeader
