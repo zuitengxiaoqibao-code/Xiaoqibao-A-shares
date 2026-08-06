@@ -10,7 +10,12 @@ from qibao_api.contracts.market_overview import (
     OverviewLiquidity,
     OverviewSentiment,
 )
-from qibao_api.dependencies import get_market_overview_service, get_server_time
+from qibao_api.contracts.market_review import MarketIntervalReviewSnapshot
+from qibao_api.dependencies import (
+    get_local_market_review_source,
+    get_market_overview_service,
+    get_server_time,
+)
 from qibao_api.routes.market_overview import router
 
 
@@ -46,10 +51,26 @@ class Service:
         return overview()
 
 
+class IntervalSource:
+    def interval(self, *, start_date, end_date):
+        return MarketIntervalReviewSnapshot(
+            requested_start_date=start_date,
+            requested_end_date=end_date,
+            start_date=start_date,
+            end_date=end_date,
+            observed_at=NOW,
+            source="tdx-local-day",
+            quality="partial",
+            universe_count=1,
+            valid_count=1,
+        )
+
+
 def client(service: Service) -> TestClient:
     application = FastAPI()
     application.include_router(router)
     application.dependency_overrides[get_market_overview_service] = lambda: service
+    application.dependency_overrides[get_local_market_review_source] = IntervalSource
     application.dependency_overrides[get_server_time] = lambda: NOW
     return TestClient(application)
 
@@ -72,3 +93,13 @@ def test_market_overview_route_hides_internal_source_errors() -> None:
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "market_overview_unavailable"
     assert "secret.invalid" not in response.text
+
+
+def test_interval_review_route_returns_real_date_window() -> None:
+    response = client(Service()).get(
+        "/api/v1/a-shares/market-overview/interval"
+        "?start_date=2026-07-01&end_date=2026-07-29"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["formula_version"] == "a-share-interval-review-v1"

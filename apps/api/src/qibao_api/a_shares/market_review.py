@@ -2,12 +2,18 @@ from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Callable
 
-from qibao_api.contracts.market_review import MarketReviewSnapshot, MarketReviewStock
+from qibao_api.contracts.market_review import (
+    MarketIntervalReviewSnapshot,
+    MarketIntervalReviewStock,
+    MarketReviewSnapshot,
+    MarketReviewStock,
+)
 from qibao_api.gongbu.tdx_local_daily import TdxLocalDailyBar
 
 
 CENT = Decimal("0.01")
 HUNDRED_MILLION = Decimal("100000000")
+BENCHMARK_SYMBOLS = frozenset({"000300", "000852", "511010"})
 
 
 def _two_places(value: Decimal) -> Decimal:
@@ -85,12 +91,16 @@ def build_market_review(
     )
     consecutive: list[MarketReviewStock] = []
     first: list[MarketReviewStock] = []
+    new_high_100: list[MarketReviewStock] = []
+    previous_limit_up: list[MarketReviewStock] = []
     volume_breakouts: list[MarketReviewStock] = []
     previous_high_breakouts: list[MarketReviewStock] = []
     low_position_volume: list[MarketReviewStock] = []
     ready_count = 0
 
     for symbol, raw_bars in histories.items():
+        if symbol in BENCHMARK_SYMBOLS:
+            continue
         bars = tuple(raw_bars)
         if len(bars) < 2 or bars[-1].trade_date != latest_trade_date:
             continue
@@ -114,6 +124,27 @@ def build_market_review(
                 consecutive.append(item)
             else:
                 first.append(item)
+
+        if len(bars) >= 101:
+            prior_close_high = max(item.close for item in bars[-101:-1])
+            if bars[-1].close >= prior_close_high:
+                new_high_100.append(_base_stock(
+                    bars,
+                    name=name,
+                    category="new_high_100",
+                    reference_high=prior_close_high,
+                    window_days=100,
+                ))
+
+        if len(bars) >= 3 and _is_limit_up(bars[-3], bars[-2], name=name):
+            previous_limit_up.append(_base_stock(
+                bars,
+                name=name,
+                category="previous_limit_feedback",
+                prior_close=bars[-2].close,
+                prior_change_percent=_change(bars[-3], bars[-2]),
+                window_days=1,
+            ))
 
         multiple = _volume_multiple(bars)
         if len(bars) >= 61 and multiple is not None:
@@ -160,6 +191,8 @@ def build_market_review(
 
     consecutive.sort(key=lambda item: (-(item.board_count or 0), -item.amount_yi, item.symbol))
     first.sort(key=lambda item: (-item.amount_yi, item.symbol))
+    new_high_100.sort(key=lambda item: (-item.change_percent, -item.amount_yi, item.symbol))
+    previous_limit_up.sort(key=lambda item: (-item.change_percent, -item.amount_yi, item.symbol))
     volume_breakouts.sort(key=lambda item: (-(item.volume_multiple or Decimal()), item.symbol))
     previous_high_breakouts.sort(key=lambda item: (-(item.volume_multiple or Decimal()), item.symbol))
     low_position_volume.sort(key=lambda item: (item.range_position_percent or Decimal("100"), -(item.volume_multiple or Decimal())))
@@ -175,8 +208,104 @@ def build_market_review(
         history_ready_count=ready_count,
         consecutive_limit_up=tuple(consecutive),
         first_limit_up=tuple(first),
+        new_high_100=tuple(new_high_100),
+        previous_limit_up=tuple(previous_limit_up),
         volume_breakouts=tuple(volume_breakouts),
         previous_high_breakouts=tuple(previous_high_breakouts),
         low_position_volume=tuple(low_position_volume),
+        warnings=warnings,
+    )
+
+
+def build_interval_review(
+    histories: dict[str, tuple[TdxLocalDailyBar, ...]],
+    *,
+    start_date: date,
+    end_date: date,
+    as_of: date,
+    observed_at: datetime,
+    name_resolver: Callable[[str], str],
+) -> MarketIntervalReviewSnapshot:
+    if start_date >= end_date:
+        raise ValueError("start_date must be before end_date")
+
+    eligible = {
+        symbol: tuple(sorted(bars, key=lambda item: item.trade_date))
+        for symbol, bars in histories.items()
+        if symbol not in BENCHMARK_SYMBOLS and bars
+    }
+    effective_end = min(end_date, as_of)
+    available_dates = sorted({
+        bar.trade_date
+        for bars in eligible.values()
+        for bar in bars
+        if start_date <= bar.trade_date <= effective_end
+    })
+    if len(available_dates) < 2:
+        return MarketIntervalReviewSnapshot(
+            requested_start_date=start_date,
+            requested_end_date=end_date,
+            observed_at=observed_at,
+            universe_count=len(eligible),
+            warnings=("interval_history_unavailable",),
+        )
+
+    resolved_start = next((item for item in available_dates if item >= start_date), None)
+    resolved_end = next((item for item in reversed(available_dates) if item <= effective_end), None)
+    if resolved_start is None or resolved_end is None or resolved_start >= resolved_end:
+        return MarketIntervalReviewSnapshot(
+            requested_start_date=start_date,
+            requested_end_date=end_date,
+            observed_at=observed_at,
+            universe_count=len(eligible),
+            warnings=("interval_window_too_short",),
+        )
+
+    rows: list[MarketIntervalReviewStock] = []
+    for symbol, bars in eligible.items():
+        by_date = {bar.trade_date: bar for bar in bars}
+        opening = by_date.get(resolved_start)
+        closing = by_date.get(resolved_end)
+        if opening is None or closing is None:
+            continue
+        window = tuple(
+            bar for bar in bars
+            if resolved_start <= bar.trade_date <= resolved_end
+        )
+        if not window:
+            continue
+        lowest = min(bar.low for bar in window)
+        highest = max(bar.high for bar in window)
+        amplitude = _two_places(
+            (highest / lowest - Decimal("1")) * Decimal("100")
+        ) if lowest > 0 else Decimal("0")
+        rows.append(MarketIntervalReviewStock(
+            symbol=symbol,
+            name=name_resolver(symbol) or symbol,
+            start_date=resolved_start,
+            end_date=resolved_end,
+            start_close=opening.close,
+            end_close=closing.close,
+            return_percent=_change(opening, closing),
+            amplitude_percent=amplitude,
+            amount_yi=_two_places(
+                sum((bar.amount for bar in window), Decimal()) / HUNDRED_MILLION
+            ),
+        ))
+
+    rows.sort(key=lambda item: (-item.return_percent, -item.amount_yi, item.symbol))
+    quality = "ready" if len(rows) >= 1000 else "partial" if rows else "unavailable"
+    warnings = () if rows else ("interval_samples_unavailable",)
+    return MarketIntervalReviewSnapshot(
+        requested_start_date=start_date,
+        requested_end_date=end_date,
+        start_date=resolved_start,
+        end_date=resolved_end,
+        observed_at=observed_at,
+        source="tdx-local-day" if rows else "unavailable",
+        quality=quality,
+        universe_count=len(eligible),
+        valid_count=len(rows),
+        rows=tuple(rows),
         warnings=warnings,
     )

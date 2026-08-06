@@ -55,6 +55,25 @@ def test_read_tdx_day_bars_decodes_prices_amount_and_date(tmp_path) -> None:
     assert bars[0].amount == Decimal("609194112.0")
 
 
+def test_read_tdx_day_bars_can_load_an_explicit_interval_without_tail_truncation(tmp_path) -> None:
+    path = tmp_path / "sh600000.day"
+    path.write_bytes(b"".join([
+        struct.pack("<IIIIIfII", 20200102, 1000, 1010, 990, 1000, 100.0, 10, 0),
+        struct.pack("<IIIIIfII", 20260701, 1200, 1210, 1190, 1200, 200.0, 20, 0),
+        struct.pack("<IIIIIfII", 20260729, 1300, 1310, 1290, 1300, 300.0, 30, 0),
+    ]))
+
+    bars = read_tdx_day_bars(
+        path,
+        symbol="600000",
+        as_of=date(2026, 7, 29),
+        start_date=date(2026, 7, 1),
+        limit=None,
+    )
+
+    assert [item.trade_date for item in bars] == [date(2026, 7, 1), date(2026, 7, 29)]
+
+
 def test_local_tdx_sentiment_source_converts_cached_realtime_snapshot() -> None:
     snapshot = OverviewMarketSnapshot(
         observed_at=NOW,

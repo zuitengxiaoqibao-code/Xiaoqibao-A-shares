@@ -90,13 +90,15 @@ export type MarketReviewStock = {
   symbol: string;
   name: string;
   trade_date: string;
-  category: "consecutive_limit_up" | "first_limit_up" | "volume_breakout" | "previous_high_breakout" | "low_position_volume";
+  category: "consecutive_limit_up" | "first_limit_up" | "new_high_100" | "previous_limit_feedback" | "volume_breakout" | "previous_high_breakout" | "low_position_volume";
   close: string;
   change_percent: string;
   amount_yi: string;
   source: string;
   board_count: number | null;
   limit_statistics: string | null;
+  prior_close: string | null;
+  prior_change_percent: string | null;
   turnover_rate: string | null;
   seal_amount_yi: string | null;
   failed_limit_count: number | null;
@@ -141,10 +143,40 @@ export type MarketReviewSnapshot = {
   history_ready_count: number;
   consecutive_limit_up: MarketReviewStock[];
   first_limit_up: MarketReviewStock[];
+  new_high_100: MarketReviewStock[];
+  previous_limit_up: MarketReviewStock[];
   volume_breakouts: MarketReviewStock[];
   previous_high_breakouts: MarketReviewStock[];
   low_position_volume: MarketReviewStock[];
   dragon_tiger: DragonTigerStock[];
+  warnings: string[];
+  formula_version: string;
+};
+
+export type MarketIntervalReviewStock = {
+  symbol: string;
+  name: string;
+  start_date: string;
+  end_date: string;
+  start_close: string;
+  end_close: string;
+  return_percent: string;
+  amplitude_percent: string;
+  amount_yi: string;
+  source: string;
+};
+
+export type MarketIntervalReviewSnapshot = {
+  requested_start_date: string;
+  requested_end_date: string;
+  start_date: string | null;
+  end_date: string | null;
+  observed_at: string;
+  source: string;
+  quality: OverviewQuality;
+  universe_count: number;
+  valid_count: number;
+  rows: MarketIntervalReviewStock[];
   warnings: string[];
   formula_version: string;
 };
@@ -226,3 +258,4 @@ export type MarketOverviewResponse = {
 };
 
 export type MarketOverviewLoader = (signal?: AbortSignal) => Promise<MarketOverviewResponse>;
+export type MarketIntervalReviewLoader = (startDate: string, endDate: string, signal?: AbortSignal) => Promise<MarketIntervalReviewSnapshot>;

@@ -24,6 +24,14 @@ class LocalApiServer:
             app,
             host="127.0.0.1",
             port=self.port,
+            # The desktop server only serves FastAPI over loopback.  Pinning
+            # the protocol implementations avoids Uvicorn's string-based
+            # auto-discovery of websocket, uvloop and httptools branches.
+            loop="asyncio",
+            http="h11",
+            ws="none",
+            lifespan="on",
+            interface="asgi3",
             log_level=log_level,
             access_log=False,
             log_config=None,

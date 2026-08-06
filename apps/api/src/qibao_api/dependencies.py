@@ -116,6 +116,10 @@ def get_market_overview_service(request: Request):
     return request.app.state.market_overview_service
 
 
+def get_local_market_review_source(request: Request):
+    return request.app.state.local_market_review_source
+
+
 def get_quant_strategy_service(request: Request):
     return request.app.state.quant_strategy_service
 
@@ -138,6 +142,10 @@ def get_tdx_ipo_source(request: Request):
 
 def get_tdx_formula_source(request: Request):
     return request.app.state.tdx_formula_source
+
+
+def get_tdx_professional_source(request: Request):
+    return request.app.state.tdx_professional_source
 
 
 def get_decision_repository(request: Request):

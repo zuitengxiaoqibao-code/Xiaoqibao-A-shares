@@ -312,3 +312,32 @@ def test_enabled_tdx_rpc_reports_unavailable_when_bridge_cannot_connect(
     body = response.json()
     assert body["tdx_rpc"]["status"] == "unavailable"
     assert body["tdx_rpc"]["reachable"] is False
+    assert body["tdx_rpc"]["client"]["status"] == "not_running"
+    assert "未检测到通达信客户端进程" in body["tdx_rpc"]["client"]["detail"]
+
+
+def test_tdx_rpc_reports_client_process_separately_from_bridge(
+    tmp_path: Path, monkeypatch
+) -> None:
+    executable = Path(r"D:\new_tdx64\TdxW.exe")
+    monkeypatch.setattr(
+        "qibao_api.routes.settings.running_tdx_process_paths",
+        lambda: (executable,),
+    )
+
+    response = client(tmp_path).put("/api/v1/settings/data-sources", json={
+        "auto_discovery": True,
+        "tdx_install_paths": [],
+        "ths_install_paths": [],
+        "tdx_rpc_enabled": True,
+        "tdx_rpc_url": "http://127.0.0.1:17709/",
+    })
+
+    assert response.status_code == 200
+    body = response.json()["tdx_rpc"]
+    assert body["client"] == {
+        "status": "running",
+        "executable_path": str(executable),
+        "detail": "检测到通达信客户端进程；这不代表 17709 JSON-RPC 桥已经监听",
+    }
+    assert body["reachable"] is False

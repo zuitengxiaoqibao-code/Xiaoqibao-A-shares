@@ -161,6 +161,129 @@ describe("DistinctMarketWorkspace", () => {
     expect(dashboard).not.toHaveTextContent("严格涨停0");
   });
 
+  it("does not expose zero-valued market pulse cards when the quote source is unavailable", () => {
+    const unavailable = {
+      ...overview,
+      status: "unavailable" as const,
+      market_data: {
+        source: "unavailable",
+        quality: "unavailable" as const,
+        observed_at: null,
+        quote_count: 0,
+        universe_count: 0,
+      },
+      breadth: { rising_count: 0, falling_count: 0, flat_count: 0, valid_count: 0 },
+      limit_ecology: { limit_up_count: 0, limit_down_count: 0, broken_limit_up_count: 0, seal_rate_percent: null },
+      liquidity: { total_amount_yi: null, baseline_amount_yi: null, relative_amount: null },
+      regime: null,
+      sentiment: { ...overview.sentiment, score: null, band: "数据不足", quality: "unavailable" },
+    } as unknown as MarketOverviewResponse;
+
+    render(<DistinctMarketWorkspace feature="情绪周期" data={unavailable} />);
+
+    const pulse = screen.getByRole("region", { name: "市场风格仪表" });
+    expect(pulse).toHaveTextContent("未接入");
+    expect(pulse).not.toHaveTextContent("上涨 / 下跌0 / 0");
+    expect(pulse).not.toHaveTextContent("涨停 / 跌停0 / 0");
+  });
+
+  it("uses score bands for the popularity composition instead of price-return bins", () => {
+    render(<DistinctMarketWorkspace feature="人气榜" data={overview} />);
+
+    const distribution = screen.getByRole("region", { name: "人气构成分布" });
+    expect(distribution).toHaveTextContent("人气分 0-20");
+    expect(distribution).toHaveTextContent("人气分 80-100");
+    expect(distribution).not.toHaveTextContent("跌幅 > 7%");
+  });
+
+  it("uses opening-gap checks for the opening checklist instead of repeating the regime cards", () => {
+    render(<DistinctMarketWorkspace feature="开盘啦" data={overview} />);
+
+    const opening = screen.getByRole("region", { name: "开盘市场检查单" });
+    expect(opening).toHaveTextContent("高开 >= 2%");
+    expect(opening).toHaveTextContent("高开延续");
+    expect(opening).not.toHaveTextContent("市场风格");
+  });
+
+  it("keeps hotspot interpretation on verified, symbol-linked A-share news", () => {
+    const mixedNews = {
+      ...overview,
+      live_feed: [
+        ...overview.live_feed,
+        { event_id: "n2", occurred_at: "2026-07-29T10:25:00+08:00", headline: "未关联传闻", summary: "待核验", themes: [], symbols: [], source: "未知来源", review_state: "pending" },
+      ],
+    } as unknown as MarketOverviewResponse;
+
+    render(<DistinctMarketWorkspace feature="热点解读" data={mixedNews} />);
+
+    const news = screen.getByRole("region", { name: "热点原始资讯" });
+    expect(news).toHaveTextContent("算力需求增长");
+    expect(news).not.toHaveTextContent("未关联传闻");
+  });
+
+  it("keeps the full hotspot evidence chain scoped to verified A-share-linked themes", () => {
+    const mixedNews = {
+      ...overview,
+      live_feed: [
+        ...overview.live_feed,
+        { event_id: "n2", occurred_at: "2026-07-29T10:25:00+08:00", headline: "未关联传闻", summary: "待核验", themes: [], symbols: [], source: "未知来源", review_state: "pending" },
+      ],
+    } as unknown as MarketOverviewResponse;
+
+    render(<DistinctMarketWorkspace feature="热点解读" data={mixedNews} />);
+
+    const chain = screen.getByRole("region", { name: "热点证据链" });
+    expect(chain).toHaveTextContent("算力需求增长");
+    expect(chain).not.toHaveTextContent("未关联传闻");
+  });
+
+  it("shows local, evidence-first gates for AI selection and Wencai instead of the generic market checklist", () => {
+    const { rerender } = render(<DistinctMarketWorkspace feature="AI+选股" data={overview} />);
+    const aiGates = screen.getByRole("region", { name: "AI 选股证据闸门" });
+    expect(aiGates).toHaveTextContent("行情字段完整");
+    expect(aiGates).toHaveTextContent("AI 只解释证据");
+
+    rerender(<DistinctMarketWorkspace feature="问财选股" data={overview} />);
+    const localGates = screen.getByRole("region", { name: "本地选股规则器" });
+    expect(localGates).toHaveTextContent("本地规则执行");
+    expect(localGates).toHaveTextContent("不调用问财官方接口");
+  });
+
+  it("uses a crowding-specific risk board for concept overlap", () => {
+    render(<DistinctMarketWorkspace feature="概念叠加" data={overview} />);
+
+    const risk = screen.getByRole("region", { name: "题材拥挤提示" });
+    expect(risk).toHaveTextContent("封板股");
+    expect(risk).not.toHaveTextContent("炸板股");
+  });
+
+  it("renders the newly available historical new-high and previous-limit records", () => {
+    const historyData = {
+      ...overview,
+      review: {
+        ...overview.review!,
+        new_high_100: [{ symbol: "600010", name: "新高股", trade_date: "2026-07-29", category: "new_high_100", close: "20", change_percent: "4", amount_yi: "12", source: "tdx-local-day", board_count: null, limit_statistics: null, prior_close: null, prior_change_percent: null, turnover_rate: null, seal_amount_yi: null, failed_limit_count: null, first_seal_time: null, volume_multiple: "1.4", reference_high: "19", window_days: 100, range_position_percent: null }],
+        previous_limit_up: [{ symbol: "600011", name: "反馈股", trade_date: "2026-07-29", category: "previous_limit_feedback", close: "9.5", change_percent: "-5", amount_yi: "8", source: "tdx-local-day", board_count: null, limit_statistics: "上一日涨停", prior_close: "10", prior_change_percent: "10", turnover_rate: null, seal_amount_yi: null, failed_limit_count: null, first_seal_time: null, volume_multiple: null, reference_high: null, window_days: 1, range_position_percent: null }],
+      },
+    } as unknown as MarketOverviewResponse;
+
+    const { rerender } = render(<DistinctMarketWorkspace feature="百日新高" data={historyData} />);
+    expect(screen.getByRole("region", { name: "已验证新高清单" })).toHaveTextContent("新高股");
+    expect(screen.getByRole("region", { name: "已验证新高清单" })).not.toHaveTextContent("逐股结果尚未");
+
+    rerender(<DistinctMarketWorkspace feature="昨涨停" data={historyData} />);
+    expect(screen.getByRole("region", { name: "可验证反馈明细" })).toHaveTextContent("反馈股");
+    expect(screen.getByRole("region", { name: "今日反馈分组" })).toHaveTextContent("回撤");
+  });
+
+  it("does not silently turn unsupported historical rankings into a generic empty stock table", () => {
+    render(<DistinctMarketWorkspace feature="百日新高" data={overview} />);
+
+    const ranking = screen.getByRole("region", { name: "已验证新高清单" });
+    expect(ranking).toHaveTextContent("100 日新高逐股结果尚未由当前复盘接口返回");
+    expect(ranking).not.toHaveTextContent("严格筛选后没有记录");
+  });
+
   it("mounts all 50 workspaces without falling back to the retired generic dashboard", () => {
     for (const definition of WORKSPACE_DEFINITIONS) {
       const view = render(<DistinctMarketWorkspace feature={definition.label} data={overview} />);
@@ -185,5 +308,27 @@ describe("DistinctMarketWorkspace", () => {
     rerender(<DistinctMarketWorkspace feature="龙虎榜" data={overview} />);
     expect(screen.getByRole("region", { name: "龙虎榜股票与席位" })).toHaveTextContent("中际旭创");
     expect(screen.getByRole("region", { name: "龙虎榜股票与席位" })).toHaveTextContent("深股通专用");
+  });
+
+  it("mounts the real interval statistics workspace when its loader is available", () => {
+    const loadIntervalReview = vi.fn().mockResolvedValue({
+      requested_start_date: "2026-07-01",
+      requested_end_date: "2026-07-29",
+      start_date: null,
+      end_date: null,
+      observed_at: "2026-07-29T16:20:00+08:00",
+      source: "unavailable",
+      quality: "unavailable",
+      universe_count: 0,
+      valid_count: 0,
+      rows: [],
+      warnings: ["tdx_vipdoc_unavailable"],
+      formula_version: "a-share-interval-review-v1",
+    });
+
+    render(<DistinctMarketWorkspace feature="区间统计" data={overview} loadIntervalReview={loadIntervalReview} />);
+
+    expect(screen.getByRole("region", { name: "区间统计专属工作区" })).toHaveTextContent("真实区间统计");
+    expect(screen.getByLabelText("起始日")).toBeInTheDocument();
   });
 });

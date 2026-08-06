@@ -151,7 +151,15 @@ export function StockSelector({ loadCandidates, loadWatchlistScores, prepare, se
   useEffect(() => {
     if (!board || initializedSelection.current) return;
     initializedSelection.current = true;
-    if (!selection.symbol) { const first = board.short_term[0] ?? board.swing[0]; if (first) selection.select(first.symbol, "candidate"); }
+    // Candidate loading is asynchronous.  A user can select a row before the
+    // board promise resolves; the URL is updated synchronously by the
+    // selection provider, so consult it here instead of relying only on the
+    // effect's stale `selection.symbol` closure.
+    const urlSymbol = new URL(window.location.href).searchParams.get("symbol");
+    if (!selection.symbol && !urlSymbol) {
+      const first = board.short_term[0] ?? board.swing[0];
+      if (first) selection.select(first.symbol, "candidate");
+    }
   }, [board, selection]);
 
   const resolveSymbols = useCallback(async (symbols: string[]) => {

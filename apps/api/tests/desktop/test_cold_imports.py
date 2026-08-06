@@ -18,7 +18,8 @@ def test_api_import_defers_heavy_market_dependencies() -> None:
         "import sys; import qibao_api.main; "
         "print('\\n'.join(sorted(name for name in sys.modules "
         "if name == 'duckdb' or name == 'pandas' or name == 'numpy' "
-        "or name == 'mootdx' or name.startswith('mootdx.'))))"
+        "or name == 'mootdx' or name.startswith('mootdx.') "
+        "or name == 'sqlalchemy' or name.startswith('sqlalchemy.'))))"
     )
 
     result = subprocess.run(

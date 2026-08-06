@@ -88,6 +88,10 @@ export type LocalTerminalStatus = {
   sh_daily_count: number;
   sz_daily_count: number;
   latest_modified_at: string | null;
+  professional_data_status?: "ready" | "detected_only" | "unavailable";
+  professional_data_files?: string[];
+  selection_eligible?: boolean;
+  selection_note?: string | null;
 };
 export type LocalSourceSettingsView = {
   settings_state: "ready" | "default" | "invalid_local_config";
@@ -111,6 +115,18 @@ export type TdxRpcStatus = {
   endpoint: string | null;
   observed_at: string;
   capabilities: TdxRpcCapability[];
+  direct_python: TdxDirectPythonStatus;
+  client: TdxClientStatus;
+};
+export type TdxDirectPythonStatus = {
+  status: "detected_only" | "unavailable";
+  detail: string;
+  module_path: string | null;
+};
+export type TdxClientStatus = {
+  status: "running" | "not_running" | "unknown";
+  executable_path: string | null;
+  detail: string;
 };
 export type LocalSourceSettingsLoader = (signal?: AbortSignal) => Promise<LocalSourceSettingsView>;
 export type LocalSourceSettingsWriter = (

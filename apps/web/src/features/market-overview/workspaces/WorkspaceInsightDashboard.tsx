@@ -27,7 +27,8 @@ export function WorkspaceInsightDashboard({ feature, insights }: { feature: stri
         <header><Icon size={18} /><span>{insight.label}</span>{insight.quality === "unavailable" ? <AlertTriangle size={15} /> : <i />}</header>
         <b>{insight.value}</b>
         <p>{insight.detail}</p>
-        <footer><span>{insight.quality === "ready" ? "真实字段" : insight.quality === "partial" ? "部分证据" : "禁止代理"}</span><i /></footer>
+        <footer><span>{insight.quality === "ready" ? insight.basis === "raw" ? "原始字段" : insight.basis === "derived" ? "确定性派生" : "观察性合成" : insight.quality === "partial" ? "部分证据" : "禁止代理"}</span><i /></footer>
+        {insight.method && <small className="workspace-insight-method" title={insight.method}>口径：{insight.method}</small>}
       </article>;
     })}
   </section>;

@@ -8,36 +8,54 @@
 
 **Tech Stack:** React 19, TypeScript 5.8, ECharts 5.6, CSS, Vitest, FastAPI, Pydantic, pytest, PyInstaller portable EXE。
 
-## Current Progress (2026-08-06)
+## Current Progress (2026-08-07)
 
 | 目标 | 状态 | 最近证据 |
 |---|---|---|
 | 共享证据状态与图表原语 | 已完成 | `784400f`、`f5ef932`、`b72d456` |
 | 信息总览缓存优先与启动状态 | 已完成 | `1bdcb50`、`docs/verification/2026-08-06-cache-startup-performance.md` |
 | 全局可读性基线 | 已完成 | `ea2995a`；正文 14px、辅助文字 13px |
-| 专题工作区语义拆分 | 已完成基础版本，持续审查 | 50 个独立定义，`workspaceRegistry.test.ts` |
+| 专题工作区语义拆分 | 已完成基础版本，第二轮语义审计已落地，持续审查 | 50 个独立定义；`DistinctMarketWorkspace.test.tsx` 19 项专题行为回归 |
 | 不可用/陈旧证据诚实展示 | 持续推进 | `f5dcd65`；专题页不再冒充实时连接 |
-| TdxQuant 只读深度接入 | 基础能力探测完成，个股估值/行业与可转债条款已接入，其他能力持续推进 | 设置页已显示 8 类只读能力状态；`get_more_info`/`get_stock_info`/`get_kzz_info` 已进入业务契约，专业数据包与高阶字段仍需补齐 |
-| 全站最终验收与 EXE 交付 | 本轮通过，仍需持续回归 | 前端 449 项、API 1099 项、EXE 烟测通过 |
+| TdxQuant 只读深度接入 | 基础能力探测完成；官方 Python 只读回退已接入，设置页已区分客户端进程与 JSON-RPC 桥，真实专业字段持续等待桥接/数据包返回 | 设置页显示 13 类只读能力状态、客户端运行状态和桥接监听状态；专业字段严格走 `table_list`，本机桥不可达时保持 `unavailable` |
+| 区间统计真实日期选择与历史窗口计算 | 已完成 | 本地日线区间接口、日期控件、逐股收益/振幅/成交额、边界回归 |
+| 全站最终验收与 EXE 交付 | 本轮验收完成，后续按数据源变化持续回归 | 前端 468 项、API 1128 项、EXE 连续三次 smoke 通过 |
 
 ## Remaining Goals
 
 以下目标在全部验收通过前保持为持续计划，不以单个阶段完成代替项目完成：
 
 - [x] 完成第一轮 50 个专题页的真实字段覆盖审查：缺失行情、成交额、板块字段不再转成 0；不满足必要字段的筛选、排行和强度指标不入选，页面显示 `--` / 未接入。
+- [x] 完成第二轮 50 个专题页语义审计：开盘/人气/赛道/热点/AI 选股/问财/概念拥挤使用专属字段与规则；历史逐股接口未返回时明确展示证据缺口；行情主源不可用时不显示 0 值脉冲卡。
 - [x] 将通达信本地只读能力扩展为可探测的行情、财务、板块、事件和公式能力，并在设置页显示能力状态。
 - [x] 将已探测为 ready 的通达信能力接入对应业务字段；`get_more_info`/`get_stock_info` 已进入个股基本面与估值，`get_kzz_info` 已进入可转债条款诊断，`get_ipo_info` 已提供严格的新股/新债日历只读接口，`formula_process_mul_*` 已提供严格的公式批量只读接口并在量化分析仪表盘展示；专业数据包或接口不支持时继续保持不可用，不使用代理字段。
 - [x] 完成个股观察 30 秒、公司研究 5 分钟的可见页面后台刷新，并在恢复可见时立即刷新；保留当日缓存、避免请求重叠，量化分析继续使用页面可见轮询。
 - [x] 提升量化 TICK 图表的信息密度：增加 inside/slider 双层缩放导航，成交量按已验证涨跌方向使用红涨绿跌，缺失数据仍不绘制伪曲线。
 - [x] 完成跨交易日缓存回归：缓存日期统一按 `Asia/Shanghai` 计算，交易日午夜边界不会误读上一日快照；通达信实时行情仅在明确返回 `MarketCapYi` 时把市值传入板块成分字段，单位不明的 `MarketValue` 保持不可用。
 - [ ] 在本机通达信专业数据包实际可用后，继续扩展更多真实字段并逐菜单做数据源切换回归。
+- [x] 增加通达信专业缓存文件的只读发现状态：只报告“已发现/等待桥接读取”，不把文件存在误报为字段可用。
+- [x] 新增通达信专业数据只读契约：支持 `get_financial_data`、`get_gpjy_value`、`get_bkjy_value`、`get_scjy_value`、`get_gp_one_data` 及其按日版本；字段严格校验 `Fn/GP/BK/SC/GO` 前缀，请求统一使用官方实际参数 `table_list`，并提供 `/api/v1/tdx/local/professional` API。
 - [x] 将可延后的远程转债全量同步移到可取消后台任务，健康检查不再等待网络同步；业务 `lifespan-ready` 约 656ms，窗口首帧 118ms，修正烟测健康轮询后 API 就绪 4112ms、完整验证 4460ms。
 - [x] 将 `exchange_calendars` 从 API 模块导入阶段移到首次交易日查询时构造；功能保持不变，新增懒加载回归。连续三次 EXE 烟测窗口 100-111ms、API 3423-3480ms、完整验证 3982-4126ms。
 - [x] 将 Edge TTS 从 API 语音服务顶层导入移到首次请求语音时懒加载，并新增子进程回归测试；本轮 API 1093 项通过、1 项按环境跳过，便携 EXE 连续三次烟测通过。
 - [x] 优化便携桌面启动就绪路径：`LocalApiServer` 只等待 Uvicorn 完成 lifespan，不再重复发起自探测 HTTP 请求；通达信 fallback 全市场扫描在便携运行时延后 2 秒启动，先展示当日缓存再刷新最新数据。API 1095 项通过、1 项按环境跳过，连续三次 EXE 烟测通过。
 - [x] 将便携桌面 API 线程提前到窗口创建前启动，让 Python 导入、lifespan 初始化与 WebView 建窗并行；热启动 API 就绪降至 2.69-2.74 秒，窗口首帧保持 114-119ms。
+- [x] 接入官方 TdxQuant Python 专业只读适配器作为 JSON-RPC 不可达时的惰性回退；只允许 `Fn/GP/BK/SC/GO` 专业方法，异常统一为 `unavailable`，不触碰账户或交易接口。
+- [x] 将 direct TdxQuant 根目录接入应用生命周期，自动发现的真实 TDX 安装目录才会进入回退候选，疑似测试目录继续排除。
+- [x] 设置页增加官方 TdxQuant Python 回退的文件发现状态；`detected_only` 只表示模块/DLL 已发现，不表示专业字段已经可用。
+- [x] 设置页分离显示通达信客户端进程、17709 JSON-RPC 桥和专业只读能力；客户端已运行但桥未监听时明确提示，不再把进程存在误报成桥接 ready。
+- [x] 桥接端口可达但专业方法报错、返回空包或字段不完整时，先释放桥接客户端，再尝试官方 Python 只读回退；两条链路都失败时才返回 `unavailable`。
+- [ ] 本机通达信进程与 `127.0.0.1:17709` 恢复后，实测 direct Python 专业字段并把经过验证的字段绑定到对应菜单；当前环境仅能确认模块可加载，不能把桥接未运行时的结果当作真实数据。
+- [ ] 继续剖析 Windows 冷盘安全扫描与 PyInstaller 重型模块，保持功能完整前提下把 API 冷启动继续压缩；任何优化需用实际 EXE smoke 结果确认，不以单次热启动替代冷盘证据。
 - [x] 延后 DuckDB、mootdx、pandas 和 numpy 的顶层导入；BarRepository 首次真实日线操作时才初始化 DuckDB，备份和通达信客户端保持兼容的懒加载入口。便携 smoke 改为先等待 `lifespan-ready` 日志再发起 HTTP，避免 Windows 预绑定 socket 的早期取消连接触发 `WinError 64`。
-- [ ] 继续压缩冷启动等待：窗口首帧已满足 3 秒目标，首次冷盘 API 仍约 9.36 秒，主要受 Windows 首次加载/安全扫描影响；后续继续审计 PyInstaller 冷磁盘读取和剩余重型模块导入，同时保留缓存优先和健康检查先可用。
+- [ ] 继续压缩冷启动等待：窗口首帧已满足 3 秒目标，热启动 API 本轮 2688ms；首次冷盘仍可能受 Windows 首次加载/安全扫描影响，后续继续审计 PyInstaller 冷磁盘读取和剩余重型模块导入，同时保留缓存优先和健康检查先可用。
+- [x] 延后 SQLAlchemy/SQLite 相关导入：`qibao_api.main` 冷导入不再加载 `sqlalchemy`，新增子进程回归；累计导入时间由约 817ms 降至约 626ms，减少约 191ms。
+- [x] 将本地终端目录扫描与 SQLite schema 建立并行化；不改变数据源和证据状态，便携版连续三次 smoke 的窗口首帧为 104-112ms、API 就绪为 2344-2664ms。
+- [x] 修复候选池异步加载与自动首选股票的竞争条件：用户在候选池返回前点击波段股票时，自动首选不会再把 URL 改回短线首个候选；前端回归保持 454 项全绿。
+- [x] 完成第二轮专题语义审计：开盘啦改为高开/低开/延续/回落检查单；人气榜使用人气分布、板块赛道使用板块强度分布；热点解读与证据链仅保留已核验且关联 A 股的新闻；AI+选股与问财选股显示各自本地规则闸门；历史未接入逐股结果显示明确接口缺口，不再渲染通用空表；行情不可用时市场脉冲不再把 0 当真实计数。
+- [x] 完成日线回填第一批逐股结果：百日新高、昨涨停次日反馈已接入后端 v2 复盘快照、前端清单和分布仪表；历史字段缺失时继续显示证据缺口。
+- [x] 完成区间统计真实日期选择与历史窗口计算：新增 `/api/v1/a-shares/market-overview/interval`，按起止交易日读取本地通达信日线，逐股计算区间收益、区间振幅和区间成交额；历史窗口不足、起止收盘缺失和行情源不可用时明确返回 `unavailable`，前端提供日期控件、加载状态、收益分布、强弱榜和可点击逐股表格。
+- [x] 增强便携 smoke 的错误诊断：量化策略返回非 JSON 错误时保留原始 HTTP 状态和错误体，避免验证器异常掩盖真实服务故障；验证脚本回归通过。
 - [x] 完成工作区、个股观察、公司研究、量化分析和全站测试的字号、颜色、红涨绿跌回归；窄屏/布局测试通过。
 - [x] 本轮源代码改动后已重建便携 EXE，保留持久目录并运行真实烟测；后续每次源代码改动仍重复此验收。
 - [x] 通达信桥已启用但暂不可用时，数据设置页在可见期间每 60 秒自动重探测，页面隐藏暂停、恢复可见立即探测，且不会打断手动检测或保存。
@@ -48,7 +66,8 @@
 - [x] 收紧信息总览专题指标的“已就绪”边界：情绪分、市场风格、风险分、热度分、复盘质量/日期、上涨/下跌家数、两市成交额、题材叠加股票和龙虎榜均在必要字段缺失或样本为空时显示 `未接入/不可用`，不再显示 `--`、`待准备` 或 `0` 作为已验证结果。
 - [x] 龙虎榜证据要求至少存在一条真实上榜记录；空列表即使没有后端警告，也不会被当作可验证席位数据。
 - [x] 新增 5 个边界回归场景；前端全量 71 个测试文件、453 项通过；API 1099 项通过、1 项按环境跳过；Vite 生产构建通过；乱码扫描和 `git diff --check` 通过。
-- [ ] 下一轮继续审计专题派生分数的可解释性和命名，明确哪些是原始字段、哪些是确定性派生指标，并在页面标签中给出计算口径。
+- [x] 完成专题派生分数的可解释性和命名审计，页面标签已区分原始字段、确定性派生、观察性合成、部分证据和禁止代理，并展示计算口径。
+- [x] 本轮已完成专题派生分数的证据标签和计算口径展示，并补充自动发现 mock/fixture 等目录的生产选择排除规则；前端/API/EXE 全量验收通过。
 - [x] 通达信本地 overview 后台刷新失败改为限频日志：首次失败、错误类型变化和每 20 次失败记录一次，恢复时记录一次；避免桥接不可达时重复写完整堆栈导致日志膨胀，同时保留诊断线索。
 
 ## 2026-08-06 后续增量：启动并行化与打包实验
@@ -158,11 +177,15 @@
 
 **Files:**
 - Modify: `apps/api/src/qibao_api/gongbu/tdx_local_overview.py`
+- Create: `apps/api/src/qibao_api/gongbu/tdx_local_professional.py`
+- Modify: `apps/api/src/qibao_api/contracts/tdx_local.py`
+- Modify: `apps/api/src/qibao_api/dependencies.py`
+- Modify: `apps/api/src/qibao_api/routes/tdx_local.py`
 - Modify: `apps/api/src/qibao_api/main.py`
 - Modify: `apps/web/src/features/data-settings/LocalSourceSettingsSection.tsx`
-- Test: `apps/api/tests` relevant TDX tests and data settings tests
+- Test: `apps/api/tests/gongbu/test_tdx_local_overview.py`, `apps/api/tests/gongbu/test_tdx_local_professional.py`, `apps/api/tests/routes/test_tdx_local.py` and data settings tests
 
-**Deliverable:** 能力探测、`get_more_info`/`get_stock_info`/`get_ipo_info`/`get_kzz_info`/`formula_process_mul_*` 只读接入；专业数据包缺失时返回明确降级，不碰交易接口。
+**Deliverable:** 能力探测、`get_more_info`/`get_stock_info`/`get_ipo_info`/`get_kzz_info`/`formula_process_mul_*` 与专业 `Fn/GP/BK/SC/GO` 表格只读接入；专业数据包缺失时返回明确降级，不碰交易接口。
 
 ### Task 9: EXE 交付与全站验收
 

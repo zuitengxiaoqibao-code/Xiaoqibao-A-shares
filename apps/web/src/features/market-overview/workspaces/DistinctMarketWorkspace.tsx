@@ -2,6 +2,8 @@ import { Clock3, Database, HelpCircle, Radio, ShieldAlert } from "lucide-react";
 import { useMemo } from "react";
 
 import type { MarketOverviewResponse } from "../types";
+import type { MarketIntervalReviewLoader } from "../types";
+import { IntervalStatisticsWorkspace } from "../IntervalStatisticsWorkspace";
 import { WorkspaceBlockView } from "./WorkspaceBlocks";
 import { WorkspaceInsightDashboard } from "./WorkspaceInsightDashboard";
 import { getWorkspaceDefinition } from "./workspaceRegistry";
@@ -30,10 +32,11 @@ function qualityLabel(quality: MarketOverviewResponse["market_data"]["quality"])
   }
 }
 
-export function DistinctMarketWorkspace({ feature, data, onOpenAShare }: {
+export function DistinctMarketWorkspace({ feature, data, onOpenAShare, loadIntervalReview }: {
   feature: string;
   data: MarketOverviewResponse;
   onOpenAShare?: (symbol: string) => void;
+  loadIntervalReview?: MarketIntervalReviewLoader;
 }) {
   const definition = getWorkspaceDefinition(feature);
   const model = useMemo(() => buildWorkspaceMarketModel(data), [data]);
@@ -59,18 +62,26 @@ export function DistinctMarketWorkspace({ feature, data, onOpenAShare }: {
       <div><ShieldAlert size={16} /><span><small>本页严格边界</small><b>{definition.requiredEvidence.join(" · ")}</b></span></div>
     </section>
 
-    <WorkspaceInsightDashboard feature={definition.label} insights={insights} />
-
-    <div className="distinct-block-grid">
-      {definition.blocks.map((block) => <WorkspaceBlockView
-        key={`${block.kind}-${block.variant}`}
-        block={block}
-        definition={definition}
-        data={data}
-        model={model}
+    {feature === "区间统计" && loadIntervalReview
+      ? <IntervalStatisticsWorkspace
+        asOf={data.review?.latest_trade_date ?? data.as_of}
+        load={loadIntervalReview}
         onOpenAShare={onOpenAShare}
-      />)}
-    </div>
+      />
+      : <>
+        <WorkspaceInsightDashboard feature={definition.label} insights={insights} />
+
+        <div className="distinct-block-grid">
+          {definition.blocks.map((block) => <WorkspaceBlockView
+            key={`${block.kind}-${block.variant}`}
+            block={block}
+            definition={definition}
+            data={data}
+            model={model}
+            onOpenAShare={onOpenAShare}
+          />)}
+        </div>
+      </>}
 
     <footer className="distinct-guidance">
       <section><HelpCircle size={18} /><div><b>新手阅读顺序</b><p>{definition.beginnerGuide}</p></div></section>

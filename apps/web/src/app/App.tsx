@@ -36,7 +36,7 @@ import {
 } from "../features/candidate-sentiment/api";
 import { loadFirstLimitUp, refreshFirstLimitUp } from "../features/first-limit-up/api";
 import { loadKronosForecast, loadQuantStrategy, loadQuantTicks, loadTdxFormula } from "../features/quant-analysis/api";
-import { loadMarketOverview } from "../features/market-overview/api";
+import { loadMarketIntervalReview, loadMarketOverview } from "../features/market-overview/api";
 import { loadStockTimeline } from "../features/stock-timeline/api";
 import { loadBreakingNewsAlerts } from "../features/news-alerts/api";
 import {
@@ -76,6 +76,7 @@ export function App() {
     loadQuantStrategy={loadQuantStrategy}
     loadTdxFormula={loadTdxFormula}
     loadMarketOverview={loadMarketOverview}
+    loadMarketIntervalReview={loadMarketIntervalReview}
     loadBreakingNewsAlerts={loadBreakingNewsAlerts}
     loadSpeechSettings={loadSpeechSettings}
     loadSpeechVoices={loadSpeechVoices}

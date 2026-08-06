@@ -3,8 +3,11 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from qibao_api.a_shares.market_review import build_market_review
-from qibao_api.contracts.market_review import MarketReviewSnapshot
+from qibao_api.a_shares.market_review import build_interval_review, build_market_review
+from qibao_api.contracts.market_review import (
+    MarketIntervalReviewSnapshot,
+    MarketReviewSnapshot,
+)
 from qibao_api.gongbu.tdx_local_daily import load_tdx_daily_histories
 
 
@@ -111,6 +114,41 @@ class LocalMarketReviewSource:
             self._current = snapshot
         self._save_cache(snapshot)
         return snapshot
+
+    def interval(
+        self,
+        *,
+        start_date: date,
+        end_date: date,
+    ) -> MarketIntervalReviewSnapshot:
+        observed_at = self.clock()
+        if start_date >= end_date:
+            raise ValueError("start_date must be before end_date")
+        if self.vipdoc_root is None:
+            return MarketIntervalReviewSnapshot(
+                requested_start_date=start_date,
+                requested_end_date=end_date,
+                observed_at=observed_at,
+                warnings=("tdx_vipdoc_unavailable",),
+            )
+        histories = load_tdx_daily_histories(
+            self.vipdoc_root,
+            as_of=end_date,
+            start_date=start_date,
+            limit=None,
+            max_workers=self.scan_workers,
+            stop_requested=self._stop.is_set,
+        )
+        if self._stop.is_set():
+            raise RuntimeError("local interval review cancelled")
+        return build_interval_review(
+            histories,
+            start_date=start_date,
+            end_date=end_date,
+            as_of=end_date,
+            observed_at=observed_at,
+            name_resolver=self.name_resolver,
+        )
 
     def _refresh_loop(self) -> None:
         if self._stop.wait(self.initial_delay_seconds):

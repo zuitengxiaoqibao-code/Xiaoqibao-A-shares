@@ -106,8 +106,18 @@ try {
             -Uri "http://127.0.0.1:$Port/api/v1/a-shares/quant-strategy?limit=12" `
             -TimeoutSec 30
     } catch {
-        $StatusCode = [int]$_.Exception.Response.StatusCode
-        $ErrorBody = $_.ErrorDetails.Message | ConvertFrom-Json
+        $QuantError = $_
+        $StatusCode = [int]$QuantError.Exception.Response.StatusCode
+        $RawErrorBody = $QuantError.ErrorDetails.Message
+        try {
+            $ErrorBody = $RawErrorBody | ConvertFrom-Json -ErrorAction Stop
+        } catch {
+            throw (
+                "Portable quant strategy returned HTTP {0} with non-JSON error body: {1}" -f
+                $StatusCode,
+                $RawErrorBody
+            )
+        }
         if (
             $StatusCode -ne 503 -or
             $ErrorBody.detail.code -ne "quant_strategy_unavailable"

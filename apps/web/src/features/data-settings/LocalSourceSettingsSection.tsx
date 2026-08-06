@@ -50,6 +50,11 @@ const rpcStatusLabel = {
   unavailable: "桥接不可用",
   disabled: "桥接未启用",
 } as const;
+const clientStatusLabel = {
+  running: "已运行",
+  not_running: "未运行",
+  unknown: "未确认",
+} as const;
 
 export function LocalSourceSettingsSection({ load, detect, save }: Props) {
   const [draft, setDraft] = useState<LocalSourceSettings>(defaultSettings);
@@ -182,9 +187,13 @@ export function LocalSourceSettingsSection({ load, detect, save }: Props) {
         <div><strong>{vendorLabel[terminal.vendor]}</strong><small>{originLabel[terminal.origin]}</small></div>
         <span className="local-terminal-path">{terminal.install_path}</span>
         <span className="local-terminal-state">
-          {terminal.status === "ready" && `可用 · 沪市 ${terminal.sh_daily_count} · 深市 ${terminal.sz_daily_count}`}
+          {terminal.status === "ready" && <>可用 · 沪市 {terminal.sh_daily_count} · 深市 {terminal.sz_daily_count}
+            {terminal.professional_data_status === "detected_only" && <small className="local-terminal-note">专业缓存已发现 {terminal.professional_data_files?.length ?? 0} 项，等待只读桥接读取</small>}
+            {terminal.professional_data_status === "ready" && <small className="local-terminal-note">专业只读字段已验证</small>}
+          </>}
           {terminal.status === "detected_only" && "已发现，暂未读取本地行情"}
           {terminal.status === "invalid" && "目录无效或缺少数据文件"}
+          {terminal.selection_note && <small className="local-terminal-note">{terminal.selection_note}</small>}
         </span>
       </div>)}
     </div>}
@@ -210,7 +219,21 @@ export function LocalSourceSettingsSection({ load, detect, save }: Props) {
       <p>这是可选的本机通达信 JSON-RPC 桥接地址，不是 EXE 的界面地址；关闭时不会访问该端口。</p>
       {rpcStatus && <section className={`tdx-rpc-capability-status status-${rpcStatus.status}`} aria-label="通达信只读能力探测">
         <header><span><strong>只读能力探测</strong><small>{rpcStatus.endpoint ?? "未配置桥接地址"}</small></span><b>{rpcStatusLabel[rpcStatus.status]}</b></header>
+        <div className="tdx-rpc-runtime-summary" aria-label="通达信运行状态">
+          <article data-status={rpcStatus.client.status}>
+            {rpcStatus.client.status === "running" ? <CheckCircle2 size={15} /> : <AlertCircle size={15} />}
+            <span><strong>通达信客户端</strong><b>{clientStatusLabel[rpcStatus.client.status]}</b><small>{rpcStatus.client.detail}{rpcStatus.client.executable_path ? ` · ${rpcStatus.client.executable_path}` : ""}</small></span>
+          </article>
+          <article data-status={rpcStatus.reachable ? "ready" : "unavailable"}>
+            {rpcStatus.reachable ? <CheckCircle2 size={15} /> : <AlertCircle size={15} />}
+            <span><strong>JSON-RPC 桥</strong><b>{rpcStatus.reachable ? "17709 已监听" : "17709 未监听"}</b><small>{rpcStatus.reachable ? "端口可达，正在探测只读能力" : "端口不可达；客户端运行也不会自动等同于桥接可用"}</small></span>
+          </article>
+        </div>
         <div className="tdx-rpc-capability-grid">
+          <article data-status={rpcStatus.direct_python.status}>
+            <AlertCircle size={15} />
+            <span><strong>官方 TdxQuant Python 回退</strong><small>{rpcStatus.direct_python.detail}</small></span>
+          </article>
           {rpcStatus.capabilities.map((capability) => <article key={capability.key} data-status={capability.status}>
             {capability.status === "ready" ? <CheckCircle2 size={15} /> : capability.status === "disabled" ? <AlertCircle size={15} /> : <AlertCircle size={15} />}
             <span><strong>{capability.label}</strong><small>{capability.status === "disabled" ? "桥接未启用" : capability.detail}</small></span>

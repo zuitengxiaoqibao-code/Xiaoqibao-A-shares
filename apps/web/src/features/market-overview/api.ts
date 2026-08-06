@@ -1,4 +1,4 @@
-import type { MarketOverviewLoader, MarketOverviewResponse } from "./types";
+import type { MarketIntervalReviewLoader, MarketIntervalReviewSnapshot, MarketOverviewLoader, MarketOverviewResponse } from "./types";
 
 export const loadMarketOverview: MarketOverviewLoader = async (signal) => {
   let response: Response;
@@ -18,4 +18,19 @@ export const loadMarketOverview: MarketOverviewLoader = async (signal) => {
     );
   }
   return response.json() as Promise<MarketOverviewResponse>;
+};
+
+export const loadMarketIntervalReview: MarketIntervalReviewLoader = async (startDate, endDate, signal) => {
+  let response: Response;
+  try {
+    response = await fetch(`/api/v1/a-shares/market-overview/interval?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`, { signal });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    throw new Error("区间统计数据暂不可用，请检查本地日线数据源。");
+  }
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.detail?.message ?? body.detail?.code ?? body.detail ?? `区间统计请求失败 (${response.status})`);
+  }
+  return response.json() as Promise<MarketIntervalReviewSnapshot>;
 };

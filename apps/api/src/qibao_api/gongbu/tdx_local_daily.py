@@ -61,12 +61,13 @@ def read_tdx_day_bars(
     *,
     symbol: str,
     as_of: date,
-    limit: int = 252,
+    limit: int | None = 252,
+    start_date: date | None = None,
 ) -> tuple[TdxLocalDailyBar, ...]:
     try:
         size = path.stat().st_size
         record_count = size // TDX_DAY_RECORD.size
-        first_record = max(0, record_count - max(limit * 2, limit))
+        first_record = 0 if start_date is not None else max(0, record_count - max(limit * 2, limit or 0))
         with path.open("rb") as handle:
             handle.seek(first_record * TDX_DAY_RECORD.size)
             content = handle.read()
@@ -79,7 +80,7 @@ def read_tdx_day_bars(
         )
         try:
             trade_date = date(raw_date // 10000, raw_date // 100 % 100, raw_date % 100)
-            if trade_date > as_of or min(opening, high, low, close) <= 0:
+            if trade_date > as_of or (start_date is not None and trade_date < start_date) or min(opening, high, low, close) <= 0:
                 continue
             rows.append(TdxLocalDailyBar(
                 symbol=symbol,
@@ -93,7 +94,7 @@ def read_tdx_day_bars(
             ))
         except (ValueError, OverflowError):
             continue
-    return tuple(rows[-limit:])
+    return tuple(rows[-limit:]) if limit is not None else tuple(rows)
 
 
 def _a_share_symbol(path: Path) -> str | None:
@@ -114,7 +115,8 @@ def load_tdx_daily_histories(
     vipdoc_root: Path,
     *,
     as_of: date,
-    limit: int = 252,
+    limit: int | None = 252,
+    start_date: date | None = None,
     max_workers: int = 12,
     stop_requested: Callable[[], bool] | None = None,
 ) -> dict[str, tuple[TdxLocalDailyBar, ...]]:
@@ -132,7 +134,13 @@ def load_tdx_daily_histories(
         symbol = _a_share_symbol(path)
         if symbol is None:
             return None
-        bars = read_tdx_day_bars(path, symbol=symbol, as_of=as_of, limit=limit)
+        bars = read_tdx_day_bars(
+            path,
+            symbol=symbol,
+            as_of=as_of,
+            limit=limit,
+            start_date=start_date,
+        )
         return (symbol, bars) if bars else None
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -143,7 +151,13 @@ def load_tdx_daily_histories(
             break
         path = vipdoc_root / "sh" / "lday" / filename
         if path.exists():
-            bars = read_tdx_day_bars(path, symbol=symbol, as_of=as_of, limit=limit)
+            bars = read_tdx_day_bars(
+                path,
+                symbol=symbol,
+                as_of=as_of,
+                limit=limit,
+                start_date=start_date,
+            )
             if bars:
                 histories[symbol] = bars
     return histories

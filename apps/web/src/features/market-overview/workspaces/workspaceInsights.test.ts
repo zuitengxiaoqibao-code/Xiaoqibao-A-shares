@@ -152,4 +152,20 @@ describe("workspace insights", () => {
     const stockDetail = buildWorkspaceInsights("个股详情", emptyMarket, model).find((item) => item.key === "theme-stock-top");
     expect(stockDetail).toMatchObject({ quality: "unavailable", value: "未接入" });
   });
+
+  it("exposes the basis and formula for deterministic composite metrics", () => {
+    const model = buildWorkspaceMarketModel(data);
+    const sectorInsights = buildWorkspaceInsights("板块精选", data, model);
+    const attentionInsights = buildWorkspaceInsights("人气榜", data, model);
+    const sectorStrength = sectorInsights.find((item) => item.key === "top-sector");
+    const sectorBreadth = sectorInsights.find((item) => item.key === "top-sector-breadth");
+    const attention = attentionInsights.find((item) => item.key === "attention-top");
+
+    expect(sectorStrength).toMatchObject({ basis: "composite" });
+    expect(sectorStrength?.method).toMatch(/涨跌幅.*上涨广度.*涨停密度/);
+    expect(sectorBreadth).toMatchObject({ basis: "derived" });
+    expect(sectorBreadth?.method).toMatch(/上涨家数.*上涨.*下跌/);
+    expect(attention).toMatchObject({ basis: "composite" });
+    expect(attention?.method).toMatch(/涨跌幅.*成交额.*题材数/);
+  });
 });

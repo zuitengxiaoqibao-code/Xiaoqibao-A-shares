@@ -14,6 +14,7 @@ from qibao_api.local_sources.discovery import (
     LocalTerminalDiscovery,
     LocalTerminalDiscoveryResult,
     LocalTerminalStatus,
+    running_tdx_process_paths,
 )
 from qibao_api.local_sources.models import LocalSourceSettings
 from qibao_api.local_sources.repository import (
@@ -25,6 +26,7 @@ from qibao_api.gongbu.tdx_local_overview import (
     probe_tdx_capabilities,
     tdx_read_only_capability_catalog,
 )
+from qibao_api.gongbu.tdx_local_professional import inspect_tdx_quant_python_roots
 
 
 # Local-admin trust boundary: the application binds locally and intentionally supports
@@ -57,12 +59,26 @@ class TdxRpcCapability(BaseModel):
     detail: str
 
 
+class TdxDirectPythonStatus(BaseModel):
+    status: Literal["detected_only", "unavailable"]
+    detail: str
+    module_path: str | None = None
+
+
+class TdxClientStatus(BaseModel):
+    status: Literal["running", "not_running", "unknown"]
+    executable_path: Path | None = None
+    detail: str
+
+
 class TdxRpcStatus(BaseModel):
     status: Literal["ready", "partial", "unavailable", "disabled"]
     reachable: bool
     endpoint: str | None
     observed_at: str
     capabilities: tuple[TdxRpcCapability, ...]
+    direct_python: TdxDirectPythonStatus
+    client: TdxClientStatus
 
 
 def get_ai_settings_repository(request: Request) -> AISettingsRepository:
@@ -95,14 +111,41 @@ def _local_source_view(
         scanned_at=discovery.scanned_at.isoformat(),
         terminals=discovery.terminals,
         active_tdx_vipdoc=discovery.active_tdx_vipdoc,
-        tdx_rpc=_tdx_rpc_view(record.settings),
+        tdx_rpc=_tdx_rpc_view(record.settings, discovery),
         restart_required=restart_required,
     )
 
 
-def _tdx_rpc_view(settings: LocalSourceSettings) -> TdxRpcStatus:
+def _tdx_rpc_view(
+    settings: LocalSourceSettings,
+    discovery: LocalTerminalDiscoveryResult,
+) -> TdxRpcStatus:
     observed_at = datetime.now(timezone.utc).isoformat()
     catalog = tdx_read_only_capability_catalog()
+    process_paths = running_tdx_process_paths()
+    client = TdxClientStatus(
+        status="running" if process_paths else "not_running",
+        executable_path=process_paths[0] if process_paths else None,
+        detail=(
+            "检测到通达信客户端进程；这不代表 17709 JSON-RPC 桥已经监听"
+            if process_paths
+            else "未检测到通达信客户端进程；目录或缓存文件存在不代表客户端已运行"
+        ),
+    )
+    direct = inspect_tdx_quant_python_roots(tuple(
+        terminal.install_path
+        for terminal in discovery.terminals
+        if (
+            terminal.vendor == "tdx"
+            and terminal.status == "ready"
+            and terminal.selection_eligible
+        )
+    ))
+    direct_python = TdxDirectPythonStatus(
+        status=direct.status,
+        detail=direct.detail,
+        module_path=direct.module_path,
+    )
     if not settings.tdx_rpc_enabled or settings.tdx_rpc_url is None:
         return TdxRpcStatus(
             status="disabled",
@@ -113,6 +156,8 @@ def _tdx_rpc_view(settings: LocalSourceSettings) -> TdxRpcStatus:
                 TdxRpcCapability(**item, status="disabled", detail="本地通达信桥接未启用")
                 for item in catalog
             ),
+            direct_python=direct_python,
+            client=client,
         )
 
     rpc = TdxJsonRpcClient(endpoint=settings.tdx_rpc_url)
@@ -126,6 +171,8 @@ def _tdx_rpc_view(settings: LocalSourceSettings) -> TdxRpcStatus:
         endpoint=settings.tdx_rpc_url,
         observed_at=observed_at,
         capabilities=tuple(TdxRpcCapability(**item) for item in report["capabilities"]),
+        direct_python=direct_python,
+        client=client,
     )
 
 

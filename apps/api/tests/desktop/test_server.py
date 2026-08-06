@@ -7,6 +7,31 @@ from fastapi import FastAPI
 from qibao_desktop.server import LocalApiServer
 
 
+def test_local_api_server_pins_only_the_desktop_protocols(monkeypatch) -> None:
+    captured = {}
+
+    class FakeConfig:
+        def __init__(self, app, **kwargs):
+            captured["app"] = app
+            captured.update(kwargs)
+
+    class FakeServer:
+        def __init__(self, config):
+            self.config = config
+
+    monkeypatch.setattr("qibao_desktop.server.uvicorn.Config", FakeConfig)
+    monkeypatch.setattr("qibao_desktop.server.uvicorn.Server", FakeServer)
+
+    server = LocalApiServer(app="qibao_api.main:app", port=0)
+
+    assert captured["loop"] == "asyncio"
+    assert captured["http"] == "h11"
+    assert captured["ws"] == "none"
+    assert captured["lifespan"] == "on"
+    assert captured["interface"] == "asgi3"
+    server._socket.close()
+
+
 def test_local_api_server_initializes_without_a_console(monkeypatch) -> None:
     monkeypatch.setattr(sys, "stdout", None)
     monkeypatch.setattr(sys, "stderr", None)

@@ -46,3 +46,23 @@ class TdxFormulaResponse(BaseModel):
     fetched_at: AwareDatetime | None = None
     source: str = "tdx-local-rpc"
     detail: str | None = None
+
+
+class TdxProfessionalRowView(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    method: str
+    symbol: str | None = Field(default=None, pattern=r"^\d{6}$")
+    values: dict[str, Decimal | str] = Field(default_factory=dict)
+    fetched_at: AwareDatetime
+    source: str = "tdx-local-rpc-professional"
+
+
+class TdxProfessionalResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    status: str
+    rows: tuple[TdxProfessionalRowView, ...] = ()
+    fetched_at: AwareDatetime | None = None
+    source: str = "tdx-local-rpc-professional"
+    detail: str | None = None

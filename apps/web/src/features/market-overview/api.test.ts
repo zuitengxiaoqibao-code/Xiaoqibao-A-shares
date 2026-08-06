@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { loadMarketOverview } from "./api";
+import { loadMarketIntervalReview, loadMarketOverview } from "./api";
 
 describe("market overview api", () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -34,5 +34,18 @@ describe("market overview api", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new DOMException("Aborted", "AbortError")));
 
     await expect(loadMarketOverview()).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("loads an explicit historical interval without using a live snapshot proxy", async () => {
+    const payload = { formula_version: "a-share-interval-review-v1", rows: [] };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
+
+    await expect(loadMarketIntervalReview("2026-07-01", "2026-07-29", controller.signal)).resolves.toEqual(payload);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/a-shares/market-overview/interval?start_date=2026-07-01&end_date=2026-07-29",
+      { signal: controller.signal },
+    );
   });
 });

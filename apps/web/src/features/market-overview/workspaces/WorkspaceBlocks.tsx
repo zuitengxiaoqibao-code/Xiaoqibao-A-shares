@@ -10,7 +10,7 @@ import type { WorkspaceBlock, WorkspaceDefinition } from "./workspaceTypes";
 import { hasDragonTigerEvidence } from "./workspaceEvidence";
 import {
   numberValue, signedPercent, stocksForVariant,
-  type DerivedStock, type WorkspaceMarketModel,
+  type DerivedSector, type DerivedStock, type WorkspaceMarketModel,
 } from "./workspaceSelectors";
 
 type BlockProps = {
@@ -96,14 +96,36 @@ function StockTable({ stocks, onOpenAShare, mode = "default" }: {
   </table></div>;
 }
 
-function MarketPulse({ data }: { data: MarketOverviewResponse }) {
+function MarketPulse({ data, model, variant }: { data: MarketOverviewResponse; model: WorkspaceMarketModel; variant: string }) {
+  const marketReady = data.status !== "unavailable"
+    && data.market_data.quality !== "unavailable"
+    && data.market_data.quote_count > 0;
+  if (variant === "opening") {
+    const stocks = model.stocks.filter((stock) => known(stock.gap) && known(stock.change));
+    const gapUp = stocks.filter((stock) => (stock.gap ?? 0) >= 2);
+    const gapDown = stocks.filter((stock) => (stock.gap ?? 0) <= -2);
+    const continuation = gapUp.filter((stock) => (stock.change ?? 0) >= (stock.gap ?? 0) - 1);
+    const failure = gapUp.filter((stock) => (stock.change ?? 0) < (stock.gap ?? 0) - 2);
+    const cards = [
+      ["开盘样本", marketReady && stocks.length ? String(stocks.length) : "未接入", "同时具备昨收、开盘和现价"],
+      ["高开 >= 2%", marketReady && stocks.length ? String(gapUp.length) : "未接入", "开盘价相对昨收"],
+      ["低开 <= -2%", marketReady && stocks.length ? String(gapDown.length) : "未接入", "开盘价相对昨收"],
+      ["高开延续", marketReady && stocks.length ? String(continuation.length) : "未接入", "现涨幅 >= 高开幅度 - 1%"],
+      ["高开回落", marketReady && stocks.length ? String(failure.length) : "未接入", "现涨幅低于缺口 2 个百分点"],
+      ["开盘题材", marketReady && model.themes.length ? String(model.themes.length) : "未接入", "本地资讯关联题材"],
+    ];
+    return <div className="distinct-metric-deck">{cards.map(([label, value, detail]) => <article key={label}><span>{label}</span><b>{value}</b><small>{detail}</small></article>)}</div>;
+  }
+  const breadthReady = marketReady && data.breadth.valid_count > 0;
+  const limitReady = marketReady;
+  const liquidityReady = marketReady && data.liquidity.total_amount_yi !== null;
   const cards = [
-    ["市场情绪", data.sentiment.score === null ? "--" : data.sentiment.score, data.sentiment.band],
-    ["上涨 / 下跌", `${data.breadth.rising_count} / ${data.breadth.falling_count}`, `${data.breadth.valid_count} 只有效`],
-    ["涨停 / 跌停", `${data.limit_ecology.limit_up_count} / ${data.limit_ecology.limit_down_count}`, `炸板 ${data.limit_ecology.broken_limit_up_count}`],
-    ["封板率", data.limit_ecology.seal_rate_percent ? `${data.limit_ecology.seal_rate_percent}%` : "--", "涨停 / 触板"],
-    ["成交热度", data.liquidity.relative_amount ? `${data.liquidity.relative_amount}x` : "--", data.liquidity.total_amount_yi ? `${data.liquidity.total_amount_yi}亿` : "基准不足"],
-    ["市场风格", data.regime?.regime ?? "待确认", data.regime ? `系数 ${Number(data.regime.market_coef).toFixed(1)}` : "因子不足"],
+    ["市场情绪", marketReady && data.sentiment.score !== null ? data.sentiment.score : "未接入", marketReady ? data.sentiment.band : "行情主源不可用"],
+    ["上涨 / 下跌", breadthReady ? `${data.breadth.rising_count} / ${data.breadth.falling_count}` : "未接入", breadthReady ? `${data.breadth.valid_count} 只有效` : "有效行情不足"],
+    ["涨停 / 跌停", limitReady ? `${data.limit_ecology.limit_up_count} / ${data.limit_ecology.limit_down_count}` : "未接入", limitReady ? `炸板 ${data.limit_ecology.broken_limit_up_count}` : "行情主源不可用"],
+    ["封板率", limitReady && data.limit_ecology.seal_rate_percent !== null ? `${data.limit_ecology.seal_rate_percent}%` : "未接入", limitReady ? "涨停 / 触板" : "触板样本不可用"],
+    ["成交热度", liquidityReady && data.liquidity.relative_amount !== null ? `${data.liquidity.relative_amount}x` : "未接入", liquidityReady ? `${data.liquidity.total_amount_yi}亿` : "成交额不可用"],
+    ["市场风格", marketReady && data.regime?.regime ? data.regime.regime : "未接入", marketReady && data.regime ? `系数 ${Number(data.regime.market_coef).toFixed(1)}` : "因子不足"],
   ];
   return <div className="distinct-metric-deck">{cards.map(([label, value, detail]) => <article key={label}><span>{label}</span><b>{value}</b><small>{detail}</small></article>)}</div>;
 }
@@ -125,7 +147,9 @@ function EventTimeline({ model, variant }: { model: WorkspaceMarketModel; varian
 function NewsWire({ model, variant }: { model: WorkspaceMarketModel; variant: string }) {
   const popularSymbols = new Set(stocksForVariant(model, "attention-score").slice(0, 10).map((item) => item.symbol));
   const anomalySymbols = new Set(model.anomalies.flatMap((item) => item.symbols));
-  const events = variant === "popular-evidence" ? model.news.filter((item) => item.symbols.some((symbol) => popularSymbols.has(symbol)))
+  const events = variant === "interpret" ? model.news.filter((item) => item.review_state === "verified" && item.symbols.length > 0 && item.themes.length > 0)
+    : ["linked-only", "calendar-detail"].includes(variant) ? model.news.filter((item) => item.symbols.length > 0)
+    : variant === "popular-evidence" ? model.news.filter((item) => item.symbols.some((symbol) => popularSymbols.has(symbol)))
     : ["voice-source", "stock-anomaly-news"].includes(variant) ? model.news.filter((item) => item.symbols.some((symbol) => anomalySymbols.has(symbol)))
     : model.news;
   if (!events.length) return <Empty>本地新闻库没有满足本功能关联条件的 A 股资讯。</Empty>;
@@ -184,10 +208,17 @@ function SectorHeatmap({ model, variant }: { model: WorkspaceMarketModel; varian
   </article>)}</div>;
 }
 
-function SectorQuadrant({ model }: { model: WorkspaceMarketModel }) {
-  const sectors = model.sectors.filter((sector) => known(sector.change) && known(sector.breadthPercent));
-  if (!sectors.length) return <Empty>缺少板块涨幅和上涨家数，无法生成四象限。</Empty>;
-  return <div className="sector-quadrant"><span className="axis-y">强度</span><span className="axis-x">广度</span>{sectors.slice(0, 16).map((sector) => <i key={sector.sector_id} title={`${sector.name} ${signedPercent(sector.change)}`} style={{ left: `${Math.max(5, Math.min(95, sector.breadthPercent ?? 50))}%`, bottom: `${Math.max(5, Math.min(95, 50 + (sector.change ?? 0) * 7))}%` }}><b>{sector.name}</b></i>)}</div>;
+function SectorQuadrant({ model, variant }: { model: WorkspaceMarketModel; variant: string }) {
+  const yLabel = variant === "wind" ? "涨停扩散" : variant === "race" ? "涨幅" : "强度";
+  const yValue = (sector: DerivedSector): number | null => variant === "wind" ? sector.limitDensityPercent : variant === "race" ? sector.change : sector.strengthScore;
+  const sectors = model.sectors.filter((sector) => known(yValue(sector)) && known(sector.breadthPercent));
+  if (!sectors.length) return <Empty>缺少板块广度与{yLabel}字段，无法生成四象限。</Empty>;
+  const maxY = variant === "race" ? Math.max(1, ...sectors.map((sector) => Math.abs(yValue(sector) ?? 0))) : 100;
+  return <div className="sector-quadrant"><span className="axis-y">{yLabel}</span><span className="axis-x">广度</span>{sectors.slice(0, 16).map((sector) => {
+    const value = yValue(sector) ?? 0;
+    const normalized = variant === "race" ? 50 + value / maxY * 45 : value;
+    return <i key={sector.sector_id} title={`${sector.name} ${yLabel} ${variant === "race" ? signedPercent(value) : value.toFixed(1)}`} style={{ left: `${Math.max(5, Math.min(95, sector.breadthPercent ?? 50))}%`, bottom: `${Math.max(5, Math.min(95, normalized))}%` }}><b>{sector.name}</b></i>;
+  })}</div>;
 }
 
 function SectorMembers({ data, model, variant, onOpenAShare }: { data: MarketOverviewResponse; model: WorkspaceMarketModel; variant: string; onOpenAShare?: (symbol: string) => void }) {
@@ -235,14 +266,20 @@ function ThemeMatrix({ model }: { model: WorkspaceMarketModel }) {
   return <div className="theme-overlap-matrix"><div className="matrix-head"><span>股票</span>{themes.map((theme) => <b key={theme.name}>{theme.name}</b>)}</div>{stocks.map((stock) => <div key={stock.symbol}><span>{stock.name}<small>{stock.symbol}</small></span>{themes.map((theme) => <i key={theme.name} className={stock.themes.includes(theme.name) ? "hit" : ""}>{stock.themes.includes(theme.name) ? "●" : "·"}</i>)}</div>)}</div>;
 }
 
-function LimitEcology({ data }: { data: MarketOverviewResponse }) {
+function LimitEcology({ data, variant }: { data: MarketOverviewResponse; variant: string }) {
+  const marketReady = data.status !== "unavailable" && data.market_data.quote_count > 0;
   const touched = data.limit_ecology.limit_up_count + data.limit_ecology.broken_limit_up_count;
+  const failureRate = touched > 0 ? `${(data.limit_ecology.broken_limit_up_count / touched * 100).toFixed(1)}%` : "--";
+  const riskBalance = data.limit_ecology.limit_up_count > 0
+    ? `${(data.limit_ecology.limit_down_count / data.limit_ecology.limit_up_count).toFixed(2)}x`
+    : "--";
+  if (!marketReady) return <Empty>行情主源不可用，涨跌停生态暂不计算。</Empty>;
   return <div className="limit-ecology-deck">
     <article className="sealed"><span>已封涨停</span><b>{data.limit_ecology.limit_up_count}</b><small>严格现价状态</small></article>
     <article className="broken"><span>触板未封</span><b>{data.limit_ecology.broken_limit_up_count}</b><small>最高价触板</small></article>
     <article className="down"><span>当前跌停</span><b>{data.limit_ecology.limit_down_count}</b><small>风险样本</small></article>
-    <article><span>触板合计</span><b>{touched}</b><small>涨停 + 炸板</small></article>
-    <article><span>封板率</span><b>{data.limit_ecology.seal_rate_percent ? `${data.limit_ecology.seal_rate_percent}%` : "--"}</b><small>已封 / 触板</small></article>
+    <article><span>{variant === "risk-balance" ? "跌停 / 封板" : variant === "seal-failure" ? "炸板占比" : "触板合计"}</span><b>{variant === "risk-balance" ? riskBalance : variant === "seal-failure" ? failureRate : touched}</b><small>{variant === "risk-balance" ? "风险 / 强势" : variant === "seal-failure" ? "炸板 / 触板" : "涨停 + 炸板"}</small></article>
+    <article><span>封板率</span><b>{data.limit_ecology.seal_rate_percent !== null ? `${data.limit_ecology.seal_rate_percent}%` : "--"}</b><small>已封 / 触板</small></article>
   </div>;
 }
 
@@ -385,12 +422,43 @@ function SeatDirection({ data }: { data: MarketOverviewResponse }) {
   })}</div>;
 }
 
-function HistoryAudit({ variant }: { variant: string }) {
-  const labels = variant === "new-high" ? ["所需窗口", "100 个交易日", "验证结果", "等待日线覆盖"]
-    : variant === "previous-limit" ? ["所需日期", "上一交易日", "反馈样本", "等待昨日涨停名单"]
-    : variant === "consecutive-days" ? ["所需连续窗口", "至少 2 个交易日", "连板高度", "暂不可验证"]
-    : ["统计区间", "需明确起止日", "有效样本", "等待历史窗口"];
-  return <div className="history-audit"><AlertTriangle size={28} /><div><small>{labels[0]}</small><b>{labels[1]}</b></div><div><small>{labels[2]}</small><b>{labels[3]}</b></div><p>当前总览响应只含实时代表股票快照。页面不会用今日涨幅代替历史结论。</p></div>;
+function HistoryAudit({ data, variant }: { data: MarketOverviewResponse; variant: string }) {
+  const review = data.review;
+  const historicalRows = variant === "new-high" ? (review?.new_high_100 ?? [])
+    : variant === "previous-limit" ? (review?.previous_limit_up ?? []) : [];
+  const coverage = review && review.universe_count > 0 && review.history_ready_count > 0
+    ? `${review.history_ready_count}/${review.universe_count} (${(review.history_ready_count / review.universe_count * 100).toFixed(1)}%)`
+    : "未接入";
+  const labels = variant === "new-high" ? ["所需窗口", "100 个交易日", "日线覆盖", coverage]
+    : variant === "previous-limit" ? ["所需日期", "上一交易日", "复盘日期", review?.latest_trade_date ?? "未接入"]
+    : variant === "consecutive-days" ? ["所需连续窗口", "至少 2 个交易日", "连板记录", review ? `${review.consecutive_limit_up.length} 只` : "未接入"]
+    : variant === "trend-stage" ? ["趋势前提", "先确认百日新高", "当前状态", "逐股趋势字段未接入"]
+    : ["统计区间", "需明确起止日", "有效样本", "未选择区间"];
+  const note = variant === "new-high"
+    ? historicalRows.length ? `已返回 ${historicalRows.length} 只百日新高股票，趋势分布将基于逐股收盘与参考高点计算。` : "当前复盘接口尚未返回百日新高逐股结果，不能用今日涨幅替代。"
+    : variant === "previous-limit"
+      ? historicalRows.length ? `已返回 ${historicalRows.length} 只昨涨停次日反馈股票，分组将基于当前收盘相对前一日收盘计算。` : "当前复盘接口尚未返回上一交易日涨停反馈逐股结果，不能用当前涨停状态替代。"
+      : variant === "consecutive-days"
+        ? "连板结果只在本地日线窗口完整时统计。"
+        : "页面保留证据边界，不用代表股票快照伪造历史结论。";
+  return <div className="history-audit"><AlertTriangle size={28} /><div><small>{labels[0]}</small><b>{labels[1]}</b></div><div><small>{labels[2]}</small><b>{labels[3]}</b></div><p>{note}</p></div>;
+}
+
+function HistoricalRankingTable({ data, variant, onOpenAShare }: { data: MarketOverviewResponse; variant: string; onOpenAShare?: (symbol: string) => void }) {
+  const rows = variant === "verified-only" ? (data.review?.new_high_100 ?? []) : (data.review?.previous_limit_up ?? []);
+  if (!rows.length) return <HistoricalRankingNotice variant={variant} />;
+  const isPrevious = variant === "previous-only";
+  const title = isPrevious ? "上一交易日涨停 · 次日反馈" : "收盘创 100 日新高";
+  return <div className="historical-ranking-table">
+    <div className="historical-ranking-heading"><b>{title}</b><span>{rows.length} 只 · 交易日 {data.review?.latest_trade_date ?? "未接入"}</span></div>
+    <div className="distinct-table-scroll"><table className="distinct-table review-detail-table"><thead><tr><th>代码 / 名称</th><th>当前收盘</th><th>当前涨跌</th>{isPrevious && <><th>前一日收盘</th><th>前一日涨跌</th></>}{!isPrevious && <><th>100 日参考高点</th><th>突破幅度</th></>}<th>成交额</th><th>窗口</th></tr></thead><tbody>{rows.slice(0, 60).map((item) => {
+      const close = numberValue(item.close);
+      const referenceHigh = numberValue(item.reference_high);
+      const breakout = close !== null && referenceHigh !== null && referenceHigh > 0 ? (close / referenceHigh - 1) * 100 : null;
+      return <tr key={`${item.trade_date}-${item.symbol}`} {...interactiveTargetProps(onOpenAShare ? () => onOpenAShare(item.symbol) : undefined, `查看 ${item.symbol} ${item.name}`)}><td><span>{item.symbol}<ReviewStockLink item={item} onOpenAShare={onOpenAShare} /></span></td><td>{optionalValue(item.close)}</td><td className={tone(numberValue(item.change_percent))}>{signedPercent(numberValue(item.change_percent))}</td>{isPrevious && <><td>{optionalValue(item.prior_close)}</td><td className={tone(numberValue(item.prior_change_percent))}>{signedPercent(numberValue(item.prior_change_percent))}</td></>}{!isPrevious && <><td>{optionalValue(item.reference_high)}</td><td className={tone(breakout)}>{signedPercent(breakout)}</td></>}<td>{optionalValue(item.amount_yi, "亿")}</td><td>{optionalValue(item.window_days, "日")}</td></tr>;
+    })}</tbody></table></div>
+    <footer>来源 {data.review?.source ?? "未接入"} · 只展示复盘接口返回的逐股结果，不用代表快照代替历史样本</footer>
+  </div>;
 }
 
 function HeightPyramid({ data }: { data: MarketOverviewResponse }) {
@@ -426,16 +494,63 @@ function LeaderLanes({ model, onOpenAShare }: { model: WorkspaceMarketModel; onO
 }
 
 function Distribution({ data, model, variant }: { data: MarketOverviewResponse; model: WorkspaceMarketModel; variant: string }) {
-  if (["selected-window", "distance-high", "feedback"].includes(variant)) return <HistoryAudit variant={variant} />;
-  const bins = [
-    ["跌幅 > 7%", model.stocks.filter((stock) => known(stock.change) && stock.change <= -7).length, "down"],
-    ["-7% ~ 0", model.stocks.filter((stock) => known(stock.change) && stock.change > -7 && stock.change < 0).length, "down"],
-    ["平盘", model.stocks.filter((stock) => known(stock.change) && stock.change === 0).length, "flat"],
-    ["0 ~ 7%", model.stocks.filter((stock) => known(stock.change) && stock.change > 0 && stock.change < 7).length, "up"],
-    ["涨幅 >= 7%", model.stocks.filter((stock) => known(stock.change) && stock.change >= 7).length, "up"],
-  ];
+  if (variant === "selected-window") return <HistoryAudit data={data} variant={variant} />;
+  if (variant === "feedback" || variant === "distance-high") {
+    const rows = variant === "feedback" ? (data.review?.previous_limit_up ?? []) : (data.review?.new_high_100 ?? []);
+    if (!rows.length) return <HistoryAudit data={data} variant={variant === "feedback" ? "previous-limit" : "new-high"} />;
+    const values = rows.map((item) => {
+      const close = numberValue(item.close);
+      if (variant === "feedback") {
+        const prior = numberValue(item.prior_close);
+        return close !== null && prior !== null && prior > 0 ? (close / prior - 1) * 100 : null;
+      }
+      const high = numberValue(item.reference_high);
+      return close !== null && high !== null && high > 0 ? (close / high - 1) * 100 : null;
+    }).filter((value): value is number => value !== null);
+    if (!values.length) return <HistoryAudit data={data} variant={variant === "feedback" ? "previous-limit" : "new-high"} />;
+    const bins = variant === "feedback" ? [
+      ["回撤 <= -3%", values.filter((value) => value <= -3).length, "down"],
+      ["回撤 -3% ~ 0", values.filter((value) => value > -3 && value < 0).length, "down"],
+      ["横盘 0% ~ 3%", values.filter((value) => value >= 0 && value < 3).length, "flat"],
+      ["反弹 >= 3%", values.filter((value) => value >= 3).length, "up"],
+    ] : [
+      ["突破 0% ~ 3%", values.filter((value) => value >= 0 && value < 3).length, "up"],
+      ["突破 3% ~ 8%", values.filter((value) => value >= 3 && value < 8).length, "up"],
+      ["突破 >= 8%", values.filter((value) => value >= 8).length, "up"],
+    ];
+    const max = Math.max(1, ...bins.map((item) => Number(item[1])));
+    return <div className="distribution-bars"><header className="distribution-heading"><b>{variant === "feedback" ? "昨涨停次日回撤/反弹" : "百日新高突破幅度"}</b><span>{values.length} 只有效样本</span></header>{bins.map(([label, value, itemTone]) => <article key={String(label)}><span>{label}</span><div className={String(itemTone)}><i style={{ width: `${Number(value) / max * 100}%` }} /></div><b>{value}</b></article>)}<footer>{variant === "feedback" ? "回撤/反弹按当前收盘相对前一交易日收盘计算。" : "突破幅度按当前收盘相对前 100 个交易日最高收盘计算。"}</footer></div>;
+  }
+  const bins = variant === "score-parts"
+    ? [
+      ["人气分 0-20", model.stocks.filter((stock) => known(stock.attentionScore) && stock.attentionScore < 20).length, "flat"],
+      ["人气分 20-40", model.stocks.filter((stock) => known(stock.attentionScore) && stock.attentionScore >= 20 && stock.attentionScore < 40).length, "flat"],
+      ["人气分 40-60", model.stocks.filter((stock) => known(stock.attentionScore) && stock.attentionScore >= 40 && stock.attentionScore < 60).length, "up"],
+      ["人气分 60-80", model.stocks.filter((stock) => known(stock.attentionScore) && stock.attentionScore >= 60 && stock.attentionScore < 80).length, "up"],
+      ["人气分 80-100", model.stocks.filter((stock) => known(stock.attentionScore) && stock.attentionScore >= 80).length, "up"],
+    ]
+    : variant === "sector-bands"
+      ? [
+        ["板块强度 0-20", model.sectors.filter((sector) => known(sector.strengthScore) && sector.strengthScore < 20).length, "down"],
+        ["板块强度 20-40", model.sectors.filter((sector) => known(sector.strengthScore) && sector.strengthScore >= 20 && sector.strengthScore < 40).length, "flat"],
+        ["板块强度 40-60", model.sectors.filter((sector) => known(sector.strengthScore) && sector.strengthScore >= 40 && sector.strengthScore < 60).length, "flat"],
+        ["板块强度 60-80", model.sectors.filter((sector) => known(sector.strengthScore) && sector.strengthScore >= 60 && sector.strengthScore < 80).length, "up"],
+        ["板块强度 80-100", model.sectors.filter((sector) => known(sector.strengthScore) && sector.strengthScore >= 80).length, "up"],
+      ]
+      : [
+        ["跌幅 > 7%", model.stocks.filter((stock) => known(stock.change) && stock.change <= -7).length, "down"],
+        ["-7% ~ 0", model.stocks.filter((stock) => known(stock.change) && stock.change > -7 && stock.change < 0).length, "down"],
+        ["平盘", model.stocks.filter((stock) => known(stock.change) && stock.change === 0).length, "flat"],
+        ["0 ~ 7%", model.stocks.filter((stock) => known(stock.change) && stock.change > 0 && stock.change < 7).length, "up"],
+        ["涨幅 >= 7%", model.stocks.filter((stock) => known(stock.change) && stock.change >= 7).length, "up"],
+      ];
   const max = Math.max(1, ...bins.map((item) => Number(item[1])));
-  return <div className="distribution-bars">{bins.map(([label, value, itemTone]) => <article key={String(label)}><span>{label}</span><div className={String(itemTone)}><i style={{ width: `${Number(value) / max * 100}%` }} /></div><b>{value}</b></article>)}<footer>全市场广度：上涨 {data.breadth.rising_count} / 下跌 {data.breadth.falling_count}；柱状分布仅覆盖接口代表股票。</footer></div>;
+  const footer = variant === "score-parts"
+    ? "人气分为量价与题材关联的观察性合成分，只覆盖接口代表股票。"
+    : variant === "sector-bands"
+      ? "板块强度由涨跌幅、上涨广度和涨停密度确定性派生，只覆盖本地板块快照。"
+      : `全市场广度：上涨 ${data.breadth.rising_count} / 下跌 ${data.breadth.falling_count}；柱状分布仅覆盖接口代表股票。`;
+  return <div className="distribution-bars">{bins.map(([label, value, itemTone]) => <article key={String(label)}><span>{label}</span><div className={String(itemTone)}><i style={{ width: `${Number(value) / max * 100}%` }} /></div><b>{value}</b></article>)}<footer>{footer}</footer></div>;
 }
 
 function SevenRankings({ model }: { model: WorkspaceMarketModel }) {
@@ -490,7 +605,20 @@ function ReviewColumns({ model }: { model: WorkspaceMarketModel }) {
 
 function RuleGates({ data, model, variant }: { data: MarketOverviewResponse; model: WorkspaceMarketModel; variant: string }) {
   if (variant === "deterministic") return <AuctionGates model={model} />;
-  const gates = variant === "next-day" ? [
+  const quoteCoverage = data.market_data.universe_count > 0
+    ? data.market_data.quote_count / data.market_data.universe_count
+    : 0;
+  const gates = variant === "ai-rules" ? [
+    ["行情字段完整", quoteCoverage >= 0.8],
+    ["题材关联可追溯", model.themes.some((theme) => theme.symbols.length > 0)],
+    ["风险状态已排除", !model.stocks.some((stock) => stock.state === "limit_down" || stock.state === "broken_limit_up")],
+    ["AI 只解释证据", true],
+  ] : variant === "iwencai-local" ? [
+    ["本地规则执行", true],
+    ["不调用问财官方接口", true],
+    ["行情字段可复核", quoteCoverage > 0],
+    ["候选结果可追溯", model.stocks.length > 0],
+  ] : variant === "next-day" ? [
     ["涨停当日不追买", true], ["次日只在触发后观察", true], ["炸板与跌停先降级", data.limit_ecology.broken_limit_up_count + data.limit_ecology.limit_down_count === 0],
   ] : variant === "leader-rules" ? [
     ["当前严格封板", data.limit_ecology.limit_up_count > 0], ["板块存在扩散", model.sectors.some((sector) => sector.limit_up_count >= 2)], ["资讯题材可追溯", model.themes.length > 0], ["历史连板已验证", false],
@@ -504,8 +632,24 @@ function RuleGates({ data, model, variant }: { data: MarketOverviewResponse; mod
 function EvidenceMap({ model, variant }: { model: WorkspaceMarketModel; variant: string }) {
   const focusSymbols = variant === "alert-links" ? new Set(model.anomalies.filter((item) => item.direction === "negative").flatMap((item) => item.symbols))
     : variant === "stock-news" && model.stocks[0] ? new Set([model.stocks[0].symbol]) : null;
-  const news = focusSymbols ? model.news.filter((item) => item.symbols.some((symbol) => focusSymbols.has(symbol))) : model.news;
-  const themes = focusSymbols ? model.themes.filter((item) => item.symbols.some((symbol) => focusSymbols.has(symbol))) : model.themes;
+  const discoveryThemes = variant === "discovery"
+    ? new Set(model.themes.filter((item) => item.evidenceCount >= 2).map((item) => item.name))
+    : null;
+  const sourceNews = variant === "full-chain"
+    ? model.news.filter((item) => item.review_state === "verified" && item.symbols.length > 0 && item.themes.length > 0)
+    : ["theme-link", "source-count"].includes(variant)
+      ? model.news.filter((item) => item.symbols.length > 0 && item.themes.length > 0)
+      : discoveryThemes
+        ? model.news.filter((item) => item.themes.some((theme) => discoveryThemes.has(theme)))
+        : model.news;
+  const news = focusSymbols ? sourceNews.filter((item) => item.symbols.some((symbol) => focusSymbols.has(symbol))) : sourceNews;
+  const themes = focusSymbols
+    ? model.themes.filter((item) => item.symbols.some((symbol) => focusSymbols.has(symbol)))
+    : discoveryThemes
+      ? model.themes.filter((item) => discoveryThemes.has(item.name))
+      : ["theme-link", "source-count", "full-chain"].includes(variant)
+        ? model.themes.filter((item) => item.symbols.length > 0)
+        : model.themes;
   if (!news.length && !themes.length) return <Empty>没有满足本功能关联条件的新闻、题材与股票证据。</Empty>;
   return <div className="evidence-map"><div className="evidence-column"><small>原始资讯</small>{news.slice(0, 5).map((item) => <span key={item.event_id}>{item.headline}</span>)}</div><Network size={28} /><div className="evidence-column"><small>题材归因</small>{themes.slice(0, 6).map((theme) => <span key={theme.name}>{theme.name}</span>)}</div><Network size={28} /><div className="evidence-column"><small>A 股代码</small>{[...new Set(news.flatMap((item) => item.symbols))].slice(0, 8).map((symbol) => <span key={symbol}>{symbol}</span>)}</div></div>;
 }
@@ -564,31 +708,47 @@ function IndustryMap({ model }: { model: WorkspaceMarketModel }) {
 }
 
 function RiskBoard({ model, variant, onOpenAShare }: { model: WorkspaceMarketModel; variant: string; onOpenAShare?: (symbol: string) => void }) {
-  const stocks = variant === "strict-down" ? stocksForVariant(model, "strict-down")
+  if (variant === "trend-failure") return <Empty>新高趋势逐股结果尚未由当前复盘接口返回，暂不生成失效清单。</Empty>;
+  const stocks = variant === "crowding" ? [...model.stocks].filter((stock) => stock.themes.length >= 2).sort((a, b) => b.themes.length - a.themes.length)
+    : variant === "opening-risk" ? model.stocks.filter((stock) => (known(stock.gap) && known(stock.change)) && ((stock.gap ?? 0) >= 2 && (stock.change ?? 0) < (stock.gap ?? 0) - 2 || (stock.gap ?? 0) <= -2 && (stock.change ?? 0) < 0))
+    : variant === "strict-down" ? stocksForVariant(model, "strict-down")
     : variant === "promotion-risk" ? model.stocks.filter((stock) => stock.state === "broken_limit_up" || (known(stock.closePosition) && stock.closePosition < 25))
     : variant === "auction-failure" ? model.stocks.filter((stock) => known(stock.gap) && known(stock.change) && stock.gap > 0 && stock.change < stock.gap - 2)
     : model.stocks.filter((stock) => stock.state === "broken_limit_up" || stock.state === "limit_down" || (known(stock.change) && stock.change < -3));
   return <StockTable stocks={stocks} onOpenAShare={onOpenAShare} mode="risk" />;
 }
 
+function HistoricalRankingNotice({ variant }: { variant: string }) {
+  const message = variant === "verified-only"
+    ? "100 日新高逐股结果尚未由当前复盘接口返回。"
+    : variant === "previous-only"
+      ? "上一交易日涨停反馈逐股结果尚未由当前复盘接口返回。"
+      : "区间收益逐股结果需要先选择明确的起止日期。";
+  return <Empty>{message} 页面不会用当前代表股票快照代替历史结果。</Empty>;
+}
+
 export function WorkspaceBlockView({ block, definition, data, model, onOpenAShare }: BlockProps) {
   let content: ReactNode;
   switch (block.kind) {
-    case "market-pulse": content = <MarketPulse data={data} />; break;
+    case "market-pulse": content = <MarketPulse data={data} model={model} variant={block.variant} />; break;
     case "event-timeline": content = <EventTimeline model={model} variant={block.variant} />; break;
     case "news-wire": content = <NewsWire model={model} variant={block.variant} />; break;
     case "auction-gap": content = <AuctionGap model={model} variant={block.variant} onOpenAShare={onOpenAShare} />; break;
     case "auction-gates": content = <AuctionGates model={model} />; break;
-    case "stock-ranking": content = <StockTable stocks={stocksForVariant(model, block.variant)} onOpenAShare={onOpenAShare} mode={block.variant.includes("gap") || block.variant.includes("auction") ? "auction" : "default"} />; break;
+    case "stock-ranking": content = ["verified-only", "previous-only"].includes(block.variant)
+      ? <HistoricalRankingTable data={data} variant={block.variant} onOpenAShare={onOpenAShare} />
+      : block.variant === "interval-return"
+        ? <HistoricalRankingNotice variant={block.variant} />
+        : <StockTable stocks={stocksForVariant(model, block.variant)} onOpenAShare={onOpenAShare} mode={block.variant.includes("gap") || block.variant.includes("auction") ? "auction" : "default"} />; break;
     case "stock-matrix": content = <StockMatrix model={model} variant={block.variant} onOpenAShare={onOpenAShare} />; break;
     case "stock-inspector": content = <StockInspector model={model} onOpenAShare={onOpenAShare} />; break;
     case "sector-heatmap": content = <SectorHeatmap model={model} variant={block.variant} />; break;
-    case "sector-quadrant": content = <SectorQuadrant model={model} />; break;
+    case "sector-quadrant": content = <SectorQuadrant model={model} variant={block.variant} />; break;
     case "sector-members": content = <SectorMembers data={data} model={model} variant={block.variant} onOpenAShare={onOpenAShare} />; break;
     case "theme-atlas": content = <ThemeAtlas model={model} variant={block.variant} />; break;
     case "theme-matrix": content = <ThemeMatrix model={model} />; break;
     case "industry-map": content = <IndustryMap model={model} />; break;
-    case "limit-ecology": content = <LimitEcology data={data} />; break;
+    case "limit-ecology": content = <LimitEcology data={data} variant={block.variant} />; break;
     case "limit-board": content = block.variant === "sector-limit" ? <SectorLimitBoard data={data} model={model} onOpenAShare={onOpenAShare} /> : <StockTable stocks={stocksForVariant(model, "strict-limit")} onOpenAShare={onOpenAShare} />; break;
     case "failure-board": content = <StockTable stocks={stocksForVariant(model, "strict-broken")} onOpenAShare={onOpenAShare} mode="failure" />; break;
     case "height-pyramid": content = <HeightPyramid data={data} />; break;
@@ -603,7 +763,7 @@ export function WorkspaceBlockView({ block, definition, data, model, onOpenAShar
     case "rule-gates": content = <RuleGates data={data} model={model} variant={block.variant} />; break;
     case "evidence-map": content = <EvidenceMap model={model} variant={block.variant} />; break;
     case "capital-audit": content = <CapitalAudit variant={block.variant} />; break;
-    case "history-audit": content = <HistoryAudit variant={block.variant} />; break;
+    case "history-audit": content = <HistoryAudit data={data} variant={block.variant} />; break;
     case "data-audit": content = <DataAudit data={data} definition={definition} variant={block.variant} />; break;
     case "strategy-route": content = <StrategyRoute data={data} />; break;
     case "review-summary": content = <ReviewSummary data={data} variant={block.variant} />; break;

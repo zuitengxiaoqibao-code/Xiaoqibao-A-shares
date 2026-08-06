@@ -9,7 +9,6 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, Request
-from sqlalchemy import create_engine
 
 from qibao_api.a_shares.diagnosis import AShareDiagnosisService
 from qibao_api.a_shares.company_research import CompanyResearchService
@@ -60,6 +59,10 @@ from qibao_api.gongbu.tdx_local_overview import (
 )
 from qibao_api.gongbu.tdx_local_calendar import TdxLocalIpoSource
 from qibao_api.gongbu.tdx_formula import TdxLocalFormulaSource
+from qibao_api.gongbu.tdx_local_professional import (
+    TdxLocalProfessionalSource,
+    TdxQuantPythonSource,
+)
 from qibao_api.gongbu.self_contained_overview import (
     MootdxAShareCatalogSource,
     SelfContainedOverviewProvider,
@@ -81,7 +84,6 @@ from qibao_api.convertible_bonds.adapters import (
     TencentBondQuoteSource,
 )
 from qibao_api.convertible_bonds.tdx_local import FallbackClauseSource, TdxLocalClauseSource
-from qibao_api.convertible_bonds.repository import BondClauseRepository
 from qibao_api.convertible_bonds.universe_repository import BondUniverseRepository
 from qibao_api.convertible_bonds.service import ConvertibleBondService
 from qibao_api.convertible_bonds.diagnosis_repository import BondDiagnosisRepository
@@ -145,9 +147,7 @@ from qibao_api.settings_repository import AISettingsRepository, EffectiveAISetti
 from qibao_api.speech.edge_tts_service import EdgeTTSService
 from qibao_api.speech.settings_repository import SpeechSettingsRepository
 from qibao_api.shangshu.pipeline import ResearchPipeline
-from qibao_api.storage.database import create_schema
 from qibao_api.storage.bar_repository import BarRepository
-from qibao_api.storage.quote_repository import QuoteRepository
 from qibao_api.xingbu.gate import RiskGate
 from qibao_api.dongchang.repository import AuditFindingRepository
 from qibao_api.routes.xingbu import router as xingbu_router
@@ -193,6 +193,24 @@ from qibao_api.zhongshu.postclose_review import PostcloseReviewService
 
 logger = logging.getLogger(__name__)
 PORTABLE_HISTORY_RECONCILIATION_DELAY_SECONDS = 15.0
+
+
+def _create_database_engine(database_url: str):
+    """Create the schema in a worker so startup can overlap local discovery.
+
+    Both operations are independent filesystem reads/writes during process
+    startup.  Keeping this in a tiny helper makes the concurrency boundary
+    explicit and leaves all runtime database access on the existing engine.
+    """
+    # SQLAlchemy is only needed when the lifespan bootstraps the database.  Do
+    # not import its large dialect/typing graph while the desktop API module is
+    # being imported; this keeps the visible shell and API thread responsive.
+    from sqlalchemy import create_engine
+    from qibao_api.storage.database import create_schema
+
+    engine = create_engine(database_url)
+    create_schema(engine)
+    return engine
 
 
 async def _scheduler_loop(
@@ -304,20 +322,38 @@ async def lifespan(application: FastAPI):
     )
     local_terminal_discovery = LocalTerminalDiscovery()
     local_source_settings_record = local_source_settings_repository.load()
-    local_source_discovery_result = local_terminal_discovery.inspect(
-        local_source_settings_record.settings
-    )
     application.state.local_source_settings_repository = (
         local_source_settings_repository
     )
     application.state.local_terminal_discovery = local_terminal_discovery
-    application.state.local_source_discovery_result = (
-        local_source_discovery_result
+    # Disk discovery and SQLite schema creation are independent.  Start both
+    # together so a slow Windows antivirus scan of installed data terminals
+    # does not serialize with the database bootstrap.
+    local_source_discovery_task = asyncio.create_task(
+        asyncio.to_thread(
+            local_terminal_discovery.inspect,
+            local_source_settings_record.settings,
+        ),
+        name="local-source-discovery",
     )
+    engine_task = asyncio.create_task(
+        asyncio.to_thread(_create_database_engine, settings.database_url),
+        name="database-bootstrap",
+    )
+    local_source_discovery_result, engine = await asyncio.gather(
+        local_source_discovery_task,
+        engine_task,
+    )
+    # These repositories build SQLAlchemy table metadata only when the
+    # lifespan has completed its parallel bootstrap.  Keeping them out of the
+    # module import graph reduces cold desktop startup without changing the
+    # runtime schema or repository behavior.
+    from qibao_api.convertible_bonds.repository import BondClauseRepository
+    from qibao_api.storage.quote_repository import QuoteRepository
+
+    application.state.local_source_discovery_result = local_source_discovery_result
     log_startup_stage("local-sources-ready")
     application.state.edge_tts_service = EdgeTTSService(portable_root / "cache" / "tts")
-    engine = create_engine(settings.database_url)
-    create_schema(engine)
     compliance = ComplianceRepository(settings.data_dir / "compliance.sqlite3")
     audit_repository = AuditFindingRepository(settings.data_dir / "audit.sqlite3")
     application.state.audit_repository = audit_repository
@@ -790,6 +826,19 @@ async def lifespan(application: FastAPI):
 
                 application.state.tdx_ipo_source = TdxLocalIpoSource(tdx_rpc_factory)
                 application.state.tdx_formula_source = TdxLocalFormulaSource(tdx_rpc_factory)
+                direct_tdx_roots = tuple(
+                    terminal.install_path
+                    for terminal in local_source_discovery_result.terminals
+                    if (
+                        terminal.vendor == "tdx"
+                        and terminal.status == "ready"
+                        and terminal.selection_eligible
+                    )
+                )
+                application.state.tdx_professional_source = TdxLocalProfessionalSource(
+                    tdx_rpc_factory,
+                    fallback=TdxQuantPythonSource(direct_tdx_roots),
+                )
                 local_tdx_overview_source = LocalTdxOverviewSource(
                     cache_path=portable_root / "cache" / "tdx-market-overview.json",
                     rpc=tdx_rpc,

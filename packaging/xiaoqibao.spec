@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files
 
 
 spec_dir = Path(SPECPATH)
@@ -9,13 +9,27 @@ api_src = project_root / "apps" / "api" / "src"
 icon_path = project_root / "packaging" / "assets" / "xiaoqibao.ico"
 splash_path = project_root / "packaging" / "assets" / "xiaoqibao-splash.png"
 
-hiddenimports = (
-    collect_submodules("qibao_api")
-    + collect_submodules("qibao_desktop")
-    + collect_submodules("mootdx")
-    + collect_submodules("uvicorn")
-    + collect_submodules("webview")
-)
+# The desktop entrypoint imports its local modules statically.  The API is
+# loaded by Uvicorn from the string ``qibao_api.main:app``, so keep only that
+# explicit dynamic root instead of archiving every module under both packages.
+# PyInstaller follows the import graph from this root and still includes all
+# routers and services that the application actually imports.
+hiddenimports = [
+    "qibao_api.main",
+    # pywebview selects the Windows backend dynamically at runtime.  Keep
+    # only the backend and renderer branches used by this desktop build.
+    "webview.platforms.winforms",
+    "webview.platforms.edgechromium",
+    "webview.platforms.mshtml",
+    "webview.platforms.win32",
+    # LocalApiServer pins these Uvicorn implementations explicitly.
+    "uvicorn.loops.asyncio",
+    "uvicorn.protocols.http.h11_impl",
+    "uvicorn.lifespan.on",
+    # mootdx is used only through its Quotes client; tools/downloaders are
+    # not part of the application runtime.
+    "mootdx.quotes",
+]
 datas = collect_data_files("exchange_calendars") + collect_data_files("webview")
 
 a = Analysis(
@@ -27,7 +41,20 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["tkinter", "matplotlib", "pytest", "hypothesis"],
+    excludes=[
+        "tkinter",
+        "matplotlib",
+        "pytest",
+        "hypothesis",
+        # Windows desktop builds use WinForms + Edge WebView2 only.
+        "webview.platforms.android",
+        "webview.platforms.cocoa",
+        "webview.platforms.gtk",
+        "webview.platforms.qt",
+        "webview.platforms.cef",
+        # TDX daily/quote reads do not use downloader or F10 tool helpers.
+        "mootdx.tools",
+    ],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

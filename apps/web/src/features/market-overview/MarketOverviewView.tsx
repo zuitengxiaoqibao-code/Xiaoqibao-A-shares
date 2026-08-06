@@ -6,7 +6,7 @@ import { MarketRegimeDashboard } from "./MarketRegimeDashboard";
 import { OverviewFeatureRail } from "./OverviewFeatureRail";
 import { OverviewMinuteChart } from "./OverviewMinuteChart";
 import { OverviewTables } from "./OverviewTables";
-import type { MarketOverviewLoader, MarketOverviewResponse, OverviewIndexQuote } from "./types";
+import type { MarketIntervalReviewLoader, MarketOverviewLoader, MarketOverviewResponse, OverviewIndexQuote } from "./types";
 import { TerminalPageHeader } from "../../shared/terminal/TerminalPrimitives";
 import { BreakingNewsStrip } from "../news-alerts/BreakingNewsStrip";
 import type { BreakingNewsAlertLoader } from "../news-alerts/types";
@@ -79,11 +79,12 @@ function keepAShareInformation(response: MarketOverviewResponse): MarketOverview
   return { ...response, live_feed: liveFeed, anomalies };
 }
 
-export function MarketOverviewView({ load, loadAlerts, onOpenAShare, synthesizeSpeech }: {
+export function MarketOverviewView({ load, loadAlerts, onOpenAShare, synthesizeSpeech, loadIntervalReview }: {
   load: MarketOverviewLoader;
   loadAlerts?: BreakingNewsAlertLoader;
   onOpenAShare?: (symbol: string) => void;
   synthesizeSpeech?: SpeechSynthesizer;
+  loadIntervalReview?: MarketIntervalReviewLoader;
 }) {
   const [initialCache] = useState(() => readMarketOverviewCache());
   const [data, setData] = useState<MarketOverviewResponse | null>(initialCache?.value ?? null);
@@ -312,7 +313,7 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, synthesizeS
       ? <MarketRegimeDashboard metrics={data.regime_metrics} regime={data.regime} />
       : activeFeature === "异动语音播报" && synthesizeSpeech
         ? <AnomalyVoiceAnnouncer anomalies={data?.anomalies ?? []} synthesize={synthesizeSpeech} />
-        : activeFeature !== "盘中异动" && data && <DistinctMarketWorkspace feature={activeFeature} data={data} onOpenAShare={onOpenAShare} />}
+        : activeFeature !== "盘中异动" && data && <DistinctMarketWorkspace feature={activeFeature} data={data} onOpenAShare={onOpenAShare} loadIntervalReview={loadIntervalReview} />}
 
     <footer className="overview-footnote">
       <span>来源：{data?.sources.join(" / ") || "等待数据"}</span>

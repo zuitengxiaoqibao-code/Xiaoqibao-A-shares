@@ -3,6 +3,7 @@ from pathlib import Path
 from qibao_api.local_sources.discovery import (
     LocalTerminalDiscovery,
     SystemCandidate,
+    running_tdx_process_paths,
 )
 from qibao_api.local_sources.models import LocalSourceSettings
 
@@ -96,3 +97,58 @@ def test_invalid_manual_directory_is_reported_without_becoming_active(
 
     assert result.terminals[0].status == "invalid"
     assert result.active_tdx_vipdoc is None
+
+
+def test_auto_discovery_does_not_select_suspected_mock_tdx_before_real_data(
+    tmp_path: Path,
+) -> None:
+    mocked = create_tdx(tmp_path / "tdx_mock", sh_count=10, sz_count=10)
+    real = create_tdx(tmp_path / "tdx64", sh_count=3, sz_count=4)
+    discovery = LocalTerminalDiscovery(
+        system_candidates=lambda: (
+            SystemCandidate(vendor="tdx", path=mocked, origin="registry"),
+            SystemCandidate(vendor="tdx", path=real, origin="registry"),
+        )
+    )
+
+    result = discovery.inspect(LocalSourceSettings())
+
+    assert result.active_tdx_vipdoc == real / "vipdoc"
+    excluded = next(item for item in result.terminals if item.install_path == mocked)
+    assert excluded.status == "ready"
+    assert excluded.selection_eligible is False
+    assert excluded.selection_note is not None
+
+
+def test_tdx_reports_professional_cache_as_detected_but_not_bridge_ready(
+    tmp_path: Path,
+) -> None:
+    root = create_tdx(tmp_path / "tdx64")
+    cache = root / "T0002" / "hq_cache"
+    cache.mkdir(parents=True)
+    (cache / "base.dbf").write_bytes(b"professional-cache")
+    (cache / "shs.tnf").write_bytes(b"professional-cache")
+
+    result = LocalTerminalDiscovery(system_candidates=lambda: ()).inspect(
+        LocalSourceSettings(tdx_install_paths=(root,))
+    )
+
+    terminal = result.terminals[0]
+    assert terminal.professional_data_status == "detected_only"
+    assert terminal.professional_data_files == ("base.dbf", "shs.tnf")
+
+
+def test_running_tdx_process_paths_only_returns_tdx_clients(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "qibao_api.local_sources.discovery._running_process_paths",
+        lambda: (
+            Path(r"D:\new_tdx64\TdxW.exe"),
+            Path(r"C:\THS\hexin.exe"),
+            Path(r"D:\new_tdx64\tdx.exe"),
+        ),
+    )
+
+    assert running_tdx_process_paths() == (
+        Path(r"D:\new_tdx64\TdxW.exe"),
+        Path(r"D:\new_tdx64\tdx.exe"),
+    )

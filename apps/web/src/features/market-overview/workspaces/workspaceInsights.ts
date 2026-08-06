@@ -4,6 +4,7 @@ import { numberValue, type WorkspaceMarketModel } from "./workspaceSelectors";
 
 export type InsightQuality = "ready" | "partial" | "unavailable";
 export type InsightTone = "positive" | "warning" | "danger" | "neutral";
+export type InsightBasis = "raw" | "derived" | "composite" | "unavailable";
 
 export type WorkspaceInsight = {
   key: MetricKey;
@@ -12,6 +13,8 @@ export type WorkspaceInsight = {
   detail: string;
   quality: InsightQuality;
   tone: InsightTone;
+  basis: InsightBasis;
+  method?: string;
   icon: "pulse" | "news" | "theme" | "auction" | "limit" | "sector" | "history" | "seat" | "risk" | "data" | "stock";
 };
 
@@ -84,8 +87,17 @@ export const WORKSPACE_INSIGHT_PROFILES: Record<string, readonly MetricKey[]> = 
   "龙虎榜": ["seat-stocks", "seat-net", "seat-count", "review-date"],
 };
 
-const ready = (key: MetricKey, label: string, value: string, detail: string, tone: InsightTone, icon: WorkspaceInsight["icon"]): WorkspaceInsight => ({ key, label, value, detail, quality: "ready", tone, icon });
-const unavailable = (key: MetricKey, label: string, detail: string, icon: WorkspaceInsight["icon"]): WorkspaceInsight => ({ key, label, value: "未接入", detail, quality: "unavailable", tone: "warning", icon });
+const ready = (
+  key: MetricKey,
+  label: string,
+  value: string,
+  detail: string,
+  tone: InsightTone,
+  icon: WorkspaceInsight["icon"],
+  basis: Exclude<InsightBasis, "unavailable"> = "raw",
+  method?: string,
+): WorkspaceInsight => ({ key, label, value, detail, quality: "ready", tone, basis, method, icon });
+const unavailable = (key: MetricKey, label: string, detail: string, icon: WorkspaceInsight["icon"]): WorkspaceInsight => ({ key, label, value: "未接入", detail, quality: "unavailable", tone: "warning", basis: "unavailable", icon });
 const countSymbols = (items: Array<{ symbols: string[] }>) => new Set(items.flatMap((item) => item.symbols)).size;
 const signedMoney = (value: number) => `${value >= 0 ? "+" : ""}${value.toFixed(2)}亿`;
 const known = (value: number | null | undefined): value is number => value !== null && value !== undefined && Number.isFinite(value);
@@ -143,24 +155,24 @@ function metric(key: MetricKey, data: MarketOverviewResponse, model: WorkspaceMa
     case "top-theme": return ready(key, "证据最多题材", model.themes[0]?.name ?? "--", model.themes[0] ? `${model.themes[0].evidenceCount} 条证据` : "暂无题材证据", "positive", "theme");
     case "theme-symbols": return ready(key, "题材关联股票", String(new Set(model.themes.flatMap((item) => item.symbols)).size), "题材代码去重", "neutral", "stock");
     case "theme-confluence": return ready(key, "多源共振题材", String(model.themes.filter((item) => item.newsCount > 0 && item.anomalyCount > 0).length), "新闻与异动同时出现", "positive", "theme");
-    case "gap-up": return ready(key, "高开 >= 2%", String(gapsUp.length), "开盘价相对昨收", "positive", "auction");
-    case "gap-down": return ready(key, "低开 <= -2%", String(gapsDown.length), "开盘价相对昨收", "danger", "auction");
-    case "gap-recovery": return ready(key, "高开延续", String(gapsUp.filter((item) => known(item.change) && item.change >= (item.gap ?? 0) - 1).length), "现涨幅未明显弱于缺口", "positive", "auction");
-    case "auction-pass": return ready(key, "竞价规则通过", String(auctionPass.length), "缺口、现价、收盘位置、成交均通过", "positive", "auction");
+    case "gap-up": return ready(key, "高开 >= 2%", String(gapsUp.length), "开盘价相对昨收", "positive", "auction", "derived", "(开盘价 / 昨收 - 1) × 100");
+    case "gap-down": return ready(key, "低开 <= -2%", String(gapsDown.length), "开盘价相对昨收", "danger", "auction", "derived", "(开盘价 / 昨收 - 1) × 100");
+    case "gap-recovery": return ready(key, "高开延续", String(gapsUp.filter((item) => known(item.change) && item.change >= (item.gap ?? 0) - 1).length), "现涨幅未明显弱于缺口", "positive", "auction", "derived", "现涨幅 >= 高开幅度 - 1 个百分点");
+    case "auction-pass": return ready(key, "竞价规则通过", String(auctionPass.length), "缺口、现价、收盘位置、成交均通过", "positive", "auction", "derived", "-1%≤高开≤4%、现涨幅≥高开-1%、收盘位置≥50%、成交额>0");
     case "order-book": return unavailable(key, "委托/封单证据", "当前响应没有逐笔委托队列", "data");
     case "limit-up": return ready(key, "严格涨停", String(data.limit_ecology.limit_up_count), "按现价与涨停价判定", "positive", "limit");
     case "broken-limit": return ready(key, "触板未封", String(data.limit_ecology.broken_limit_up_count), "最高触板但现价未封", "warning", "risk");
     case "limit-down": return ready(key, "当前跌停", String(data.limit_ecology.limit_down_count), "严格现价风险状态", "danger", "risk");
     case "seal-rate": return ready(key, "封板率", data.limit_ecology.seal_rate_percent ? `${data.limit_ecology.seal_rate_percent}%` : "--", "封板 / 全部触板", "positive", "limit");
-    case "risk-stocks": return ready(key, "风险股票", String(riskStocks.length), "跌停、炸板或跌幅 <= -3%", "danger", "risk");
+    case "risk-stocks": return ready(key, "风险股票", String(riskStocks.length), "跌停、炸板或跌幅 <= -3%", "danger", "risk", "derived", "状态为跌停/炸板，或现涨幅≤-3%");
     case "sector-total": return ready(key, "板块样本", String(model.sectors.length), "本地板块快照", "neutral", "sector");
     case "sector-positive": return ready(key, "上涨板块", String(model.sectors.filter((item) => known(item.change) && item.change > 0).length), "板块涨跌幅 > 0", "positive", "sector");
     case "sector-limit": return ready(key, "涨停扩散板块", String(model.sectors.filter((item) => item.limit_up_count > 0).length), "板块内至少 1 只涨停", "positive", "sector");
-    case "top-sector": return topSector && known(topSector.strengthScore) ? ready(key, "综合强度第一", topSector.name, `强度 ${topSector.strengthScore.toFixed(0)} / 100`, "positive", "sector") : unavailable(key, "综合强度第一", "板块强度所需字段不足", "sector");
-    case "top-sector-breadth": return topSector && known(topSector.breadthPercent) ? ready(key, "领涨板块广度", `${topSector.breadthPercent.toFixed(0)}%`, topSector.name, "positive", "sector") : unavailable(key, "领涨板块广度", "板块上涨/下跌家数不足", "sector");
-    case "top-sector-amount": return topSector && known(topSector.amount) ? ready(key, "板块成交活跃", `${topSector.amount.toFixed(0)}亿`, "仅表示成交额，不代表净流入", "neutral", "sector") : unavailable(key, "板块成交活跃", "板块成交额不可用", "sector");
+    case "top-sector": return topSector && known(topSector.strengthScore) ? ready(key, "综合强度第一", topSector.name, `强度 ${topSector.strengthScore.toFixed(0)} / 100`, "positive", "sector", "composite", "30 + 6×涨跌幅 + 0.45×(上涨广度-50) + min(20, 4×涨停密度)，截断 0-100") : unavailable(key, "综合强度第一", "板块强度所需字段不足", "sector");
+    case "top-sector-breadth": return topSector && known(topSector.breadthPercent) ? ready(key, "领涨板块广度", `${topSector.breadthPercent.toFixed(0)}%`, topSector.name, "positive", "sector", "derived", "上涨家数 / (上涨家数 + 下跌家数)") : unavailable(key, "领涨板块广度", "板块上涨/下跌家数不足", "sector");
+    case "top-sector-amount": return topSector && known(topSector.amount) ? ready(key, "板块成交活跃", `${topSector.amount.toFixed(0)}亿`, "仅表示成交额，不代表净流入", "neutral", "sector", "raw", "板块成交额字段；不等同于资金净流入") : unavailable(key, "板块成交活跃", "板块成交额不可用", "sector");
     case "sentiment": return numberValue(data.sentiment.score) !== null
-      ? ready(key, "市场情绪", data.sentiment.score as string, data.sentiment.band, "neutral", "pulse")
+      ? ready(key, "市场情绪", data.sentiment.score as string, data.sentiment.band, "neutral", "pulse", "composite", "a-share-sentiment-v2：9 因子按 15/15/10/10/15/15/10/5/5 加权，按有效覆盖归一化")
       : unavailable(key, "市场情绪", "情绪分数缺失，不能生成市场情绪结论", "pulse");
     case "rising": return data.breadth.valid_count > 0
       ? ready(key, "上涨家数", String(data.breadth.rising_count), `${data.breadth.valid_count} 只有效行情`, "positive", "pulse")
@@ -183,12 +195,12 @@ function metric(key: MetricKey, data: MarketOverviewResponse, model: WorkspaceMa
     case "active-stocks": return ready(key, "行情样本", String(model.stocks.length), "接口返回的代表股票", "neutral", "stock");
     case "top-stock": return topStock && known(topStock.change) ? ready(key, "涨幅领先", topStock.name, `${topStock.symbol} ${topStock.change >= 0 ? "+" : ""}${topStock.change.toFixed(2)}%`, "positive", "stock") : unavailable(key, "涨幅领先", "行情样本缺少涨跌幅", "stock");
     case "high-amplitude": return topAmplitude && known(topAmplitude.amplitude) ? ready(key, "最大振幅", `${topAmplitude.amplitude.toFixed(2)}%`, `${topAmplitude.name} ${topAmplitude.symbol}`, "warning", "stock") : unavailable(key, "最大振幅", "行情样本缺少高低价", "stock");
-    case "attention-top": return topAttention && known(topAttention.attentionScore) ? ready(key, "观察热度第一", topAttention.name, `量价资讯合成分 ${topAttention.attentionScore.toFixed(0)}`, "positive", "stock") : unavailable(key, "观察热度第一", "行情与关联证据不足", "stock");
+    case "attention-top": return topAttention && known(topAttention.attentionScore) ? ready(key, "观察热度第一", topAttention.name, `量价资讯合成分 ${topAttention.attentionScore.toFixed(0)}`, "positive", "stock", "composite", "35 + 2×|涨跌幅| + min(20, 10×log10(成交额亿+1)) + 5×题材数，截断 0-100"): unavailable(key, "观察热度第一", "行情与关联证据不足", "stock");
     case "theme-stock-top": return topThemeStock
       ? ready(key, "题材叠加最多", topThemeStock.name, `${topThemeStock.themes.length} 个已关联题材`, "warning", "theme")
       : unavailable(key, "题材叠加最多", "没有股票同时具备已关联题材证据", "theme");
     case "history-coverage": return review && review.universe_count > 0 && review.history_ready_count > 0 && coverage !== null
-      ? ready(key, "日线覆盖", `${coverage.toFixed(1)}%`, `${review.history_ready_count}/${review.universe_count}`, coverage >= 80 ? "positive" : "warning", "history")
+      ? ready(key, "日线覆盖", `${coverage.toFixed(1)}%`, `${review.history_ready_count}/${review.universe_count}`, coverage >= 80 ? "positive" : "warning", "history", "derived", "可用日线股票数 / 全市场股票数")
       : unavailable(key, "日线覆盖", "本地日线没有可用历史样本", "history");
     case "history-new-high": return unavailable(key, "百日新高清单", "当前响应未返回百日新高逐股结果", "history");
     case "history-previous-limit": return unavailable(key, "昨涨停反馈", "当前响应未返回上一交易日涨停名单", "history");

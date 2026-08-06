@@ -1,7 +1,9 @@
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
-from qibao_api.a_shares.market_review import build_market_review
+import pytest
+
+from qibao_api.a_shares.market_review import build_interval_review, build_market_review
 from qibao_api.gongbu.tdx_local_daily import TdxLocalDailyBar
 
 
@@ -119,3 +121,80 @@ def test_review_does_not_fabricate_intraday_limit_fields() -> None:
     assert item.failed_limit_count is None
     assert item.first_seal_time is None
     assert item.turnover_rate is None
+
+
+def test_review_detects_one_hundred_day_close_new_high() -> None:
+    histories = {
+        "600007": bars("600007", [*["10"] * 100, "11"]),
+        "600008": bars("600008", [*["10"] * 99, "11", "10.5"]),
+    }
+
+    result = build_market_review(
+        histories,
+        as_of=date(2026, 7, 30),
+        observed_at=NOW,
+        name_resolver=lambda symbol: symbol,
+    )
+
+    assert [item.symbol for item in result.new_high_100] == ["600007"]
+    assert result.new_high_100[0].reference_high == Decimal("10")
+    assert result.new_high_100[0].window_days == 100
+
+
+def test_review_detects_next_day_feedback_after_previous_limit_up() -> None:
+    result = build_market_review(
+        {"600009": bars("600009", ["10.00", "11.00", "10.50"])},
+        as_of=date(2026, 7, 30),
+        observed_at=NOW,
+        name_resolver=lambda symbol: "昨涨停反馈样本",
+    )
+
+    item = result.previous_limit_up[0]
+    assert item.symbol == "600009"
+    assert item.prior_close == Decimal("11.00")
+    assert item.prior_change_percent == Decimal("10.00")
+    assert item.change_percent == Decimal("-4.55")
+
+
+def test_interval_review_resolves_trading_dates_and_calculates_return_and_amplitude() -> None:
+    result = build_interval_review(
+        {"600010": bars("600010", ["10.00", "10.50", "11.00", "10.80"])},
+        start_date=date(2026, 1, 1),
+        end_date=date(2026, 1, 4),
+        as_of=date(2026, 1, 4),
+        observed_at=NOW,
+        name_resolver=lambda _symbol: "区间样本",
+    )
+
+    assert result.start_date == date(2026, 1, 1)
+    assert result.end_date == date(2026, 1, 4)
+    item = result.rows[0]
+    assert item.symbol == "600010"
+    assert item.start_close == Decimal("10.00")
+    assert item.end_close == Decimal("10.80")
+    assert item.return_percent == Decimal("8.00")
+    assert item.amplitude_percent == Decimal("10.00")
+
+
+def test_interval_review_rejects_reversed_dates() -> None:
+    with pytest.raises(ValueError, match="start_date must be before end_date"):
+        build_interval_review(
+            {},
+            start_date=date(2026, 1, 4),
+            end_date=date(2026, 1, 1),
+            as_of=date(2026, 1, 4),
+            observed_at=NOW,
+            name_resolver=lambda symbol: symbol,
+        )
+
+
+def test_review_excludes_benchmark_files_from_stock_rankings() -> None:
+    result = build_market_review(
+        {"000300": bars("000300", [*(["10"] * 100), "11"])},
+        as_of=date(2026, 7, 30),
+        observed_at=NOW,
+        name_resolver=lambda _symbol: "沪深300",
+    )
+
+    assert result.new_high_100 == ()
+    assert result.first_limit_up == ()

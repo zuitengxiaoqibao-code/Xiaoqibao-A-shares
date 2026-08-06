@@ -317,6 +317,51 @@ def test_probe_tdx_capabilities_reports_real_read_only_methods_and_partial_suppo
     assert "get_more_info" in rpc.calls
 
 
+def test_probe_tdx_capabilities_uses_table_list_for_professional_methods() -> None:
+    class ProfessionalRpc:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict]] = []
+
+        def available(self) -> bool:
+            return True
+
+        def call(self, method: str, params: dict) -> object:
+            self.calls.append((method, params))
+            if method == "get_stock_list":
+                return {"ErrorId": "0", "Value": [{"Code": "600000.SH", "Name": "浦发银行"}]}
+            if method == "get_market_snapshot":
+                return {"ErrorId": "0", "Now": "9.28"}
+            if method == "get_sector_list":
+                return {"ErrorId": "0", "Value": [{"Code": "BK0001", "Name": "测试板块"}]}
+            if method == "get_financial_data":
+                return {"ErrorId": "0", "Value": [{"Code": "600000.SH", "Fn193": "12.5"}]}
+            return {"ErrorId": "12", "Value": []}
+
+    rpc = ProfessionalRpc()
+    result = probe_tdx_capabilities(rpc, stock_code="600000.SH")
+
+    financial_call = next(call for call in rpc.calls if call[0] == "get_financial_data")
+    assert financial_call[1]["table_list"] == ["Fn193"]
+    assert "field_list" not in financial_call[1]
+    financial_capability = next(item for item in result["capabilities"] if item["key"] == "professional_finance")
+    assert financial_capability["status"] == "ready"
+
+
+def test_probe_tdx_capabilities_rejects_unwrapped_professional_rows_without_error_contract() -> None:
+    class ListRpc:
+        def available(self) -> bool:
+            return True
+
+        def call(self, method: str, params: dict) -> object:
+            if method == "get_financial_data":
+                return [{"Code": "600000.SH", "Fn193": "12.5"}]
+            return {"ErrorId": "12", "Value": []}
+
+    result = probe_tdx_capabilities(ListRpc(), stock_code="600000.SH")
+    status = next(item["status"] for item in result["capabilities"] if item["key"] == "professional_finance")
+    assert status == "unavailable"
+
+
 def test_probe_tdx_capabilities_marks_everything_unavailable_when_bridge_is_down() -> None:
     class MissingRpc:
         def available(self) -> bool:

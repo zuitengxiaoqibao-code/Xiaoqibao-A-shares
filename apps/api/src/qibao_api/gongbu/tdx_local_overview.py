@@ -23,6 +23,7 @@ from qibao_api.contracts.market_overview import (
     OverviewSector,
     OverviewSectorStock,
 )
+from qibao_api.gongbu.tdx_local_professional import parse_tdx_professional_rows
 
 
 logger = logging.getLogger(__name__)
@@ -109,6 +110,24 @@ _TDX_READ_ONLY_PROBES: tuple[tuple[str, str, str, dict], ...] = (
     ("ipo", "新股与新债日历", "get_ipo_info", {"market": "5"}),
     ("kzz", "可转债条款", "get_kzz_info", {"stock_code": "{stock_code}"}),
     ("formula", "通达信公式计算", "formula_process_mul_zb", {"stock_list": ["{stock_code}"]}),
+    ("professional_finance", "专业财务表", "get_financial_data", {
+        "stock_list": ["{stock_code}"], "table_list": ["Fn193"],
+        "start_time": "", "end_time": "", "report_type": "report_time",
+    }),
+    ("professional_stock_trade", "个股交易表", "get_gpjy_value", {
+        "stock_list": ["{stock_code}"], "table_list": ["GP1"],
+        "start_time": "", "end_time": "",
+    }),
+    ("professional_sector_trade", "板块交易表", "get_bkjy_value", {
+        "stock_list": ["880660.SH"], "table_list": ["BK5"],
+        "start_time": "", "end_time": "",
+    }),
+    ("professional_market_trade", "市场交易表", "get_scjy_value", {
+        "table_list": ["SC1"], "start_time": "", "end_time": "",
+    }),
+    ("professional_stock_single", "个股单项表", "get_gp_one_data", {
+        "stock_list": ["{stock_code}"], "table_list": ["GO1"],
+    }),
 )
 
 
@@ -119,9 +138,26 @@ def tdx_read_only_capability_catalog() -> tuple[dict[str, str], ...]:
     )
 
 
-def _probe_result_is_usable(key: str, result: object) -> bool:
+def _probe_result_is_usable(key: str, result: object, *, method: str | None = None) -> bool:
     if result is None:
         return False
+    if key.startswith("professional_") and method is not None:
+        # The local JSON-RPC bridge must expose its explicit ErrorId contract.
+        # Official Python TdxQuant responses are parsed by the dedicated lazy
+        # adapter, but an unwrapped list from the bridge is not verified data.
+        if not isinstance(result, dict) or "ErrorId" not in result:
+            return False
+        if str(result.get("ErrorId")) != "0":
+            return False
+        try:
+            parse_tdx_professional_rows(
+                result,
+                method=method,
+                fetched_at=datetime.now(timezone.utc),
+            )
+        except (ValueError, RuntimeError):
+            return False
+        return True
     if isinstance(result, dict):
         if "ErrorId" in result and str(result.get("ErrorId")) != "0":
             return False
@@ -162,7 +198,12 @@ def probe_tdx_capabilities(rpc, *, stock_code: str = "600000.SH") -> dict[str, o
     for key, label, method, template in _TDX_READ_ONLY_PROBES:
         params = {
             name: (
-                [stock_code for _ in value]
+                [
+                    item.replace("{stock_code}", stock_code)
+                    if isinstance(item, str)
+                    else item
+                    for item in value
+                ]
                 if isinstance(value, list)
                 else value.replace("{stock_code}", stock_code)
                 if isinstance(value, str)
@@ -172,7 +213,7 @@ def probe_tdx_capabilities(rpc, *, stock_code: str = "600000.SH") -> dict[str, o
         }
         try:
             result = rpc.call(method, params)
-            if not _probe_result_is_usable(key, result):
+            if not _probe_result_is_usable(key, result, method=method):
                 raise ValueError("empty or invalid response")
         except Exception as error:  # probe must continue and report each method independently
             capabilities.append({

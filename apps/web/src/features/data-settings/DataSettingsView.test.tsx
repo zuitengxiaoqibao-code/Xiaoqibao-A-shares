@@ -119,19 +119,22 @@ describe("DataSettingsView", () => {
       },
       scanned_at: "2026-07-30T02:00:00Z",
       terminals: [
-        { vendor: "tdx" as const, install_path: "D:\\new_tdx_mock", data_path: "D:\\new_tdx_mock\\vipdoc", origin: "manual" as const, status: "ready" as const, sh_daily_count: 2210, sz_daily_count: 2890, latest_modified_at: "2026-07-30T01:30:00Z" },
+        { vendor: "tdx" as const, install_path: "D:\\new_tdx_mock", data_path: "D:\\new_tdx_mock\\vipdoc", origin: "manual" as const, status: "ready" as const, sh_daily_count: 2210, sz_daily_count: 2890, latest_modified_at: "2026-07-30T01:30:00Z", professional_data_status: "detected_only" as const, professional_data_files: ["base.dbf", "shs.tnf"] },
+        { vendor: "tdx" as const, install_path: "D:\\tdx_fixture", data_path: "D:\\tdx_fixture\\vipdoc", origin: "registry" as const, status: "ready" as const, sh_daily_count: 100, sz_daily_count: 100, latest_modified_at: "2026-07-30T01:30:00Z", selection_eligible: false, selection_note: "自动发现已排除疑似测试/示例数据目录；如需使用请手工添加此目录" },
         { vendor: "ths" as const, install_path: "C:\\THS", data_path: null, origin: "manual" as const, status: "detected_only" as const, sh_daily_count: 0, sz_daily_count: 0, latest_modified_at: null },
       ],
       active_tdx_vipdoc: "D:\\new_tdx_mock\\vipdoc",
-      tdx_rpc: {
-        status: "disabled" as const,
-        reachable: false,
-        endpoint: null,
-        observed_at: "2026-07-30T02:00:00Z",
-        capabilities: [
-          { key: "snapshot", label: "实时行情", method: "get_market_snapshot", status: "disabled" as const, detail: "本地通达信桥接未启用" },
-        ],
-      },
+         tdx_rpc: {
+           status: "disabled" as const,
+           reachable: false,
+           endpoint: null,
+           observed_at: "2026-07-30T02:00:00Z",
+           client: { status: "not_running" as const, executable_path: null, detail: "未检测到通达信客户端进程" },
+            capabilities: [
+           { key: "snapshot", label: "实时行情", method: "get_market_snapshot", status: "disabled" as const, detail: "本地通达信桥接未启用" },
+         ],
+          direct_python: { status: "detected_only" as const, detail: "已发现官方模块；等待通达信进程返回可验证专业字段", module_path: "D:\\new_tdx64\\PYPlugins\\user\\tqcenter.py" },
+       },
       restart_required: false,
     };
     const detectLocalSources = vi.fn().mockResolvedValue(localSources);
@@ -149,10 +152,14 @@ describe("DataSettingsView", () => {
     expect(await screen.findByRole("heading", { name: "本地行情软件" })).toBeInTheDocument();
     expect(screen.getByText("D:\\new_tdx_mock\\vipdoc")).toBeInTheDocument();
     expect(screen.getByText(/沪市 2210.*深市 2890/)).toBeInTheDocument();
+    expect(screen.getByText("专业缓存已发现 2 项，等待只读桥接读取")).toBeInTheDocument();
     expect(screen.getByText("已发现，暂未读取本地行情")).toBeInTheDocument();
+    expect(screen.getByText(/自动发现已排除疑似测试/)).toBeInTheDocument();
     expect(screen.getByLabelText("自动发现本机行情软件")).toBeChecked();
     expect(screen.getByLabelText("启用本地实时桥接")).not.toBeChecked();
     expect(screen.getByText("只读能力探测")).toBeInTheDocument();
+    expect(screen.getByText("官方 TdxQuant Python 回退")).toBeInTheDocument();
+    expect(screen.getByText(/等待通达信进程返回可验证专业字段/)).toBeInTheDocument();
     expect(screen.getByText("实时行情")).toBeInTheDocument();
     expect(screen.getAllByText("桥接未启用")).toHaveLength(2);
 
@@ -181,13 +188,15 @@ describe("DataSettingsView", () => {
         scanned_at: "2026-07-30T02:00:00Z",
         terminals: [],
         active_tdx_vipdoc: null,
-        tdx_rpc: {
-          status: "unavailable" as const,
-          reachable: false,
-          endpoint: "http://127.0.0.1:17709/",
-          observed_at: "2026-07-30T02:00:00Z",
-          capabilities: [],
-        },
+         tdx_rpc: {
+           status: "unavailable" as const,
+           reachable: false,
+           endpoint: "http://127.0.0.1:17709/",
+           observed_at: "2026-07-30T02:00:00Z",
+           client: { status: "not_running" as const, executable_path: null, detail: "未检测到通达信客户端进程" },
+           capabilities: [],
+           direct_python: { status: "unavailable" as const, detail: "未发现官方 TdxQuant Python 模块和配套 DLL", module_path: null },
+         },
         restart_required: false,
       };
       const detect = vi.fn().mockResolvedValue({
@@ -209,6 +218,40 @@ describe("DataSettingsView", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("separates the running TDX client from the unavailable JSON-RPC bridge", async () => {
+    const localSources = {
+      settings_state: "ready" as const,
+      settings: { auto_discovery: true, tdx_install_paths: [], ths_install_paths: [], tdx_rpc_enabled: true, tdx_rpc_url: "http://127.0.0.1:17709/" },
+      scanned_at: "2026-07-30T02:00:00Z",
+      terminals: [],
+      active_tdx_vipdoc: null,
+      tdx_rpc: {
+        status: "unavailable" as const,
+        reachable: false,
+        endpoint: "http://127.0.0.1:17709/",
+        observed_at: "2026-07-30T02:00:00Z",
+        client: { status: "running" as const, executable_path: "D:\\\\new_tdx64\\\\TdxW.exe", detail: "检测到通达信客户端进程；这不代表 17709 JSON-RPC 桥已经监听" },
+        capabilities: [],
+        direct_python: { status: "detected_only" as const, detail: "已发现官方模块；等待通达信进程返回可验证专业字段", module_path: "D:\\\\new_tdx64\\\\PYPlugins\\\\user\\\\tqcenter.py" },
+      },
+      restart_required: false,
+    };
+
+    render(<DataSettingsView
+      loadAI={() => Promise.resolve(emptySettings)}
+      saveAI={vi.fn()}
+      deleteAI={vi.fn()}
+      loadLocalSources={() => Promise.resolve(localSources)}
+      detectLocalSources={vi.fn()}
+      saveLocalSources={vi.fn()}
+    />);
+
+    expect(await screen.findByText("通达信客户端")).toBeInTheDocument();
+    expect(screen.getByText("已运行")).toBeInTheDocument();
+    expect(screen.getByText("17709 未监听")).toBeInTheDocument();
+    expect(screen.getByText(/这不代表 17709 JSON-RPC 桥已经监听/)).toBeInTheDocument();
   });
 
   it("shows masked AI state without rendering the secret", async () => {

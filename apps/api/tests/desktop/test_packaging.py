@@ -63,3 +63,60 @@ def test_portable_smoke_waits_for_lifespan_before_http_probe() -> None:
     health_probe = script.index('Uri "http://127.0.0.1:$Port/health"')
 
     assert lifespan_gate < health_probe
+
+
+def test_portable_smoke_reports_non_json_quant_errors_without_masking_them() -> None:
+    smoke_path = _project_root() / "scripts" / "run-portable-smoke.ps1"
+    script = smoke_path.read_text(encoding="utf-8")
+
+    assert "$RawErrorBody = $QuantError.ErrorDetails.Message" in script
+    assert "ConvertFrom-Json -ErrorAction Stop" in script
+    assert "with non-JSON error body" in script
+
+
+def test_portable_spec_does_not_collect_cross_platform_or_unused_tool_submodules() -> None:
+    spec_path = _project_root() / "packaging" / "xiaoqibao.spec"
+    source = spec_path.read_text(encoding="utf-8")
+
+    assert 'collect_submodules("webview")' not in source
+    assert 'collect_submodules("uvicorn")' not in source
+    assert 'collect_submodules("mootdx")' not in source
+    for required in (
+        "webview.platforms.winforms",
+        "webview.platforms.edgechromium",
+        "webview.platforms.mshtml",
+        "uvicorn.loops.asyncio",
+        "uvicorn.protocols.http.h11_impl",
+        "uvicorn.lifespan.on",
+    ):
+        assert required in source
+
+
+def test_portable_spec_does_not_archive_every_qibao_module() -> None:
+    spec_path = _project_root() / "packaging" / "xiaoqibao.spec"
+    source = spec_path.read_text(encoding="utf-8")
+
+    assert 'collect_submodules("qibao_api")' not in source
+    assert 'collect_submodules("qibao_desktop")' not in source
+    assert '"qibao_api.main"' in source
+
+
+def test_portable_spec_excludes_unreachable_platform_and_mootdx_tool_branches() -> None:
+    spec_path = _project_root() / "packaging" / "xiaoqibao.spec"
+    tree = ast.parse(spec_path.read_text(encoding="utf-8"))
+    analysis_call = _assignment_call(tree, "a")
+    excludes = next(
+        keyword.value
+        for keyword in analysis_call.keywords
+        if keyword.arg == "excludes"
+    )
+    assert isinstance(excludes, ast.List)
+    values = {item.value for item in excludes.elts if isinstance(item, ast.Constant)}
+    assert {
+        "webview.platforms.android",
+        "webview.platforms.cocoa",
+        "webview.platforms.gtk",
+        "webview.platforms.qt",
+        "webview.platforms.cef",
+        "mootdx.tools",
+    }.issubset(values)

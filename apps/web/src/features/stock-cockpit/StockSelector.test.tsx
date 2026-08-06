@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SelectedInstrumentProvider } from "../instrument-selection/SelectedInstrumentProvider";
@@ -173,7 +173,8 @@ describe("StockSelector", () => {
   it("does not replace an explicit selection when candidates refresh", async () => {
     const view = renderSelector();
     fireEvent.click(screen.getByRole("tab", { name: "波段候选" }));
-    fireEvent.click(await screen.findByRole("button", { pressed: false }));
+    await waitFor(() => expect(screen.getByRole("tab", { name: "波段候选" })).toHaveAttribute("aria-selected", "true"));
+    fireEvent.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: /^000001/ }));
     expect(new URL(window.location.href).searchParams.get("symbol")).toBe("000001");
     view.rerender(<SelectedInstrumentProvider><StockSelector loadCandidates={() => Promise.resolve(empty)} search={() => Promise.resolve(searchResult)} /></SelectedInstrumentProvider>);
     await screen.findByText("本地候选池为空");

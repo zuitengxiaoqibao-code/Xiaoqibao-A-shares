@@ -9,6 +9,8 @@ ReviewQuality = Literal["ready", "partial", "stale", "unavailable"]
 ReviewCategory = Literal[
     "consecutive_limit_up",
     "first_limit_up",
+    "new_high_100",
+    "previous_limit_feedback",
     "volume_breakout",
     "previous_high_breakout",
     "low_position_volume",
@@ -28,6 +30,8 @@ class MarketReviewStock(BaseModel):
     source: str = "tdx-local-day"
     board_count: int | None = Field(default=None, ge=1)
     limit_statistics: str | None = None
+    prior_close: Decimal | None = Field(default=None, gt=0)
+    prior_change_percent: Decimal | None = None
     turnover_rate: Decimal | None = Field(default=None, ge=0)
     seal_amount_yi: Decimal | None = Field(default=None, ge=0)
     failed_limit_count: int | None = Field(default=None, ge=0)
@@ -36,6 +40,21 @@ class MarketReviewStock(BaseModel):
     reference_high: Decimal | None = Field(default=None, gt=0)
     window_days: int | None = Field(default=None, ge=1)
     range_position_percent: Decimal | None = Field(default=None, ge=0, le=100)
+
+
+class MarketIntervalReviewStock(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    symbol: str = Field(pattern=r"^\d{6}$")
+    name: str = Field(min_length=1)
+    start_date: date
+    end_date: date
+    start_close: Decimal = Field(gt=0)
+    end_close: Decimal = Field(gt=0)
+    return_percent: Decimal
+    amplitude_percent: Decimal = Field(ge=0)
+    amount_yi: Decimal = Field(ge=0)
+    source: str = "tdx-local-day"
 
 
 class DragonTigerSeat(BaseModel):
@@ -78,9 +97,28 @@ class MarketReviewSnapshot(BaseModel):
     history_ready_count: int = Field(default=0, ge=0)
     consecutive_limit_up: tuple[MarketReviewStock, ...] = ()
     first_limit_up: tuple[MarketReviewStock, ...] = ()
+    new_high_100: tuple[MarketReviewStock, ...] = ()
+    previous_limit_up: tuple[MarketReviewStock, ...] = ()
     volume_breakouts: tuple[MarketReviewStock, ...] = ()
     previous_high_breakouts: tuple[MarketReviewStock, ...] = ()
     low_position_volume: tuple[MarketReviewStock, ...] = ()
     dragon_tiger: tuple[DragonTigerStock, ...] = ()
     warnings: tuple[str, ...] = ()
-    formula_version: str = "a-share-market-review-v1"
+    formula_version: str = "a-share-market-review-v2"
+
+
+class MarketIntervalReviewSnapshot(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    requested_start_date: date
+    requested_end_date: date
+    start_date: date | None = None
+    end_date: date | None = None
+    observed_at: AwareDatetime
+    source: str = "unavailable"
+    quality: ReviewQuality = "unavailable"
+    universe_count: int = Field(default=0, ge=0)
+    valid_count: int = Field(default=0, ge=0)
+    rows: tuple[MarketIntervalReviewStock, ...] = ()
+    warnings: tuple[str, ...] = ()
+    formula_version: str = "a-share-interval-review-v1"

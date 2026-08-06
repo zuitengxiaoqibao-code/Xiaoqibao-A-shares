@@ -40,7 +40,7 @@ import type { FirstLimitUpBoard } from "../first-limit-up/types";
 import { QuantAnalysisDashboard } from "../quant-analysis/QuantAnalysisDashboard";
 import type { QuantForecastLoader, QuantStrategyLoader, QuantTickLoader, TdxFormulaLoader } from "../quant-analysis/types";
 import { MarketOverviewView } from "../market-overview/MarketOverviewView";
-import type { MarketOverviewLoader } from "../market-overview/types";
+import type { MarketIntervalReviewLoader, MarketOverviewLoader } from "../market-overview/types";
 import type { StockTimelineLoader } from "../stock-timeline/types";
 import type { BreakingNewsAlertLoader } from "../news-alerts/types";
 import { CompanyResearchView } from "../company-research/CompanyResearchView";
@@ -126,6 +126,7 @@ type Props = {
   loadQuantStrategy?: QuantStrategyLoader;
   loadTdxFormula?: TdxFormulaLoader;
   loadMarketOverview?: MarketOverviewLoader;
+  loadMarketIntervalReview?: MarketIntervalReviewLoader;
   loadBreakingNewsAlerts?: BreakingNewsAlertLoader;
   loadSpeechSettings?: SpeechSettingsLoader;
   loadSpeechVoices?: SpeechVoiceLoader;
@@ -230,7 +231,7 @@ function SelectedGovernanceWorkspace(props: ComponentProps<typeof GovernanceView
   return <div className="selected-governance-workspace"><div className="selected-symbol-context"><b>全局 / 资产级治理数据</b><span>不按单股过滤{symbol ? ` · 导航代码 ${symbol}` : ""}</span></div><GovernanceView {...props} /></div>;
 }
 
-export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, loadCompliance, loadAudit, complianceAction, loadBondDashboard, loadBondDiagnosis, loadCachedBondDiagnosis, loadBondCandidates, diagnoseBondBatch, loadNewsIntelligence, syncNews, syncHotspots, createNewsCorrection, loadOperationsStatus, setSchedulerPaused, createBackup, verifyBackup, runManualJob, loadAShareCandidates, loadAShareCandidateScores, loadAShareDiagnosis, loadDecisionCurrent, loadDecisionDate, loadMarketSentiment, refreshMarketSentiment, loadCandidateSentiments, refreshCandidateSentiments, searchAShareInstruments, loadStockCockpit, loadStockCockpitAI, loadStockTimeline, prepareStockData, loadAISettings, saveAISettings, deleteAISettings, loadLocalSourceSettings, detectLocalSourceSettings, saveLocalSourceSettings, syncAShareUniverse, loadSourceHealth, loadHistorySync, loadHistoryCoverage, startHistoryBackfill, pauseHistorySync, resumeHistorySync, loadFirstLimitUp, refreshFirstLimitUp, loadQuantTicks, loadKronosForecast, loadQuantStrategy, loadTdxFormula, loadMarketOverview, loadBreakingNewsAlerts, loadSpeechSettings, loadSpeechVoices, saveSpeechSettings, synthesizeSpeech, loadCompanyResearch }: Props) {
+export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, loadCompliance, loadAudit, complianceAction, loadBondDashboard, loadBondDiagnosis, loadCachedBondDiagnosis, loadBondCandidates, diagnoseBondBatch, loadNewsIntelligence, syncNews, syncHotspots, createNewsCorrection, loadOperationsStatus, setSchedulerPaused, createBackup, verifyBackup, runManualJob, loadAShareCandidates, loadAShareCandidateScores, loadAShareDiagnosis, loadDecisionCurrent, loadDecisionDate, loadMarketSentiment, refreshMarketSentiment, loadCandidateSentiments, refreshCandidateSentiments, searchAShareInstruments, loadStockCockpit, loadStockCockpitAI, loadStockTimeline, prepareStockData, loadAISettings, saveAISettings, deleteAISettings, loadLocalSourceSettings, detectLocalSourceSettings, saveLocalSourceSettings, syncAShareUniverse, loadSourceHealth, loadHistorySync, loadHistoryCoverage, startHistoryBackfill, pauseHistorySync, resumeHistorySync, loadFirstLimitUp, refreshFirstLimitUp, loadQuantTicks, loadKronosForecast, loadQuantStrategy, loadTdxFormula, loadMarketOverview, loadMarketIntervalReview, loadBreakingNewsAlerts, loadSpeechSettings, loadSpeechVoices, saveSpeechSettings, synthesizeSpeech, loadCompanyResearch }: Props) {
   const selectedInstrument = useOptionalSelectedInstrument();
   const [state, setState] = useState<ViewState>({ kind: "idle" });
   const [symbol, setSymbol] = useState("600000");
@@ -302,7 +303,7 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, lo
     <div className="app-shell">
       <BeginnerNavigation active={activeView} onNavigate={navigate} />
 
-      {activeView === "market_overview" && loadMarketOverview && <MarketOverviewView load={loadMarketOverview} loadAlerts={loadBreakingNewsAlerts} onOpenAShare={openOverviewStock} synthesizeSpeech={synthesizeSpeech} />}
+      {activeView === "market_overview" && loadMarketOverview && <MarketOverviewView load={loadMarketOverview} loadAlerts={loadBreakingNewsAlerts} onOpenAShare={openOverviewStock} synthesizeSpeech={synthesizeSpeech} loadIntervalReview={loadMarketIntervalReview} />}
       {activeView === "market_overview" && !loadMarketOverview && <main className="market-overview-page"><header className="overview-titlebar"><div><p>A-SHARE MARKET TERMINAL</p><h1>信息总览</h1></div></header><div className="overview-error"><ShieldAlert size={15} />信息总览服务暂不可用，请检查本地 API。</div></main>}
 
       {activeView === "risk" && <BeginnerRiskView load={loadRisk} />}

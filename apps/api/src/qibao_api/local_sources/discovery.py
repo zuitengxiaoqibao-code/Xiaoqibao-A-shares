@@ -34,6 +34,10 @@ class LocalTerminalStatus(BaseModel):
     sh_daily_count: int = 0
     sz_daily_count: int = 0
     latest_modified_at: datetime | None = None
+    professional_data_status: Literal["ready", "detected_only", "unavailable"] = "unavailable"
+    professional_data_files: tuple[str, ...] = ()
+    selection_eligible: bool = True
+    selection_note: str | None = None
 
 
 class LocalTerminalDiscoveryResult(BaseModel):
@@ -42,6 +46,23 @@ class LocalTerminalDiscoveryResult(BaseModel):
     scanned_at: datetime
     terminals: tuple[LocalTerminalStatus, ...]
     active_tdx_vipdoc: Path | None
+
+
+def running_tdx_process_paths() -> tuple[Path, ...]:
+    """Return executable paths for currently running TDX desktop clients.
+
+    Process presence is deliberately reported separately from data-directory
+    discovery and JSON-RPC reachability.  A running ``TdxW.exe`` alone does
+    not prove that the read-only bridge is listening or that professional
+    tables are available.
+    """
+    if os.name != "nt":
+        return ()
+    return tuple(
+        path
+        for path in _running_process_paths()
+        if path.name.casefold() in {"tdxw.exe", "tdx.exe"}
+    )
 
 
 class LocalTerminalDiscovery:
@@ -83,7 +104,11 @@ class LocalTerminalDiscovery:
             (
                 item.data_path
                 for item in terminals
-                if item.vendor == "tdx" and item.status == "ready"
+                if (
+                    item.vendor == "tdx"
+                    and item.status == "ready"
+                    and item.selection_eligible
+                )
             ),
             None,
         )
@@ -112,6 +137,9 @@ def _inspect_tdx(path: Path, origin: Origin) -> LocalTerminalStatus:
             origin=origin,
             status="invalid",
         )
+    selection_eligible, selection_note = _tdx_selection_policy(
+        install_path, origin
+    )
     sh_files = tuple(sh_folder.glob("*.day"))
     sz_files = tuple(sz_folder.glob("*.day"))
     modified = [
@@ -119,6 +147,7 @@ def _inspect_tdx(path: Path, origin: Origin) -> LocalTerminalStatus:
         for path_item in (*sh_files, *sz_files)
         if (value := _modified_at(path_item)) is not None
     ]
+    professional_status, professional_files = _inspect_tdx_professional_cache(install_path)
     return LocalTerminalStatus(
         vendor="tdx",
         install_path=install_path,
@@ -128,7 +157,53 @@ def _inspect_tdx(path: Path, origin: Origin) -> LocalTerminalStatus:
         sh_daily_count=len(sh_files),
         sz_daily_count=len(sz_files),
         latest_modified_at=max(modified, default=None),
+        professional_data_status=professional_status,
+        professional_data_files=professional_files,
+        selection_eligible=selection_eligible,
+        selection_note=selection_note,
     )
+
+
+def _inspect_tdx_professional_cache(
+    install_path: Path,
+) -> tuple[Literal["ready", "detected_only", "unavailable"], tuple[str, ...]]:
+    """Detect known local TDX professional-cache files without reading them.
+
+    These files prove that a terminal cache exists, not that the JSON-RPC bridge
+    can expose its tables.  Keep the state as ``detected_only`` until a read-only
+    bridge call returns validated rows; never claim financial fields are ready
+    from filenames alone.
+    """
+    relative_files = (
+        "base.dbf",
+        "shs.tnf",
+        "szs.tnf",
+        "sh.th2",
+        "sz.th2",
+        "gbbq",
+    )
+    cache = install_path / "T0002" / "hq_cache"
+    detected = tuple(name for name in relative_files if (cache / name).is_file())
+    if not detected:
+        return "unavailable", ()
+    return "detected_only", detected
+
+
+def _tdx_selection_policy(path: Path, origin: Origin) -> tuple[bool, str | None]:
+    """Keep auto-discovery from selecting directories that look synthetic.
+
+    A manually entered path is an explicit user decision and remains eligible.
+    Automatic discovery excludes only an install-directory name containing a
+    clear test fixture marker; parent folders are ignored because temporary
+    test runners and normal user folders can legitimately contain ``test``.
+    """
+    if origin == "manual":
+        return True, None
+    name = path.name.casefold()
+    markers = ("mock", "fixture", "sample", "demo", "fake")
+    if any(marker in name for marker in markers):
+        return False, "自动发现已排除疑似测试/示例数据目录；如需使用请手工添加此目录"
+    return True, None
 
 
 def _inspect_ths(path: Path, origin: Origin) -> LocalTerminalStatus:
