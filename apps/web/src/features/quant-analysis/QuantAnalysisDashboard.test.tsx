@@ -218,6 +218,22 @@ describe("QuantAnalysisDashboard", () => {
     expect(await screen.findByRole("heading", { name: "量化分析仪表盘" })).toBeInTheDocument();
   });
 
+  it("keeps the custom target search beside the selected target details", async () => {
+    render(<QuantAnalysisDashboard
+      loadBoard={async () => board}
+      loadTicks={async (symbol) => ticks(symbol)}
+      runBacktest={async (symbol) => backtest(symbol)}
+      selectedSymbol="002008"
+    />);
+
+    const control = await screen.findByRole("region", { name: "当前量化分析标的" });
+    const layout = control.querySelector(".quant-instrument-layout");
+    expect(layout).toHaveClass("split");
+    expect(layout?.children).toHaveLength(2);
+    expect(layout?.children[0]).toHaveTextContent("自定义标的");
+    expect(layout?.children[1]).toHaveTextContent("首次涨停候选快速切换");
+  });
+
   it("loads the short-term strategy workbench independently below the Kronos forecast", async () => {
     const loadQuantStrategy = vi.fn(async () => strategyDashboard);
     render(<QuantAnalysisDashboard

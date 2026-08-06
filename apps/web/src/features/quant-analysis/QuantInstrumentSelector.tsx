@@ -65,54 +65,60 @@ export function QuantInstrumentSelector({
   };
 
   return <section className="quant-instrument-control" aria-label="当前量化分析标的">
-    <header>
-      <span>分析标的</span>
-      <b className={candidate ? "candidate" : "custom"}>{candidate ? "候选池标的" : "自定义标的"}</b>
-    </header>
-    <div className="quant-selected-instrument">
-      <strong className="quant-selected-symbol">{symbol ?? "------"}</strong>
-      <span className="quant-selected-name">{name ?? (symbol ? "名称待验证" : "尚未选择")}</span>
+    <div className="quant-instrument-layout split">
+      <div className="quant-instrument-primary">
+        <header>
+          <span>分析标的</span>
+          <b className={candidate ? "candidate" : "custom"}>{candidate ? "候选池标的" : "自定义标的"}</b>
+        </header>
+        <div className="quant-selected-instrument">
+          <strong className="quant-selected-symbol">{symbol ?? "------"}</strong>
+          <span className="quant-selected-name">{name ?? (symbol ? "名称待验证" : "尚未选择")}</span>
+        </div>
+        <label className="quant-symbol-search">
+          <Search size={16} />
+          <span className="visually-hidden">查询量化分析标的</span>
+          <input
+            role="searchbox"
+            aria-label="查询量化分析标的"
+            placeholder="输入六位代码或中文名称"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            disabled={!search}
+          />
+        </label>
+        {state === "loading" && <p className="quant-symbol-message" role="status" aria-busy="true"><LoaderCircle className="spin" size={15} />正在查询已验证 A 股...</p>}
+        {query.trim() && state === "error" && <div className="quant-symbol-message error" role="alert"><ShieldAlert size={15} /><span>{error}</span><button type="button" onClick={() => executeSearch(query.trim())}>重试</button></div>}
+        {query.trim() && state === "ready" && <div className="quant-symbol-results" role="listbox" aria-label="量化分析股票搜索结果">
+          {results.length ? results.map((item) => <button
+            key={item.symbol}
+            type="button"
+            role="option"
+            aria-selected={symbol === item.symbol}
+            aria-label={`${item.symbol} ${item.name}`}
+            onClick={() => selectResult(item)}
+          ><b>{item.symbol}</b><span>{item.name}</span><small>{item.exchange.toUpperCase()} · {item.quote_quality === "ready" ? "行情可用" : item.quote_quality === "stale" ? "行情已陈旧" : "行情不可用"}</small></button>) : <p>{sourceUnavailable ? "股票验证源暂不可用" : "没有找到已验证的 A 股"}</p>}
+        </div>}
+      </div>
+      <div className="quant-instrument-secondary">
+        <label className="quant-candidate-switch">
+          <span>首次涨停候选快速切换</span>
+          <select
+            aria-label="量化分析股票"
+            value={candidate ? candidate.symbol : symbol ?? ""}
+            onChange={(event) => {
+              const next = candidates.find((item) => item.symbol === event.target.value);
+              if (next) onSelect(next.symbol);
+            }}
+            disabled={!candidates.length}
+          >
+            {!candidate && symbol && <option value={symbol}>{symbol} · 当前自定义标的</option>}
+            {!candidates.length && <option value="">暂无候选</option>}
+            {candidates.map((item) => <option value={item.symbol} key={item.symbol}>{item.symbol} · {item.name}</option>)}
+          </select>
+        </label>
+        <small>{boardAsOf ? `规则快照 ${boardAsOf}` : "正在读取规则快照"}</small>
+      </div>
     </div>
-    <label className="quant-symbol-search">
-      <Search size={16} />
-      <span className="visually-hidden">查询量化分析标的</span>
-      <input
-        role="searchbox"
-        aria-label="查询量化分析标的"
-        placeholder="输入六位代码或中文名称"
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-        disabled={!search}
-      />
-    </label>
-    {state === "loading" && <p className="quant-symbol-message" role="status" aria-busy="true"><LoaderCircle className="spin" size={15} />正在查询已验证 A 股...</p>}
-    {query.trim() && state === "error" && <div className="quant-symbol-message error" role="alert"><ShieldAlert size={15} /><span>{error}</span><button type="button" onClick={() => executeSearch(query.trim())}>重试</button></div>}
-    {query.trim() && state === "ready" && <div className="quant-symbol-results" role="listbox" aria-label="量化分析股票搜索结果">
-      {results.length ? results.map((item) => <button
-        key={item.symbol}
-        type="button"
-        role="option"
-        aria-selected={symbol === item.symbol}
-        aria-label={`${item.symbol} ${item.name}`}
-        onClick={() => selectResult(item)}
-      ><b>{item.symbol}</b><span>{item.name}</span><small>{item.exchange.toUpperCase()} · {item.quote_quality === "ready" ? "行情可用" : item.quote_quality === "stale" ? "行情已陈旧" : "行情不可用"}</small></button>) : <p>{sourceUnavailable ? "股票验证源暂不可用" : "没有找到已验证的 A 股"}</p>}
-    </div>}
-    <label className="quant-candidate-switch">
-      <span>首次涨停候选快速切换</span>
-      <select
-        aria-label="量化分析股票"
-        value={candidate ? candidate.symbol : symbol ?? ""}
-        onChange={(event) => {
-          const next = candidates.find((item) => item.symbol === event.target.value);
-          if (next) onSelect(next.symbol);
-        }}
-        disabled={!candidates.length}
-      >
-        {!candidate && symbol && <option value={symbol}>{symbol} · 当前自定义标的</option>}
-        {!candidates.length && <option value="">暂无候选</option>}
-        {candidates.map((item) => <option value={item.symbol} key={item.symbol}>{item.symbol} · {item.name}</option>)}
-      </select>
-    </label>
-    <small>{boardAsOf ? `规则快照 ${boardAsOf}` : "正在读取规则快照"}</small>
   </section>;
 }
