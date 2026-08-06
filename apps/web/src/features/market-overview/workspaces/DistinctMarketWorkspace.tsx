@@ -21,6 +21,15 @@ function sourceName(value: string): string {
   return value === "unavailable" ? "行情源不可用" : value;
 }
 
+function qualityLabel(quality: MarketOverviewResponse["market_data"]["quality"]): string {
+  switch (quality) {
+    case "ready": return "实时证据已连接";
+    case "partial": return "部分证据可用";
+    case "stale": return "使用缓存待更新";
+    case "unavailable": return "当前行情不可用";
+  }
+}
+
 export function DistinctMarketWorkspace({ feature, data, onOpenAShare }: {
   feature: string;
   data: MarketOverviewResponse;
@@ -31,7 +40,7 @@ export function DistinctMarketWorkspace({ feature, data, onOpenAShare }: {
   const insights = useMemo(() => buildWorkspaceInsights(feature, data, model), [data, feature, model]);
   const coverage = data.market_data.universe_count > 0
     ? data.market_data.quote_count / data.market_data.universe_count * 100
-    : 0;
+    : null;
 
   return <section
     className={`distinct-workspace layout-${definition.layout}`}
@@ -40,13 +49,13 @@ export function DistinctMarketWorkspace({ feature, data, onOpenAShare }: {
   >
     <header className="distinct-workspace-hero">
       <div><span>{definition.family} / DISTINCT WORKSPACE</span><h2>{definition.label}</h2><p>{definition.question}</p></div>
-      <aside><Radio size={17} /><div><small>工作区状态</small><b>{data.market_data.quality === "ready" ? "实时证据已连接" : "部分证据可用"}</b><span>5 秒刷新 · 不生成模拟值</span></div></aside>
+      <aside data-quality={data.market_data.quality}><Radio size={17} /><div><small>工作区状态</small><b>{qualityLabel(data.market_data.quality)}</b><span>{data.market_data.quality === "ready" ? "5 秒刷新 · 不生成模拟值" : "保留真实状态 · 不生成模拟值"}</span></div></aside>
     </header>
 
     <section className="distinct-provenance" aria-label={`${definition.label}数据来源`}>
       <div><Database size={16} /><span><small>行情主源</small><b>{sourceName(data.market_data.source)}</b></span></div>
       <div><Clock3 size={16} /><span><small>快照时间</small><b>{fullTime(data.market_data.observed_at)}</b></span></div>
-      <div><Radio size={16} /><span><small>行情覆盖</small><b>{coverage.toFixed(1)}% · {data.market_data.quote_count} / {data.market_data.universe_count}</b></span></div>
+      <div><Radio size={16} /><span><small>行情覆盖</small><b>{coverage === null ? "--" : `${coverage.toFixed(1)}% · ${data.market_data.quote_count} / ${data.market_data.universe_count}`}</b></span></div>
       <div><ShieldAlert size={16} /><span><small>本页严格边界</small><b>{definition.requiredEvidence.join(" · ")}</b></span></div>
     </section>
 

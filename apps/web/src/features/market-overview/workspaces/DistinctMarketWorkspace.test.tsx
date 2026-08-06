@@ -120,6 +120,25 @@ describe("DistinctMarketWorkspace", () => {
     expect(onOpenAShare).toHaveBeenCalledWith("600001");
   });
 
+  it("does not present unavailable evidence as live or as zero-percent coverage", () => {
+    const unavailable = {
+      ...overview,
+      market_data: {
+        source: "unavailable",
+        quality: "unavailable",
+        observed_at: null,
+        quote_count: 0,
+        universe_count: 0,
+      },
+    } as MarketOverviewResponse;
+
+    render(<DistinctMarketWorkspace feature="涨停板" data={unavailable} />);
+
+    expect(screen.getByText("当前行情不可用")).toBeInTheDocument();
+    expect(screen.getAllByText("--").length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText(/0\.0%/)).not.toBeInTheDocument();
+  });
+
   it("mounts all 50 workspaces without falling back to the retired generic dashboard", () => {
     for (const definition of WORKSPACE_DEFINITIONS) {
       const view = render(<DistinctMarketWorkspace feature={definition.label} data={overview} />);
