@@ -8,6 +8,7 @@ import type { LoadProgress, LoadProgressCallback } from "../../shared/fetchJsonW
 import type { InstrumentSearchResponse } from "../stock-cockpit/types";
 import type { CompanyResearchResponse, FinancialPeriod } from "./types";
 import { LatestTipEvidencePanel } from "./LatestTipEvidencePanel";
+import { ResearchVisualSummary } from "./ResearchVisualSummary";
 import "./companyResearch.css";
 
 type Props = {
@@ -129,6 +130,7 @@ function ResearchDashboard({ value, peers, onOpenAShare }: { value: CompanyResea
       <ScoreGauge label="证据覆盖度" value={coverage === null ? null : coverage * 100} suffix="%" />
       <ScoreGauge label="风险压力" value={risk === null ? null : risk * 4} suffix={risk === null ? "" : ` · 扣${risk.toFixed(1)}分`} tone="risk" />
     </section>
+    <ResearchVisualSummary value={value} />
     <PeerComparison peers={peers} />
     <div className="research-grid">
       <section className="research-card" aria-label="九维公司研究矩阵">

@@ -12,6 +12,8 @@ import { QuantInstrumentSelector } from "./QuantInstrumentSelector";
 import { QuantLiveStatusBar } from "./QuantLiveStatusBar";
 import { QuantChart } from "./QuantChart";
 import { ShortTermStrategyWorkbench } from "./ShortTermStrategyWorkbench";
+import { StockEventKline } from "../stock-timeline/StockEventKline";
+import type { StockTimelineLoader } from "../stock-timeline/types";
 import { useQuantLiveResource } from "./useQuantLiveRefresh";
 import { equityPoints, factorRadar, signalMetrics } from "./metrics";
 import type {
@@ -29,6 +31,7 @@ type Props = {
   runBacktest: (symbol: string, signal?: AbortSignal) => Promise<BacktestResult>;
   loadKronosForecast?: QuantForecastLoader;
   loadQuantStrategy?: QuantStrategyLoader;
+  loadTimeline?: StockTimelineLoader;
   selectedSymbol?: string | null;
   searchInstruments?: (query: string) => Promise<InstrumentSearchResponse>;
   onSelectSymbol?: (symbol: string) => void;
@@ -129,7 +132,7 @@ function candidatesFrom(board: FirstLimitUpBoard | null): FirstLimitUpCandidate[
   });
 }
 
-export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, runBacktest, loadKronosForecast, loadQuantStrategy, selectedSymbol, searchInstruments, onSelectSymbol }: Props) {
+export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, runBacktest, loadKronosForecast, loadQuantStrategy, loadTimeline, selectedSymbol, searchInstruments, onSelectSymbol }: Props) {
   const [selected, setSelected] = useState<string | null>(selectedSymbol ?? null);
   const [selectedIdentity, setSelectedIdentity] = useState<AShareInstrument | null>(null);
   const [backtest, setBacktest] = useState<BacktestResult | null>(null);
@@ -281,6 +284,18 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
       strategyStatus={strategyResource.status}
       strategyEnabled={Boolean(loadQuantStrategy)}
     />
+
+    {loadTimeline && selected && <section className="tdx-research-overview" role="region" aria-label="通达信式研究总览">
+      <header className="tdx-research-overview-header"><div><p>TDX STYLE / PRICE EVIDENCE</p><h2>{selectedName ?? selected} · 研究总览</h2></div><span>红涨 · 绿跌 · 灰色代表数据未接入</span></header>
+      <div className="tdx-quote-strip">
+        <div><span>当前标的</span><strong>{selected}</strong><small>{selectedName ?? "名称待验证"}</small></div>
+        <div><span>首次涨停日期</span><strong>{candidate?.limit_up_date ?? "--"}</strong><small>{candidate ? "候选规则已关联" : "未进入候选池"}</small></div>
+        <div><span>PE(TTM)</span><strong className={candidate?.pe_ttm && Number(candidate.pe_ttm) > 0 ? "up" : "muted"}>{candidate?.pe_ttm ?? "--"}</strong><small>仅展示已验证估值</small></div>
+        <div><span>当前回撤</span><strong className={candidate && Number(candidate.pullback_pct) > 0 ? "down" : "muted"}>{candidate ? `${(Number(candidate.pullback_pct) * 100).toFixed(1)}%` : "--"}</strong><small>相对首次涨停收盘</small></div>
+        <div><span>规则状态</span><strong className={candidate?.selection_status === "qualified" ? "up" : "muted"}>{candidate?.selection_status === "qualified" ? "已通过" : candidate ? "待核验" : "无候选规则"}</strong><small>{candidate?.stage ?? "custom"}</small></div>
+      </div>
+      <StockEventKline symbol={selected} asOf={boardAsOf} load={loadTimeline} />
+    </section>}
 
     {boardResource.status === "error" && !board && <div className="quant-page-error"><ShieldAlert size={18} />首次涨停候选数据暂不可用</div>}
     {board && !selected && <div className="quant-page-error"><Database size={18} />当前没有可供量化分析的股票</div>}

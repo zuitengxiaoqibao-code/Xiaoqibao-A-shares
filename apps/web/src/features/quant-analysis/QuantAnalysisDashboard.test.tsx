@@ -6,6 +6,7 @@ import type { FirstLimitUpBoard, FirstLimitUpCandidate } from "../first-limit-up
 import type { KronosForecastResponse, QuantStrategyDashboard } from "./types";
 import { QuantAnalysisDashboard } from "./QuantAnalysisDashboard";
 import type { InstrumentSearchResponse } from "../stock-cockpit/types";
+import type { StockTimelineResponse } from "../stock-timeline/types";
 
 vi.mock("./QuantChart", () => ({
   QuantChart: ({ ariaLabel }: { ariaLabel: string }) => <div role="img" aria-label={ariaLabel} />,
@@ -99,6 +100,17 @@ function ticks(symbol: string) {
     fetched_at: "2026-07-24T14:55:01+08:00", quality: "ready" as const,
     source_snapshot_id: `tick-${symbol}`,
   }];
+}
+
+function timeline(symbol: string): StockTimelineResponse {
+  return {
+    symbol, as_of: "2026-07-24", cutoff: "2026-07-24T15:00:00+08:00", status: "ready",
+    bars: [
+      { symbol, trade_date: "2026-07-23", open: "9.8", high: "10.2", low: "9.6", close: "10", volume: 100, amount: "1000", source: "local-daily-bars" },
+      { symbol, trade_date: "2026-07-24", open: "10", high: "11", low: "9.9", close: "10.8", volume: 160, amount: "1728", source: "local-daily-bars" },
+    ],
+    events: [], sources: ["local-daily-bars"], warnings: [],
+  };
 }
 
 function unavailableForecast(symbol: string): KronosForecastResponse {
@@ -232,6 +244,19 @@ describe("QuantAnalysisDashboard", () => {
     expect(layout?.children).toHaveLength(2);
     expect(layout?.children[0]).toHaveTextContent("自定义标的");
     expect(layout?.children[1]).toHaveTextContent("首次涨停候选快速切换");
+  });
+
+  it("adds a detailed TDX-style event K-line workspace when the local timeline is available", async () => {
+    render(<QuantAnalysisDashboard
+      loadBoard={async () => board}
+      loadTicks={async (symbol) => ticks(symbol)}
+      runBacktest={async (symbol) => backtest(symbol)}
+      loadTimeline={async (symbol) => timeline(symbol)}
+    />);
+
+    expect(await screen.findByRole("region", { name: "通达信式研究总览" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "个股新闻与热点事件 K 线" })).toHaveTextContent("事件 K 线");
+    expect(screen.getByRole("region", { name: "通达信式研究总览" })).toHaveTextContent("PE(TTM)");
   });
 
   it("loads the short-term strategy workbench independently below the Kronos forecast", async () => {

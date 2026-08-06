@@ -73,6 +73,24 @@ describe("CompanyResearchView", () => {
     expect(screen.getByRole("region", { name: "反方审查" }).querySelectorAll(".counter-item")).toHaveLength(10);
   });
 
+  it("renders a dense financial visual overview with real-period labels", async () => {
+    render(<CompanyResearchView
+      selectedSymbol="600519"
+      load={vi.fn(async () => research)}
+      search={vi.fn(async () => ({ query: "", items: [], server_time: "", source_status: "ready" as const }))}
+    />);
+
+    const overview = await screen.findByRole("region", { name: "财务可视化总览" });
+    expect(overview).toHaveTextContent("资本结构");
+    expect(overview).toHaveTextContent("资产负债构成");
+    expect(overview).toHaveTextContent("多年财务趋势");
+    expect(overview).toHaveTextContent("综合能力剖面");
+    expect(overview).toHaveTextContent("2025-12-31");
+    expect(overview.querySelectorAll(".research-visual-card")).toHaveLength(5);
+    expect(overview.querySelectorAll(".research-capital-donut")).toHaveLength(2);
+    expect(overview.querySelector(".research-trend-combo")).toBeTruthy();
+  });
+
   it("makes unverifiable dimensions explicit and avoids directive language", async () => {
     const { container } = render(<CompanyResearchView
       selectedSymbol="600519"
