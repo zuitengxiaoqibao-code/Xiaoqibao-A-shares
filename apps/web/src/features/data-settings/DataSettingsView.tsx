@@ -25,10 +25,7 @@ import type {
 } from "./types";
 import type { StockPreparation } from "../stock-cockpit/types";
 import { LocalSourceSettingsSection } from "./LocalSourceSettingsSection";
-
-export function isAutoSyncEnabled(): boolean {
-  return true;
-}
+export { isAutoSyncEnabled } from "./syncPolicy";
 
 type Props = {
   loadAI: AISettingsLoader;

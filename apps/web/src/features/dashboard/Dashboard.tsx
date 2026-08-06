@@ -1,4 +1,4 @@
-import { type ComponentProps, FormEvent, useEffect, useState } from "react";
+import { lazy, type FormEvent, Suspense, useEffect, useState } from "react";
 import {
   Activity, Archive, BarChart3, BookOpenCheck, Boxes, BriefcaseBusiness, Building2,
   ChevronRight, CircleDollarSign, Database, Gauge, Landmark, Radar, Search,
@@ -9,14 +9,10 @@ import { DataStatusPanel } from "../data-status/DataStatusPanel";
 import type { DataStatusState, SyncReport } from "../data-status/types";
 import type { BacktestRunner } from "../backtest/types";
 import type { ResearchCard } from "./types";
-import { GovernanceView, type AuditStatus, type ComplianceStatus, type RiskStatus } from "../governance/GovernanceViews";
-import { ConvertibleBondView } from "../convertible-bonds/ConvertibleBondView";
+import type { AuditStatus, ComplianceStatus, RiskStatus } from "../governance/GovernanceViews";
 import type { BondCandidates, BondDashboard, BondDiagnosis, BondDiagnosisBatch } from "../convertible-bonds/types";
-import { NewsIntelligenceView } from "../news-intelligence/NewsIntelligenceView";
 import type { CorrectionInput, NewsIntelligenceBundle } from "../news-intelligence/types";
-import { OperationsView } from "../operations/OperationsView";
 import type { BackupRecord, BackupVerification, OperationsStatus } from "../operations/types";
-import { AShareResearchView } from "../a-shares/AShareResearchView";
 import type { AShareDiagnosis, CandidateBoard, CandidateScoreLoader } from "../a-shares/types";
 import type { DecisionResponse } from "../decision-workbench/types";
 import type { MarketSentimentResponse, MarketSentimentSnapshot } from "../market-sentiment/types";
@@ -25,25 +21,18 @@ import type {
   CandidateSentimentLoader,
   CandidateSentimentSnapshot,
 } from "../candidate-sentiment/types";
-import { TodayDecisionView } from "../decision-workbench/TodayDecisionView";
 import { StockSelector } from "../stock-cockpit/StockSelector";
 import { StockDecisionCockpit } from "../stock-cockpit/StockDecisionCockpit";
 import type { InstrumentSearchResponse, StockCockpitSnapshot } from "../stock-cockpit/types";
 import { commitLocation } from "../instrument-selection/location";
 import { useOptionalSelectedInstrument, useSelectedInstrument } from "../instrument-selection/SelectedInstrumentProvider";
 import { BeginnerNavigation, type BeginnerView } from "../beginner-shell/BeginnerNavigation";
-import { BeginnerRiskView } from "../beginner-shell/BeginnerRiskView";
-import { HistoryReview } from "../beginner-shell/HistoryReview";
-import { DataSettingsView } from "../data-settings/DataSettingsView";
-import { FirstLimitUpView } from "../first-limit-up/FirstLimitUpView";
 import type { FirstLimitUpBoard } from "../first-limit-up/types";
-import { QuantAnalysisDashboard } from "../quant-analysis/QuantAnalysisDashboard";
 import type { QuantForecastLoader, QuantStrategyLoader, QuantTickLoader, TdxFormulaLoader } from "../quant-analysis/types";
 import { MarketOverviewView } from "../market-overview/MarketOverviewView";
 import type { MarketIntervalReviewLoader, MarketOverviewLoader } from "../market-overview/types";
 import type { StockTimelineLoader } from "../stock-timeline/types";
 import type { BreakingNewsAlertLoader } from "../news-alerts/types";
-import { CompanyResearchView } from "../company-research/CompanyResearchView";
 import type { CompanyResearchResponse } from "../company-research/types";
 import type {
   SpeechSettingsLoader,
@@ -65,6 +54,16 @@ import type {
   PreparationLoader,
   SourceHealthLoader,
 } from "../data-settings/types";
+
+const ConvertibleBondView = lazy(() => import("../convertible-bonds/ConvertibleBondView").then(({ ConvertibleBondView: view }) => ({ default: view })));
+const NewsIntelligenceView = lazy(() => import("../news-intelligence/NewsIntelligenceView").then(({ NewsIntelligenceView: view }) => ({ default: view })));
+const TodayDecisionView = lazy(() => import("../decision-workbench/TodayDecisionView").then(({ TodayDecisionView: view }) => ({ default: view })));
+const BeginnerRiskView = lazy(() => import("../beginner-shell/BeginnerRiskView").then(({ BeginnerRiskView: view }) => ({ default: view })));
+const HistoryReview = lazy(() => import("../beginner-shell/HistoryReview").then(({ HistoryReview: view }) => ({ default: view })));
+const DataSettingsView = lazy(() => import("../data-settings/DataSettingsView").then(({ DataSettingsView: view }) => ({ default: view })));
+const FirstLimitUpView = lazy(() => import("../first-limit-up/FirstLimitUpView").then(({ FirstLimitUpView: view }) => ({ default: view })));
+const QuantAnalysisDashboard = lazy(() => import("../quant-analysis/QuantAnalysisDashboard").then(({ QuantAnalysisDashboard: view }) => ({ default: view })));
+const CompanyResearchView = lazy(() => import("../company-research/CompanyResearchView").then(({ CompanyResearchView: view }) => ({ default: view })));
 
 type ViewState =
   | { kind: "idle" }
@@ -226,9 +225,14 @@ function SelectedNewsWorkspace({ loadBundle, syncNews, syncHotspots, createCorre
   return <NewsIntelligenceView selectedSymbol={symbol} loadBundle={loadBundle} syncNews={syncNews} syncHotspots={syncHotspots} createCorrection={createCorrection} openNewsCompliance={openNewsCompliance} />;
 }
 
-function SelectedGovernanceWorkspace(props: ComponentProps<typeof GovernanceView>) {
-  const symbol = useOptionalSelectedInstrument()?.symbol ?? null;
-  return <div className="selected-governance-workspace"><div className="selected-symbol-context"><b>全局 / 资产级治理数据</b><span>不按单股过滤{symbol ? ` · 导航代码 ${symbol}` : ""}</span></div><GovernanceView {...props} /></div>;
+export function RouteLoadingFallback() {
+  return (
+    <main className="beginner-page route-loading-fallback" role="status" aria-label="页面加载状态">
+      <span className="pulse-dot" aria-hidden="true" />
+      <h1>正在加载工作区</h1>
+      <p>正在准备图表、指标和证据状态，请稍候。</p>
+    </main>
+  );
 }
 
 export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, loadCompliance, loadAudit, complianceAction, loadBondDashboard, loadBondDiagnosis, loadCachedBondDiagnosis, loadBondCandidates, diagnoseBondBatch, loadNewsIntelligence, syncNews, syncHotspots, createNewsCorrection, loadOperationsStatus, setSchedulerPaused, createBackup, verifyBackup, runManualJob, loadAShareCandidates, loadAShareCandidateScores, loadAShareDiagnosis, loadDecisionCurrent, loadDecisionDate, loadMarketSentiment, refreshMarketSentiment, loadCandidateSentiments, refreshCandidateSentiments, searchAShareInstruments, loadStockCockpit, loadStockCockpitAI, loadStockTimeline, prepareStockData, loadAISettings, saveAISettings, deleteAISettings, loadLocalSourceSettings, detectLocalSourceSettings, saveLocalSourceSettings, syncAShareUniverse, loadSourceHealth, loadHistorySync, loadHistoryCoverage, startHistoryBackfill, pauseHistorySync, resumeHistorySync, loadFirstLimitUp, refreshFirstLimitUp, loadQuantTicks, loadKronosForecast, loadQuantStrategy, loadTdxFormula, loadMarketOverview, loadMarketIntervalReview, loadBreakingNewsAlerts, loadSpeechSettings, loadSpeechVoices, saveSpeechSettings, synthesizeSpeech, loadCompanyResearch }: Props) {
@@ -306,32 +310,32 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, lo
       {activeView === "market_overview" && loadMarketOverview && <MarketOverviewView load={loadMarketOverview} loadAlerts={loadBreakingNewsAlerts} onOpenAShare={openOverviewStock} synthesizeSpeech={synthesizeSpeech} loadIntervalReview={loadMarketIntervalReview} />}
       {activeView === "market_overview" && !loadMarketOverview && <main className="market-overview-page"><header className="overview-titlebar"><div><p>A-SHARE MARKET TERMINAL</p><h1>信息总览</h1></div></header><div className="overview-error"><ShieldAlert size={15} />信息总览服务暂不可用，请检查本地 API。</div></main>}
 
-      {activeView === "risk" && <BeginnerRiskView load={loadRisk} />}
+      {activeView === "risk" && <Suspense fallback={<RouteLoadingFallback />}><BeginnerRiskView load={loadRisk} /></Suspense>}
 
       {activeView === "a_shares" && <div className="stock-workbench-layout observation-workspace">
         {loadAShareCandidates && searchAShareInstruments && <StockSelector loadCandidates={loadAShareCandidates} loadWatchlistScores={loadAShareCandidateScores} prepare={prepareStockData} search={searchAShareInstruments} loadCandidateSentiments={loadCandidateSentiments} refreshCandidateSentiments={refreshCandidateSentiments} onCandidateSentiments={setCandidateSentiments} />}
         {loadStockCockpit ? <StockDecisionCockpit load={loadStockCockpit} loadAI={loadStockCockpitAI} loadTimeline={loadStockTimeline} loadAlerts={loadBreakingNewsAlerts} prepare={prepareStockData} refreshToken={cockpitRefreshToken} onSnapshot={setLatestCockpit} candidateSentiment={selectedCandidateSentiment} loadMarketSentiment={loadMarketSentiment} onOpenCompanyResearch={openCompanyResearch} /> : <main className="stock-cockpit empty-cockpit"><Radar size={24} /><h1>选择股票后查看行动卡</h1><p>可从候选、自选或搜索结果中选择任意已验证 A 股。</p></main>}
       </div>}
 
-      {activeView === "company_research" && loadCompanyResearch && searchAShareInstruments && <CompanyResearchView load={loadCompanyResearch} search={searchAShareInstruments} selectedSymbol={selectedSymbol} onSelectSymbol={(nextSymbol) => selectedInstrument?.select(nextSymbol, "search")} onOpenAShare={openOverviewStock} />}
+      {activeView === "company_research" && loadCompanyResearch && searchAShareInstruments && <Suspense fallback={<RouteLoadingFallback />}><CompanyResearchView load={loadCompanyResearch} search={searchAShareInstruments} selectedSymbol={selectedSymbol} onSelectSymbol={(nextSymbol) => selectedInstrument?.select(nextSymbol, "search")} onOpenAShare={openOverviewStock} /></Suspense>}
       {activeView === "company_research" && (!loadCompanyResearch || !searchAShareInstruments) && <main className="company-research-page"><header className="research-hero"><div><p className="eyebrow">EVIDENCE-BASED RESEARCH</p><h1>公司研究</h1></div></header><section className="research-error"><ShieldAlert size={20} /><h2>公司研究服务暂不可用</h2><p>请检查本地 API、股票目录和财务数据源。</p></section></main>}
 
-      {activeView === "first_limit_up" && loadFirstLimitUp && refreshFirstLimitUp && <FirstLimitUpView load={loadFirstLimitUp} refresh={refreshFirstLimitUp} />}
+      {activeView === "first_limit_up" && loadFirstLimitUp && refreshFirstLimitUp && <Suspense fallback={<RouteLoadingFallback />}><FirstLimitUpView load={loadFirstLimitUp} refresh={refreshFirstLimitUp} /></Suspense>}
       {activeView === "first_limit_up" && (!loadFirstLimitUp || !refreshFirstLimitUp) && <main className="beginner-page"><header><p className="eyebrow">A 股 / 盘后筛选</p><h1>首次涨停</h1><p>首次涨停筛选服务暂不可用，请检查本地 API 和日线数据后重试。</p></header></main>}
 
-      {activeView === "quant_analysis" && loadFirstLimitUp && loadQuantTicks && runBacktest && <QuantAnalysisDashboard loadBoard={loadFirstLimitUp} refreshBoard={refreshFirstLimitUp} loadTicks={loadQuantTicks} runBacktest={runBacktest} loadKronosForecast={loadKronosForecast} loadQuantStrategy={loadQuantStrategy} loadTdxFormula={loadTdxFormula} loadTimeline={loadStockTimeline} selectedSymbol={selectedSymbol} searchInstruments={searchAShareInstruments} onSelectSymbol={(nextSymbol) => selectedInstrument?.select(nextSymbol, "search")} />}
+      {activeView === "quant_analysis" && loadFirstLimitUp && loadQuantTicks && runBacktest && <Suspense fallback={<RouteLoadingFallback />}><QuantAnalysisDashboard loadBoard={loadFirstLimitUp} refreshBoard={refreshFirstLimitUp} loadTicks={loadQuantTicks} runBacktest={runBacktest} loadKronosForecast={loadKronosForecast} loadQuantStrategy={loadQuantStrategy} loadTdxFormula={loadTdxFormula} loadTimeline={loadStockTimeline} selectedSymbol={selectedSymbol} searchInstruments={searchAShareInstruments} onSelectSymbol={(nextSymbol) => selectedInstrument?.select(nextSymbol, "search")} /></Suspense>}
       {activeView === "quant_analysis" && (!loadFirstLimitUp || !loadQuantTicks || !runBacktest) && <main className="quant-analysis-page"><header><p className="eyebrow">FIRST LIMIT-UP / QUANT LAB</p><h1>量化分析仪表盘</h1><p>量化证据链暂不完整，请检查首次涨停、盘中 TICK 与回测服务。</p></header></main>}
 
-      {activeView === "bonds" && loadBondDashboard && loadBondDiagnosis && loadBondCandidates && <ConvertibleBondView loadDashboard={loadBondDashboard} loadDiagnosis={loadBondDiagnosis} loadCachedDiagnosis={loadCachedBondDiagnosis} loadCandidates={loadBondCandidates} diagnoseDiscovered={diagnoseBondBatch} openBondCompliance={() => navigate("settings")} />}
+      {activeView === "bonds" && loadBondDashboard && loadBondDiagnosis && loadBondCandidates && <Suspense fallback={<RouteLoadingFallback />}><ConvertibleBondView loadDashboard={loadBondDashboard} loadDiagnosis={loadBondDiagnosis} loadCachedDiagnosis={loadCachedBondDiagnosis} loadCandidates={loadBondCandidates} diagnoseDiscovered={diagnoseBondBatch} openBondCompliance={() => navigate("settings")} /></Suspense>}
 
-      {activeView === "news" && loadNewsIntelligence && syncNews && createNewsCorrection && <SelectedNewsWorkspace loadBundle={loadNewsIntelligence} syncNews={syncNews} syncHotspots={syncHotspots} createCorrection={createNewsCorrection} openNewsCompliance={() => navigate("settings")} />}
+      {activeView === "news" && loadNewsIntelligence && syncNews && createNewsCorrection && <Suspense fallback={<RouteLoadingFallback />}><SelectedNewsWorkspace loadBundle={loadNewsIntelligence} syncNews={syncNews} syncHotspots={syncHotspots} createCorrection={createNewsCorrection} openNewsCompliance={() => navigate("settings")} /></Suspense>}
 
-      {activeView === "history" && loadDecisionCurrent && <HistoryReview loadCurrent={loadDecisionCurrent} loadDate={loadDecisionDate} symbol={selectedInstrument?.symbol ?? selectedInstrument?.lastSymbol ?? null} runBacktest={runBacktest} />}
+      {activeView === "history" && loadDecisionCurrent && <Suspense fallback={<RouteLoadingFallback />}><HistoryReview loadCurrent={loadDecisionCurrent} loadDate={loadDecisionDate} symbol={selectedInstrument?.symbol ?? selectedInstrument?.lastSymbol ?? null} runBacktest={runBacktest} /></Suspense>}
 
-      {activeView === "settings" && loadAISettings && saveAISettings && deleteAISettings && <DataSettingsView loadAI={loadAISettings} saveAI={saveAISettings} deleteAI={deleteAISettings} loadLocalSources={loadLocalSourceSettings} detectLocalSources={detectLocalSourceSettings} saveLocalSources={saveLocalSourceSettings} loadSpeech={loadSpeechSettings} loadSpeechVoices={loadSpeechVoices} saveSpeech={saveSpeechSettings} synthesizeSpeech={synthesizeSpeech} symbol={selectedSymbol} prepare={prepareStockData} preparation={preparationForSymbol(latestCockpit, selectedSymbol)} loadCompliance={loadCompliance} complianceAction={complianceAction} syncAShareUniverse={syncAShareUniverse} loadSourceHealth={loadSourceHealth} loadHistorySync={loadHistorySync} loadHistoryCoverage={loadHistoryCoverage} startHistoryBackfill={startHistoryBackfill} pauseHistorySync={pauseHistorySync} resumeHistorySync={resumeHistorySync} onAIChanged={() => setCockpitRefreshToken((value) => value + 1)} />}
+      {activeView === "settings" && loadAISettings && saveAISettings && deleteAISettings && <Suspense fallback={<RouteLoadingFallback />}><DataSettingsView loadAI={loadAISettings} saveAI={saveAISettings} deleteAI={deleteAISettings} loadLocalSources={loadLocalSourceSettings} detectLocalSources={detectLocalSourceSettings} saveLocalSources={saveLocalSourceSettings} loadSpeech={loadSpeechSettings} loadSpeechVoices={loadSpeechVoices} saveSpeech={saveSpeechSettings} synthesizeSpeech={synthesizeSpeech} symbol={selectedSymbol} prepare={prepareStockData} preparation={preparationForSymbol(latestCockpit, selectedSymbol)} loadCompliance={loadCompliance} complianceAction={complianceAction} syncAShareUniverse={syncAShareUniverse} loadSourceHealth={loadSourceHealth} loadHistorySync={loadHistorySync} loadHistoryCoverage={loadHistoryCoverage} startHistoryBackfill={startHistoryBackfill} pauseHistorySync={pauseHistorySync} resumeHistorySync={resumeHistorySync} onAIChanged={() => setCockpitRefreshToken((value) => value + 1)} /></Suspense>}
       {activeView === "settings" && (!loadAISettings || !saveAISettings || !deleteAISettings) && <main className="beginner-page"><header><p className="eyebrow">数据设置</p><h1>数据源与 AI</h1><p>设置服务暂不可用，请检查本地服务后重试。</p></header></main>}
 
-      {activeView === "dashboard" && loadDecisionCurrent && <TodayDecisionView
+      {activeView === "dashboard" && loadDecisionCurrent && <Suspense fallback={<RouteLoadingFallback />}><TodayDecisionView
         loadCurrent={loadDecisionCurrent}
         loadDate={loadDecisionDate}
         selectedSymbol={selectedSymbol}
@@ -339,7 +343,7 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, lo
         loadSentiment={loadMarketSentiment}
         refreshSentiment={refreshMarketSentiment}
         loadAlerts={loadBreakingNewsAlerts}
-      />}
+      /></Suspense>}
 
       {activeView === "dashboard" && !loadDecisionCurrent && <main className="command-center beginner-fallback">
         <header className="topbar">

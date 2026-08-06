@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useSelectedInstrument } from "../instrument-selection/SelectedInstrumentProvider";
 import { friendlyError } from "../../shared/friendlyError";
-import { isAutoSyncEnabled } from "../data-settings/DataSettingsView";
+import { isAutoSyncEnabled } from "../data-settings/syncPolicy";
 import type { Advice } from "../decision-workbench/types";
 import type { AssessmentAIExplanation, AssessmentAIStatus, StockCockpitSnapshot, StockPreparation } from "./types";
 import { CockpitSections } from "./CockpitSections";

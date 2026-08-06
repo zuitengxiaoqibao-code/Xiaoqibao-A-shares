@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SelectedInstrumentProvider } from "../instrument-selection/SelectedInstrumentProvider";
-import { candidateSentimentForSymbol, Dashboard, preparationForSymbol } from "./Dashboard";
+import { candidateSentimentForSymbol, Dashboard, preparationForSymbol, RouteLoadingFallback } from "./Dashboard";
 import type { CandidateSentimentBatch } from "../candidate-sentiment/types";
 import type { FirstLimitUpBoard } from "../first-limit-up/types";
 import type { MarketOverviewResponse } from "../market-overview/types";
@@ -59,6 +59,14 @@ const quantBacktest = {
   ],
   warnings: [],
 };
+
+describe("route loading", () => {
+  it("shows an explicit loading status while a deferred workspace is fetched", () => {
+    render(<RouteLoadingFallback />);
+
+    expect(screen.getByRole("status", { name: "页面加载状态" })).toHaveTextContent("正在加载工作区");
+  });
+});
 
 const quantStrategy: QuantStrategyDashboard = {
   status: "partial", as_of: "2026-07-31", observed_at: "2026-07-31T14:00:00+08:00",
