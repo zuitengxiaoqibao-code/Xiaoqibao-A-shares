@@ -5,8 +5,6 @@ import shutil
 import threading
 from datetime import date, datetime, timezone
 
-import duckdb
-
 from qibao_api.contracts.bars import DailyBar
 from qibao_api.contracts.instruments import validate_a_share_code
 
@@ -25,13 +23,28 @@ class BarRepository:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self.parquet_dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
-        self._create_schema()
+        self._schema_ready = False
 
-    def _connect(self):
+    def _raw_connect(self):
+        import duckdb
+
         return duckdb.connect(str(self.database_path))
 
+    def _connect(self):
+        self._ensure_schema()
+        return self._raw_connect()
+
+    def _ensure_schema(self) -> None:
+        if self._schema_ready:
+            return
+        with self._lock:
+            if self._schema_ready:
+                return
+            self._create_schema()
+            self._schema_ready = True
+
     def _create_schema(self) -> None:
-        with self._lock, self._connect() as connection:
+        with self._lock, self._raw_connect() as connection:
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS daily_bars (

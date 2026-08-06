@@ -192,6 +192,7 @@ from qibao_api.zhongshu.postclose_review import PostcloseReviewService
 
 
 logger = logging.getLogger(__name__)
+PORTABLE_HISTORY_RECONCILIATION_DELAY_SECONDS = 15.0
 
 
 async def _scheduler_loop(
@@ -227,6 +228,18 @@ def _reconcile_history_symbols(bar_repository, instrument_directory, as_of) -> N
                 )
     except Exception:
         logger.warning("background history symbol reconciliation failed", exc_info=True)
+
+
+async def _schedule_history_symbol_reconciliation(
+    executor,
+    function,
+    args: tuple[object, ...],
+    *,
+    delay_seconds: float,
+) -> None:
+    await asyncio.sleep(max(0.0, delay_seconds))
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(executor, function, *args)
 
 
 def _refresh_market_sentiment(service, now: datetime) -> None:
@@ -697,6 +710,7 @@ async def lifespan(application: FastAPI):
                 max_workers=1,
                 thread_name_prefix="history-sync",
             )
+            history_symbol_reconciliation_task = None
             application.state.history_sync_repository = history_sync_repository
             application.state.history_sync_executor = history_sync_executor
             full_market_history_service = None
@@ -894,12 +908,27 @@ async def lifespan(application: FastAPI):
                         client=client,
                     ),
                 )
-                history_sync_executor.submit(
-                    _reconcile_history_symbols,
-                    bar_repository,
-                    a_share_instrument_directory,
-                    datetime.now(timezone.utc).date(),
-                )
+                if is_portable_runtime:
+                    history_symbol_reconciliation_task = asyncio.create_task(
+                        _schedule_history_symbol_reconciliation(
+                            history_sync_executor,
+                            _reconcile_history_symbols,
+                            (
+                                bar_repository,
+                                a_share_instrument_directory,
+                                datetime.now(timezone.utc).date(),
+                            ),
+                            delay_seconds=PORTABLE_HISTORY_RECONCILIATION_DELAY_SECONDS,
+                        ),
+                        name="portable-history-symbol-reconciliation",
+                    )
+                else:
+                    history_sync_executor.submit(
+                        _reconcile_history_symbols,
+                        bar_repository,
+                        a_share_instrument_directory,
+                        datetime.now(timezone.utc).date(),
+                    )
                 log_startup_stage("history-symbol-reconciliation-scheduled")
                 if should_refresh_universe:
                     universe_refresh_task = asyncio.create_task(
@@ -940,6 +969,10 @@ async def lifespan(application: FastAPI):
                     local_tdx_overview_source.close()
                 if local_market_review_source is not None:
                     local_market_review_source.close()
+                if history_symbol_reconciliation_task is not None:
+                    history_symbol_reconciliation_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await history_symbol_reconciliation_task
                 history_sync_executor.shutdown(wait=True, cancel_futures=True)
                 history_sync_repository.close()
                 bond_repository.close()

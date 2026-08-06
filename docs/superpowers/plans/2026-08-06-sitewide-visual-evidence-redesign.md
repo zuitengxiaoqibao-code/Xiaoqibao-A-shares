@@ -18,7 +18,7 @@
 | 专题工作区语义拆分 | 已完成基础版本，持续审查 | 50 个独立定义，`workspaceRegistry.test.ts` |
 | 不可用/陈旧证据诚实展示 | 持续推进 | `f5dcd65`；专题页不再冒充实时连接 |
 | TdxQuant 只读深度接入 | 基础能力探测完成，个股估值/行业与可转债条款已接入，其他能力持续推进 | 设置页已显示 8 类只读能力状态；`get_more_info`/`get_stock_info`/`get_kzz_info` 已进入业务契约，专业数据包与高阶字段仍需补齐 |
-| 全站最终验收与 EXE 交付 | 本轮通过，仍需持续回归 | 前端 449 项、API 1096 项、EXE 烟测通过 |
+| 全站最终验收与 EXE 交付 | 本轮通过，仍需持续回归 | 前端 449 项、API 1099 项、EXE 烟测通过 |
 
 ## Remaining Goals
 
@@ -36,6 +36,7 @@
 - [x] 将 Edge TTS 从 API 语音服务顶层导入移到首次请求语音时懒加载，并新增子进程回归测试；本轮 API 1093 项通过、1 项按环境跳过，便携 EXE 连续三次烟测通过。
 - [x] 优化便携桌面启动就绪路径：`LocalApiServer` 只等待 Uvicorn 完成 lifespan，不再重复发起自探测 HTTP 请求；通达信 fallback 全市场扫描在便携运行时延后 2 秒启动，先展示当日缓存再刷新最新数据。API 1095 项通过、1 项按环境跳过，连续三次 EXE 烟测通过。
 - [x] 将便携桌面 API 线程提前到窗口创建前启动，让 Python 导入、lifespan 初始化与 WebView 建窗并行；热启动 API 就绪降至 2.69-2.74 秒，窗口首帧保持 114-119ms。
+- [x] 延后 DuckDB、mootdx、pandas 和 numpy 的顶层导入；BarRepository 首次真实日线操作时才初始化 DuckDB，备份和通达信客户端保持兼容的懒加载入口。便携 smoke 改为先等待 `lifespan-ready` 日志再发起 HTTP，避免 Windows 预绑定 socket 的早期取消连接触发 `WinError 64`。
 - [ ] 继续压缩冷启动等待：窗口首帧已满足 3 秒目标，首次冷盘 API 仍约 9.36 秒，主要受 Windows 首次加载/安全扫描影响；后续继续审计 PyInstaller 冷磁盘读取和剩余重型模块导入，同时保留缓存优先和健康检查先可用。
 - [x] 完成工作区、个股观察、公司研究、量化分析和全站测试的字号、颜色、红涨绿跌回归；窄屏/布局测试通过。
 - [x] 本轮源代码改动后已重建便携 EXE，保留持久目录并运行真实烟测；后续每次源代码改动仍重复此验收。
@@ -46,9 +47,9 @@
 
 - `packaging/xiaoqibao.spec` 的 `noarchive=True` 实验已完成并回退。独立 `.pyc` 文件使便携目录从 1,845 个文件增加到 4,558 个，热启动仅有轻微变化，首次冷盘启动约 10.76 秒，未证明有稳定收益；最终保留 `noarchive=False`，优先控制文件数量和冷盘扫描成本。
 - 桌面 GUI 路径现在先准备便携运行目录、迁移旧数据并启动 API 线程，再创建 WebView；窗口显示与 API 导入/lifespan 初始化可以重叠。服务器仍在窗口失败或退出时统一释放。
-- 本轮专项桌面测试 19 项通过；前端 71 个测试文件、449 项通过；API 1,096 项通过、1 项按环境跳过；Vite 构建和便携 EXE 构建通过。
-- 本轮 EXE 烟测：窗口 302/119/114ms；API `/health` 9,357/2,740/2,692ms；完整验证 9,944/3,272/3,199ms；信息总览均为 `ready`，量化策略均为 `unavailable`（真实样本不足，不虚构）。
-- 当前便携 EXE SHA-256：`AA9270CEC02B73DED1DFB3E3852B9B96A4D1B0A63A68AEA4EFD1914ED43CB884`；持久目录 `config/data/news/cache/logs/models/exports/backups` 均保留。
+- 本轮专项桌面与冷导入测试通过；前端 71 个测试文件、449 项通过；API 1,099 项通过、1 项按环境跳过；Vite 构建和便携 EXE 构建通过。
+- 本轮 EXE 烟测（串行、无端口冲突）：窗口 102/118/111ms；API `/health` 2,664/2,387/2,414ms；完整验证 3,371/3,201/3,212ms；信息总览均为 `ready`，量化策略均为 `unavailable`（真实样本不足，不虚构）。
+- 当前便携 EXE SHA-256：`C6BCBED43368E286AEE03A6CA2481E967ECC66D1813DC47B2F325E13D6B38487`；持久目录 `config/data/news/cache/logs/models/exports/backups` 均保留。
 
 ## 2026-08-06 增量记录
 

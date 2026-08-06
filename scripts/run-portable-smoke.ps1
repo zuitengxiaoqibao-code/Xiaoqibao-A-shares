@@ -14,6 +14,7 @@ $Process = Start-Process -FilePath $Exe -ArgumentList @(
     "--port", $Port
 ) -PassThru
 $StartedAt = [Diagnostics.Stopwatch]::StartNew()
+$LogPath = Join-Path $SmokeRoot "logs\xiaoqibao.log"
 
 try {
     $WindowVisibleMs = $null
@@ -30,6 +31,27 @@ try {
     if ($null -eq $WindowVisibleMs) { throw "Portable desktop window was not created" }
     if ($WindowVisibleMs -gt 3000) {
         throw "Portable desktop window exceeded 3 second target: ${WindowVisibleMs}ms"
+    }
+
+    # The portable server pre-binds its loopback socket before importing the
+    # API.  Probing that socket too early can leave a cancelled Windows
+    # proactor accept behind and make a healthy server look unavailable.  Wait
+    # for the final lifespan log stage before issuing the first HTTP request.
+    $LifespanReady = $false
+    $LifespanDeadline = [DateTime]::UtcNow.AddSeconds(60)
+    do {
+        if (Test-Path -LiteralPath $LogPath) {
+            $StartupLog = Get-Content -LiteralPath $LogPath -Raw -ErrorAction SilentlyContinue
+            if ($StartupLog -match "desktop startup stage=lifespan-ready") {
+                $LifespanReady = $true
+                Start-Sleep -Milliseconds 100
+                break
+            }
+        }
+        Start-Sleep -Milliseconds 100
+    } while ([DateTime]::UtcNow -lt $LifespanDeadline -and -not $Process.HasExited)
+    if (-not $LifespanReady) {
+        throw "Portable lifespan readiness log was not observed"
     }
 
     $Health = $null
@@ -56,7 +78,6 @@ try {
             ($Process.WorkingSet64 / 1MB),
             $Process.Threads.Count
         )
-        $LogPath = Join-Path $SmokeRoot "logs\xiaoqibao.log"
         if (Test-Path -LiteralPath $LogPath) {
             Get-Content -LiteralPath $LogPath -Tail 80 | Write-Warning
         }

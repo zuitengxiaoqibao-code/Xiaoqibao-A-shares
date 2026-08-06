@@ -1,5 +1,7 @@
 import asyncio
 import sqlite3
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -77,6 +79,34 @@ def test_initial_market_sentiment_refresh_is_submitted_to_background() -> None:
     main_module._defer_initial_market_sentiment_refresh(Executor(), service, now)
 
     assert calls == [(main_module._refresh_market_sentiment, (service, now))]
+
+
+@pytest.mark.asyncio
+async def test_history_symbol_reconciliation_can_be_deferred_and_cancelled() -> None:
+    started = threading.Event()
+    executor = ThreadPoolExecutor(max_workers=1)
+
+    def reconcile(*_args) -> None:
+        started.set()
+
+    task = asyncio.create_task(
+        main_module._schedule_history_symbol_reconciliation(
+            executor,
+            reconcile,
+            (object(), object(), object(), object()),
+            delay_seconds=0.05,
+        )
+    )
+    try:
+        assert not started.wait(0.01)
+        await asyncio.wait_for(asyncio.to_thread(started.wait, 1), timeout=2)
+        await task
+    finally:
+        if not task.done():
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        executor.shutdown(wait=True, cancel_futures=True)
 
 
 @pytest.mark.asyncio

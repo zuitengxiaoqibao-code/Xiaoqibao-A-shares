@@ -53,3 +53,13 @@ def test_portable_spec_keeps_python_modules_in_the_cold_start_archive() -> None:
 
     assert isinstance(noarchive, ast.Constant)
     assert noarchive.value is False
+
+
+def test_portable_smoke_waits_for_lifespan_before_http_probe() -> None:
+    smoke_path = _project_root() / "scripts" / "run-portable-smoke.ps1"
+    script = smoke_path.read_text(encoding="utf-8")
+
+    lifespan_gate = script.index("desktop startup stage=lifespan-ready")
+    health_probe = script.index('Uri "http://127.0.0.1:$Port/health"')
+
+    assert lifespan_gate < health_probe

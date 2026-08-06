@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-import duckdb
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -245,6 +244,8 @@ class BackupService:
     @staticmethod
     def _restore_drill(source: Path) -> bool:
         try:
+            import duckdb
+
             with tempfile.TemporaryDirectory() as temporary:
                 restored = Path(temporary) / "data"
                 shutil.copytree(source, restored)

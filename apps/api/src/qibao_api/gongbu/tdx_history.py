@@ -1,7 +1,6 @@
 from datetime import date
 from decimal import Decimal
-
-import pandas as pd
+from typing import Any
 
 from qibao_api.contracts.bars import DailyBar
 from qibao_api.gongbu.tdx_client import SourceAttemptObserver
@@ -47,7 +46,9 @@ class TdxHistorySource:
                     close()
 
     @staticmethod
-    def _convert_row(symbol: str, row: pd.Series) -> DailyBar:
+    def _convert_row(symbol: str, row: Any) -> DailyBar:
+        import pandas as pd
+
         trade_date: date = pd.to_datetime(row["datetime"]).date()
         return DailyBar(
             symbol=symbol,

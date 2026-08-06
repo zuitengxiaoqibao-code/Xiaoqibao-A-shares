@@ -8,7 +8,6 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import httpx
-from mootdx.quotes import Quotes
 
 from qibao_api.gongbu.tdx_client import TDX_SERVERS
 from qibao_api.gongbu.tdx_local_overview import (
@@ -58,6 +57,8 @@ class MootdxAShareCatalogSource:
 
     @staticmethod
     def _create_client(server: tuple[str, int]):
+        from mootdx.quotes import Quotes
+
         return Quotes.factory(
             market="std",
             server=server,

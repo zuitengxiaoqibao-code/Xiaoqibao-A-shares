@@ -6,8 +6,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from mootdx.quotes import Quotes
-
 from qibao_api.contracts.source_health import SourceAttemptEvent, SourceAttemptStatus
 
 TDX_SERVERS: tuple[tuple[str, int], ...] = (
@@ -22,6 +20,19 @@ TDX_SERVERS: tuple[tuple[str, int], ...] = (
     ("110.41.147.114", 7709),
     ("124.71.187.122", 7709),
 )
+
+
+class _LazyQuotes:
+    @staticmethod
+    def factory(**kwargs):
+        from mootdx.quotes import Quotes as _Quotes
+
+        return _Quotes.factory(**kwargs)
+
+
+# Keep the patchable module-level surface used by tests and integrations while
+# avoiding mootdx/pandas import work until a real TDX request is made.
+Quotes = _LazyQuotes()
 
 
 class TdxOperationError(RuntimeError):
