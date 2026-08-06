@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Building2, Clock3, ExternalLink, LoaderCircle, Search, ShieldAlert, X } from "lucide-react";
 
 import { DailyCacheHistory } from "../../shared/DailyCacheHistory";
@@ -197,27 +197,19 @@ export function CompanyResearchView({ load, search, selectedSymbol, onSelectSymb
   const [searching, setSearching] = useState(false);
   const controllers = useRef(new Map<string, AbortController>());
   const initialized = useRef(false);
+  const entriesRef = useRef(entries);
+  const loadRef = useRef(load);
+  const refreshEntryRef = useRef<((symbol: string) => Promise<void>) | null>(null);
+  entriesRef.current = entries;
+  loadRef.current = load;
 
-  async function addCompany(symbol: string, name = symbol) {
-    const normalized = symbol.trim();
-    if (!/^\d{6}$/.test(normalized)) return;
-    const existing = entries.some((item) => item.symbol === normalized);
-    if (!existing && entries.length >= 4) return;
-    const cached = readDailySnapshot<CompanyResearchResponse>("company-research", normalized);
-    setSuggestions([]); setQuery(""); setActiveSymbol(normalized);
-    setEntries((current) => {
-      const existing = current.find((item) => item.symbol === normalized);
-      if (existing) return current;
-      if (current.length >= 4) return current;
-      return [...current, cached
-        ? { symbol: normalized, name: cached.value.name, state: "ready", value: cached.value, cachedAt: cached.cachedAt, refreshing: true, progress: null }
-        : { symbol: normalized, name, state: "loading", refreshing: true, progress: null }];
-    });
-    if (existing) return;
+  const refreshEntry = useCallback(async (normalized: string) => {
     const controller = new AbortController();
+    controllers.current.get(normalized)?.abort();
     controllers.current.set(normalized, controller);
+    setEntries((current) => current.map((item) => item.symbol === normalized ? { ...item, refreshing: true, progress: null, refreshError: undefined } : item));
     try {
-      const value = await load(normalized, undefined, controller.signal, (progress) => {
+      const value = await loadRef.current(normalized, undefined, controller.signal, (progress) => {
         if (controllers.current.get(normalized) !== controller || controller.signal.aborted) return;
         setEntries((current) => current.map((item) => item.symbol === normalized ? { ...item, refreshing: true, progress, refreshError: undefined } : item));
       });
@@ -241,7 +233,29 @@ export function CompanyResearchView({ load, search, selectedSymbol, onSelectSymb
           ? { ...item, state: "ready", refreshing: false, refreshError: message }
           : { ...item, state: "error", refreshing: false, error: message, refreshError: message }
         : item));
-    } finally { if (controllers.current.get(normalized) === controller) controllers.current.delete(normalized); }
+    } finally {
+      if (controllers.current.get(normalized) === controller) controllers.current.delete(normalized);
+    }
+  }, []);
+  refreshEntryRef.current = refreshEntry;
+
+  async function addCompany(symbol: string, name = symbol) {
+    const normalized = symbol.trim();
+    if (!/^\d{6}$/.test(normalized)) return;
+    const existing = entries.some((item) => item.symbol === normalized);
+    if (!existing && entries.length >= 4) return;
+    const cached = readDailySnapshot<CompanyResearchResponse>("company-research", normalized);
+    setSuggestions([]); setQuery(""); setActiveSymbol(normalized);
+    setEntries((current) => {
+      const existing = current.find((item) => item.symbol === normalized);
+      if (existing) return current;
+      if (current.length >= 4) return current;
+      return [...current, cached
+        ? { symbol: normalized, name: cached.value.name, state: "ready", value: cached.value, cachedAt: cached.cachedAt, refreshing: true, progress: null }
+        : { symbol: normalized, name, state: "loading", refreshing: true, progress: null }];
+    });
+    if (existing) return;
+    await refreshEntryRef.current?.(normalized);
   }
 
   useEffect(() => {
@@ -253,6 +267,21 @@ export function CompanyResearchView({ load, search, selectedSymbol, onSelectSymb
   useEffect(() => {
     if (activeSymbol && activeSymbol !== selectedSymbol) onSelectSymbol?.(activeSymbol);
   }, [activeSymbol, onSelectSymbol, selectedSymbol]);
+
+  useEffect(() => {
+    if (!activeSymbol) return;
+    const refreshIfVisible = () => {
+      if (document.visibilityState === "visible" && entriesRef.current.some((item) => item.symbol === activeSymbol)) {
+        void refreshEntryRef.current?.(activeSymbol);
+      }
+    };
+    const interval = window.setInterval(refreshIfVisible, 300_000);
+    document.addEventListener("visibilitychange", refreshIfVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", refreshIfVisible);
+    };
+  }, [activeSymbol]);
 
   useEffect(() => () => { controllers.current.forEach((controller) => controller.abort()); }, []);
 

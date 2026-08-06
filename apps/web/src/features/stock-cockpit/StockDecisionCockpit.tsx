@@ -286,13 +286,17 @@ export function StockDecisionCockpit({ load, loadAI, prepare, loadTimeline, load
   const cacheScope = asOf ? `stock-cockpit:${asOf}` : "stock-cockpit";
   const loadRef = useRef(load); const loadAIRef = useRef(loadAI); const prepareRef = useRef(prepare); const snapshotRef = useRef(onSnapshot);
   loadRef.current = load; loadAIRef.current = loadAI; prepareRef.current = prepare; snapshotRef.current = onSnapshot;
+  const refreshRef = useRef<(() => Promise<void>) | null>(null);
+  const loadingRef = useRef(false);
 
   const refresh = useCallback(async () => {
     if (!symbol) return;
+    if (loadingRef.current && !controller.current?.signal.aborted) return;
     const request = ++generation.current;
     controller.current?.abort();
     const nextController = new AbortController();
     controller.current = nextController;
+    loadingRef.current = true;
     setLoading(true); setError(""); setUpdatedAt(null);
     setLoadProgress({ percent: 1, stage: "connecting", detail: "正在连接本地个股数据服务" });
     try {
@@ -365,8 +369,14 @@ export function StockDecisionCockpit({ load, loadAI, prepare, loadTimeline, load
       if (request !== generation.current || nextController.signal.aborted) return;
       setError(friendlyError(caught, "股票分析"));
       setStale(hasData.current);
-    } finally { if (request === generation.current) setLoading(false); }
+    } finally {
+      if (request === generation.current) {
+        loadingRef.current = false;
+        setLoading(false);
+      }
+    }
   }, [asOf, cacheScope, contextKey, symbol]);
+  refreshRef.current = refresh;
 
   useEffect(() => {
     if (!symbol) { generation.current += 1; controller.current?.abort(); setData(null); loadedContext.current = null; preparedContext.current = null; hasData.current = false; setError(""); setStale(false); setCachedAt(null); setUpdatedAt(null); setLoadProgress(null); return; }
@@ -384,6 +394,19 @@ export function StockDecisionCockpit({ load, loadAI, prepare, loadTimeline, load
     void refresh();
     return () => controller.current?.abort();
   }, [contextKey, refresh, refreshToken, symbol]);
+
+  useEffect(() => {
+    if (!symbol) return;
+    const refreshIfVisible = () => {
+      if (document.visibilityState === "visible") void refreshRef.current?.();
+    };
+    const interval = window.setInterval(refreshIfVisible, 30_000);
+    document.addEventListener("visibilitychange", refreshIfVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", refreshIfVisible);
+    };
+  }, [contextKey, symbol]);
 
   if (!symbol) return <main className="terminal-page stock-cockpit empty-cockpit"><Target size={24} /><h1>先选择一只 A 股</h1><p>从左侧候选池、自选或代码与名称搜索中选择，系统不会猜测股票。</p></main>;
   if (data && data.symbol !== symbol) return <main className="terminal-page stock-cockpit cockpit-loading" aria-busy="true"><RefreshCw size={22} /><h1>正在切换股票</h1><p>{symbol}</p></main>;

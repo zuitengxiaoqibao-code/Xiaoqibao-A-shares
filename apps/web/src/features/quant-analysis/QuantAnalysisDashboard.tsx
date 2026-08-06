@@ -70,12 +70,16 @@ function percentText(value: string | number | null | undefined): string {
   return parsed === null ? "--" : `${(parsed * 100).toFixed(1)}%`;
 }
 
-function tickOption(ticks: IntradayTick[]): EChartsOption {
+export function tickOption(ticks: IntradayTick[]): EChartsOption {
   return {
     ...panelOption(),
-    grid: [{ left: 52, right: 24, top: 20, height: "56%" }, { left: 52, right: 24, top: "76%", height: "14%" }],
+    grid: [{ left: 52, right: 24, top: 20, height: "52%" }, { left: 52, right: 24, top: "73%", height: "14%" }],
     tooltip: { trigger: "axis", backgroundColor: "#071018", borderColor: cyan, textStyle: { color: "#d8e6f1" } },
     axisPointer: { link: [{ xAxisIndex: "all" }] },
+    dataZoom: [
+      { type: "inside", xAxisIndex: [0, 1], filterMode: "none", throttle: 80 },
+      { type: "slider", xAxisIndex: [0, 1], bottom: 2, height: 14, borderColor: gridColor, fillerColor: "rgba(52,214,255,.16)", handleStyle: { color: cyan }, textStyle: { color: axisColor }, dataBackground: { lineStyle: { color: "rgba(99,117,138,.45)" }, areaStyle: { color: "rgba(99,117,138,.08)" } } },
+    ],
     xAxis: [
       { type: "category", gridIndex: 0, data: ticks.map((item) => timeLabel(item.observed_at)), axisLine: { lineStyle: { color: gridColor } }, axisLabel: { color: axisColor, hideOverlap: true }, axisTick: { show: false } },
       { type: "category", gridIndex: 1, data: ticks.map((item) => timeLabel(item.observed_at)), axisLine: { lineStyle: { color: gridColor } }, axisLabel: { show: false }, axisTick: { show: false } },
@@ -86,7 +90,7 @@ function tickOption(ticks: IntradayTick[]): EChartsOption {
     ],
     series: [
       { name: "价格", type: "line", data: ticks.map((item) => Number(item.price)), xAxisIndex: 0, yAxisIndex: 0, symbol: "none", smooth: 0.2, lineStyle: { width: 2, color: cyan, shadowBlur: 8, shadowColor: cyan }, areaStyle: { color: "rgba(52,214,255,.08)" } },
-      { name: "成交量", type: "bar", data: ticks.map((item) => Number(item.volume)), xAxisIndex: 1, yAxisIndex: 1, itemStyle: { color: "rgba(244,199,106,.62)" } },
+      { name: "成交量", type: "bar", data: ticks.map((item) => Number(item.volume)), xAxisIndex: 1, yAxisIndex: 1, itemStyle: { color: (params: { dataIndex: number }) => Number(ticks[params.dataIndex]?.change_percent) >= 0 ? "#f04f5f" : "#2fcf91" } },
     ],
   };
 }

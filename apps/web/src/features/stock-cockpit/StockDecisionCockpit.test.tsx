@@ -791,6 +791,21 @@ describe("StockDecisionCockpit", () => {
     expect(screen.getByText("浦发银行")).toBeInTheDocument();
   });
 
+  it("refreshes the visible stock cockpit periodically without changing the selected symbol", async () => {
+    vi.useFakeTimers();
+    try {
+      const load = vi.fn(async () => snapshot());
+      renderCockpit(load);
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      expect(load).toHaveBeenCalledTimes(1);
+      await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+      expect(load).toHaveBeenCalledTimes(2);
+      expect(screen.getByText("浦发银行")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps the consolidated decision summary available when an older API snapshot has no preparation report", async () => {
     renderCockpit(() => Promise.resolve(snapshot({ preparation: undefined })));
     expect((await screen.findAllByText("加入观察")).length).toBeGreaterThan(0);

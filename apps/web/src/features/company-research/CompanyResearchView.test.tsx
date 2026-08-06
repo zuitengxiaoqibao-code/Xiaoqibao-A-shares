@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { writeDailySnapshot } from "../../shared/dailySnapshotCache";
@@ -200,6 +200,24 @@ describe("CompanyResearchView", () => {
     expect(status).toHaveTextContent("本地财务源暂时不可用");
     expect(screen.queryByText("600519 研究数据不可用")).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "九维公司研究矩阵" })).toBeInTheDocument();
+  });
+
+  it("refreshes the active company research entry periodically while the page is visible", async () => {
+    vi.useFakeTimers();
+    try {
+      const load = vi.fn(async () => research);
+      render(<CompanyResearchView
+        selectedSymbol="600519"
+        load={load}
+        search={vi.fn(async () => ({ query: "", items: [], server_time: "", source_status: "ready" as const }))}
+      />);
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      expect(load).toHaveBeenCalledTimes(1);
+      await act(async () => { await vi.advanceTimersByTimeAsync(300_000); });
+      expect(load).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("shows today's loaded research and lets the user open it again", async () => {
