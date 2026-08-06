@@ -218,6 +218,9 @@
 - 便携 EXE 已重建，持久目录 `config/data/news/cache/logs/models/exports/backups` 均保留；EXE SHA-256：`F6E29E181F01E5D385975F26CC0313C53D20C7154C2610DDE6E156A9A2097AD4`。
 - 连续三次真实 smoke：窗口首帧 `114/117/110ms`，API `/health` 就绪 `2680/2476/2442ms`，完整验证 `3537/3278/3241ms`；三次信息总览均 `ready`，量化策略均 `unavailable`（当前真实样本不足，保持诚实降级）。
 - smoke 结束后已确认无 `xiaoqibao/qibao_desktop` 残留进程，`127.0.0.1:17709` 未被本程序占用。
+- 官方 TdxQuant Python 适配器新增按安装路径的模块缓存；专项与路由回归 `13 passed`，重复读取只调用一次模块加载器，仍保留每次查询的 `tq.close()`。
+- 本轮改动后便携 EXE 连续三次 smoke：冷盘一次窗口 `308ms`、API `5520ms`、完整验证 `11302ms`；随后热启动窗口 `108/115ms`、API `2452/2372ms`、完整验证 `3295/3195ms`；三次信息总览均 `ready`，量化策略均 `unavailable`。
+- 本轮 EXE SHA-256：`4EF707390AD5B6C8DAB658764AA8C2299838F489BE6BEB3206BA4BA71C050ACF`。
 
 ### 本轮仍未完成的长期目标
 

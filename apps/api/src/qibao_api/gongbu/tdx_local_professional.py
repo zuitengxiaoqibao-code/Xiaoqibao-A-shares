@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from threading import Lock
 from typing import Any, Literal
 
 
@@ -364,6 +365,8 @@ class TdxQuantPythonSource:
         self._custom_module_loader = module_loader is not None
         self.module_loader = module_loader or self._load_module
         self.clock = clock
+        self._module_cache: dict[Path, Any] = {}
+        self._module_cache_lock = Lock()
 
     @staticmethod
     def _load_module(path: Path):
@@ -418,7 +421,7 @@ class TdxQuantPythonSource:
                 "TDX Python professional module unavailable"
             )
         try:
-            module = self.module_loader(path)
+            module = self._load_cached_module(path)
         except TdxProfessionalDataUnavailable:
             raise
         except Exception as error:
@@ -467,6 +470,16 @@ class TdxQuantPythonSource:
             close = getattr(tq, "close", None)
             if callable(close):
                 close()
+
+    def _load_cached_module(self, path: Path):
+        cache_key = path.resolve(strict=False)
+        with self._module_cache_lock:
+            cached = self._module_cache.get(cache_key)
+            if cached is not None:
+                return cached
+            module = self.module_loader(path)
+            self._module_cache[cache_key] = module
+            return module
 
 
 def inspect_tdx_quant_python_roots(

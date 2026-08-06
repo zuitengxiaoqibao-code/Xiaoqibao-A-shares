@@ -143,6 +143,47 @@ def test_python_professional_source_calls_only_read_only_tq_method() -> None:
     assert module.tq.calls[-1] == ("close",)
 
 
+def test_python_professional_source_reuses_loaded_module_between_reads() -> None:
+    class FakeTq:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def initialize(self, path):
+            self.calls.append(("initialize", path))
+
+        def get_financial_data(self, **kwargs):
+            self.calls.append(("get_financial_data", kwargs))
+            return {"600000.SH": [{"Fn193": "12.5"}]}
+
+        def close(self):
+            self.calls.append(("close",))
+
+    class FakeModule:
+        def __init__(self) -> None:
+            self.tq = FakeTq()
+
+    module = FakeModule()
+    load_count = 0
+
+    def load(_path):
+        nonlocal load_count
+        load_count += 1
+        return module
+
+    source = TdxQuantPythonSource(
+        ("D:/new_tdx64",), module_loader=load, clock=lambda: NOW
+    )
+    for _ in range(2):
+        source.fetch(
+            method="get_financial_data",
+            stock_codes=("600000.SH",),
+            fields=("Fn193",),
+        )
+
+    assert load_count == 1
+    assert [call[0] for call in module.tq.calls].count("initialize") == 2
+
+
 def test_rpc_professional_source_falls_back_to_lazy_python_source() -> None:
     class MissingRpc:
         def available(self) -> bool:
