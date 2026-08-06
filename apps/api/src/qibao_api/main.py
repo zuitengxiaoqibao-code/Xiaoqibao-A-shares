@@ -20,6 +20,7 @@ from qibao_api.a_shares.market_sentiment import (
     MarketSentimentFactorBuilder,
     MarketSentimentEvaluator,
     MarketSentimentService,
+    MarketSentimentWrongPhase,
 )
 from qibao_api.a_shares.market_sentiment_repository import (
     MarketSentimentRepository,
@@ -263,6 +264,8 @@ async def _schedule_history_symbol_reconciliation(
 def _refresh_market_sentiment(service, now: datetime) -> None:
     try:
         service.refresh(now)
+    except MarketSentimentWrongPhase:
+        logger.info("initial market sentiment refresh skipped outside session")
     except Exception:
         logger.info("initial market sentiment refresh deferred", exc_info=True)
 

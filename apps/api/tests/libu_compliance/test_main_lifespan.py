@@ -10,7 +10,10 @@ import pytest
 from fastapi import FastAPI
 
 import qibao_api.main as main_module
-from qibao_api.a_shares.market_sentiment import MarketSentimentService
+from qibao_api.a_shares.market_sentiment import (
+    MarketSentimentService,
+    MarketSentimentWrongPhase,
+)
 from qibao_api.a_shares.market_sentiment_repository import MarketSentimentRepository
 from qibao_api.a_shares.candidate_sentiment import CandidateSentimentEvaluator
 from qibao_api.a_shares.candidate_sentiment_repository import (
@@ -79,6 +82,21 @@ def test_initial_market_sentiment_refresh_is_submitted_to_background() -> None:
     main_module._defer_initial_market_sentiment_refresh(Executor(), service, now)
 
     assert calls == [(main_module._refresh_market_sentiment, (service, now))]
+
+
+def test_initial_market_sentiment_refresh_skips_expected_premarket_phase_without_traceback(caplog) -> None:
+    class Service:
+        def refresh(self, _now):
+            raise MarketSentimentWrongPhase("before session")
+
+    caplog.set_level("INFO", logger="qibao_api.main")
+
+    main_module._refresh_market_sentiment(
+        Service(), datetime(2026, 8, 7, 0, 0, tzinfo=timezone.utc)
+    )
+
+    record = next(item for item in caplog.records if item.message == "initial market sentiment refresh skipped outside session")
+    assert record.exc_info is None
 
 
 @pytest.mark.asyncio

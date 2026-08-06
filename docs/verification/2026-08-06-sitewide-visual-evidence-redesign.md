@@ -287,3 +287,10 @@
 - 连续三次隔离 smoke 均通过：窗口首帧分别为 `134/110/110ms`，API `/health` 就绪分别为 `2355/2432/2469ms`，完整验证分别为 `4196/4208/4219ms`。
 - 三次结果均为信息总览 `ready`、量化策略 `unavailable`、通达信专业 `unavailable`；未因启动优化生成任何模拟行情或候选。
 - 每次 smoke 后均释放应用进程，未占用 `127.0.0.1:17709`；该基线用于后续冷盘与热启动对照，不将热启动数据冒充冷盘性能。
+
+## 2026-08-07 预交易时段情绪刷新日志修正
+
+- 将 `MarketSentimentWrongPhase` 从通用异常日志中分离；交易时段外属于确定性跳过，不再附带 traceback，真实异常仍保留堆栈。
+- 新 EXE smoke：隔离目录窗口 `112ms`、API `/health` `2684ms`、完整验证 `4514ms`；真实发布目录窗口 `65ms`、API `/health` `2074ms`、完整验证 `10677ms`。
+- 新日志已出现 `initial market sentiment refresh skipped outside session`，没有新增预交易 traceback；信息总览 `ready`，真实发布量化 `partial`（7 只候选、85.00% 覆盖），通达信专业保持 `unavailable`。
+- 最新 EXE SHA-256：`54D4F206EFC2E45951E8F8D028D48E565B48FC88766567F446F29929112A7FE0`。
