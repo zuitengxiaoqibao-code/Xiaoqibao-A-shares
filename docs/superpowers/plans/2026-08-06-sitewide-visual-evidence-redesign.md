@@ -8,6 +8,28 @@
 
 **Tech Stack:** React 19, TypeScript 5.8, ECharts 5.6, CSS, Vitest, FastAPI, Pydantic, pytest, PyInstaller portable EXE。
 
+## Current Progress (2026-08-06)
+
+| 目标 | 状态 | 最近证据 |
+|---|---|---|
+| 共享证据状态与图表原语 | 已完成 | `784400f`、`f5ef932`、`b72d456` |
+| 信息总览缓存优先与启动状态 | 已完成 | `1bdcb50`、`docs/verification/2026-08-06-cache-startup-performance.md` |
+| 全局可读性基线 | 已完成 | `ea2995a`；正文 14px、辅助文字 13px |
+| 专题工作区语义拆分 | 已完成基础版本，持续审查 | 50 个独立定义，`workspaceRegistry.test.ts` |
+| 不可用/陈旧证据诚实展示 | 持续推进 | `f5dcd65`；专题页不再冒充实时连接 |
+| TdxQuant 只读深度接入 | 未完成 | 已完成接口调研，专业数据包与能力探测仍需补齐 |
+| 全站最终验收与 EXE 交付 | 本轮通过，仍需持续回归 | 前端 428 项、API 1065 项、EXE 烟测通过 |
+
+## Remaining Goals
+
+以下目标在全部验收通过前保持为持续计划，不以单个阶段完成代替项目完成：
+
+- [ ] 完成 50 个专题页的真实字段覆盖审查，清理残留重复、空白和无关代理指标。
+- [ ] 将通达信本地只读能力扩展为可探测的行情、财务、板块、事件和公式能力，并在设置页显示能力状态。
+- [ ] 继续优化个股观察、公司研究和量化分析的动态刷新、缓存恢复和图表密度。
+- [ ] 对所有页面执行字号、颜色、响应式和红涨绿跌回归检查。
+- [ ] 每次源代码改动后重建便携 EXE，保留持久目录并运行真实烟测。
+
 ## Global Constraints
 
 - 所有用户交付通过 `dist/XiaoQiBao-Portable/xiaoqibao.exe`，不交付 HTML 或 localhost。
@@ -113,4 +135,3 @@
 - `powershell -ExecutionPolicy Bypass -File scripts/run-portable-smoke.ps1`
 
 **Deliverable:** 便携 EXE、测试证据、SHA-256 和持久目录保留记录。
-
