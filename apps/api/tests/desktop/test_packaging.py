@@ -86,6 +86,17 @@ def test_portable_smoke_supports_a_release_data_mode() -> None:
     assert "table_list=Fn&" not in script
 
 
+def test_portable_smoke_reports_individual_request_timings() -> None:
+    smoke_path = _project_root() / "scripts" / "run-portable-smoke.ps1"
+    script = smoke_path.read_text(encoding="utf-8")
+
+    assert "$HomeRequestMs" in script
+    assert "$OverviewRequestMs" in script
+    assert "$QuantStrategyRequestMs" in script
+    assert "$ProfessionalRequestMs" in script
+    assert "requests home={3}ms overview={4}ms quant={5}ms professional={6}ms" in script
+
+
 def test_portable_spec_does_not_collect_cross_platform_or_unused_tool_submodules() -> None:
     spec_path = _project_root() / "packaging" / "xiaoqibao.spec"
     source = spec_path.read_text(encoding="utf-8")

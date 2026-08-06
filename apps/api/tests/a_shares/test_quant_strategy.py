@@ -344,6 +344,12 @@ def test_service_reuses_candidate_evidence_within_refresh_window() -> None:
 
     assert calls == 2
     assert first.candidates == second.candidates == third.candidates
+    assert first.candidate_scan_cached is False
+    assert first.candidate_scan_age_seconds == 0
+    assert second.candidate_scan_cached is True
+    assert second.candidate_scan_age_seconds == 4
+    assert third.candidate_scan_cached is False
+    assert third.candidate_scan_age_seconds == 0
 
 
 def test_service_keeps_daily_candidate_scan_cached_while_strategy_refreshes() -> None:
@@ -360,10 +366,48 @@ def test_service_keeps_daily_candidate_scan_cached_while_strategy_refreshes() ->
         SimpleNamespace(resolve=lambda symbol: None),
     )
 
-    service.current(NOW)
-    service.current(NOW + timedelta(seconds=6))
+    first = service.current(NOW)
+    second = service.current(NOW + timedelta(seconds=6))
 
     assert calls == 1
+    assert first.candidate_scan_cached is False
+    assert second.candidate_scan_cached is True
+    assert second.candidate_scan_at == NOW
+    assert second.candidate_scan_age_seconds == 6
+
+
+def test_service_reports_trigger_evidence_cache_age_separately() -> None:
+    calls = 0
+
+    class EvidenceSource:
+        def get(self, _symbol, _trading_date, _cutoff, _stock):
+            nonlocal calls
+            calls += 1
+            return TriggerEvidence(vwap_support=True, sources=("tick-archive",))
+
+    service = QuantStrategyService(
+        SimpleNamespace(current=lambda now: overview()),
+        SimpleNamespace(candidates=lambda as_of, limit: board()),
+        SimpleNamespace(resolve=lambda symbol: None),
+        trigger_evidence_source=EvidenceSource(),
+        cache_seconds=30,
+        evidence_cache_seconds=5,
+    )
+
+    first = service.current(NOW)
+    second = service.current(NOW + timedelta(seconds=4))
+    third = service.current(NOW + timedelta(seconds=6))
+
+    assert calls == 2
+    assert first.trigger_evidence_cached is False
+    assert first.trigger_evidence_at == NOW
+    assert first.trigger_evidence_age_seconds == 0
+    assert second.trigger_evidence_cached is True
+    assert second.trigger_evidence_age_seconds == 4
+    assert third.trigger_evidence_cached is False
+    assert third.trigger_evidence_at == NOW + timedelta(seconds=6)
+    assert third.trigger_evidence_age_seconds == 0
+    assert third.candidate_scan_cached is True
 
 
 def test_candidate_contract_rejects_missing_trigger_with_nonzero_score() -> None:

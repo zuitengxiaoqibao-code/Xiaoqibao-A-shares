@@ -99,24 +99,29 @@ try {
         }
         throw "Portable health check timed out"
     }
+    $StageStartedMs = $StartedAt.ElapsedMilliseconds
     $HomeResponse = Invoke-WebRequest `
         -Uri "http://127.0.0.1:$Port/" `
         -TimeoutSec 5 `
         -UseBasicParsing
+    $HomeRequestMs = $StartedAt.ElapsedMilliseconds - $StageStartedMs
     if (
         $HomeResponse.StatusCode -ne 200 -or
         $HomeResponse.Content -notmatch "id=.root."
     ) {
         throw "Portable frontend smoke failed"
     }
+    $StageStartedMs = $StartedAt.ElapsedMilliseconds
     $Overview = Invoke-RestMethod `
         -Uri "http://127.0.0.1:$Port/api/v1/a-shares/market-overview" `
         -TimeoutSec 30
+    $OverviewRequestMs = $StartedAt.ElapsedMilliseconds - $StageStartedMs
     if ($Overview.status -notin @("ready", "partial", "unavailable")) {
         throw "Portable market overview did not return an honest data status"
     }
     $QuantStrategy = $null
     $QuantStrategyStatus = $null
+    $StageStartedMs = $StartedAt.ElapsedMilliseconds
     try {
         $QuantStrategy = Invoke-RestMethod `
             -Uri "http://127.0.0.1:$Port/api/v1/a-shares/quant-strategy?limit=12" `
@@ -142,6 +147,7 @@ try {
         }
         $QuantStrategyStatus = "unavailable"
     }
+    $QuantStrategyRequestMs = $StartedAt.ElapsedMilliseconds - $StageStartedMs
     if ($null -ne $QuantStrategy) {
         if ($QuantStrategy.status -notin @("ready", "partial", "unavailable")) {
             throw "Portable quant strategy did not return an honest data status"
@@ -154,9 +160,11 @@ try {
         }
         $QuantStrategyStatus = $QuantStrategy.status
     }
+    $StageStartedMs = $StartedAt.ElapsedMilliseconds
     $Professional = Invoke-RestMethod `
         -Uri "http://127.0.0.1:$Port/api/v1/tdx/local/professional?method=get_financial_data&table_list=Fn193&stock_codes=600000" `
         -TimeoutSec 30
+    $ProfessionalRequestMs = $StartedAt.ElapsedMilliseconds - $StageStartedMs
     if ($Professional.status -notin @("ready", "partial", "unavailable")) {
         throw "Portable TDX professional probe did not return an honest data status"
     }
@@ -172,8 +180,8 @@ try {
         "unavailable"
     }
     $ProfessionalDetail = if ($Professional.detail) { $Professional.detail } else { "rows=$($Professional.rows.Count)" }
-    Write-Host ("Portable smoke passed; window visible in {0}ms; API ready in {1}ms; verification completed in {2}ms; overview {3}; quant strategy {4} ({5}); tdx professional {6} ({7})" -f `
-        $WindowVisibleMs, $HealthReadyMs, $StartedAt.ElapsedMilliseconds, $Overview.status, $QuantStrategyStatus, $QuantDetail, $Professional.status, $ProfessionalDetail)
+    Write-Host ("Portable smoke passed; window visible in {0}ms; API ready in {1}ms; verification completed in {2}ms; requests home={3}ms overview={4}ms quant={5}ms professional={6}ms; overview {7}; quant strategy {8} ({9}); tdx professional {10} ({11})" -f `
+        $WindowVisibleMs, $HealthReadyMs, $StartedAt.ElapsedMilliseconds, $HomeRequestMs, $OverviewRequestMs, $QuantStrategyRequestMs, $ProfessionalRequestMs, $Overview.status, $QuantStrategyStatus, $QuantDetail, $Professional.status, $ProfessionalDetail)
 } finally {
     if (-not $Process.HasExited) {
         Stop-Process -Id $Process.Id

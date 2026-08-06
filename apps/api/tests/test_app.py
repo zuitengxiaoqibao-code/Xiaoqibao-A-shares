@@ -7,6 +7,7 @@ from qibao_api.dependencies import (
     get_decision_calendar,
     get_decision_poll_state,
     get_decision_repository,
+    get_news_repository,
     get_scheduler,
     get_server_time,
 )
@@ -39,6 +40,9 @@ def test_decision_responses_do_not_expose_simulation_plans():
     app.dependency_overrides[get_decision_repository] = Repository
     app.dependency_overrides[get_decision_calendar] = Calendar
     app.dependency_overrides[get_decision_poll_state] = lambda: None
+    app.dependency_overrides[get_news_repository] = lambda: type(
+        "NewsRepository", (), {"effective_events": lambda self, **_kwargs: []}
+    )()
     app.dependency_overrides[get_scheduler] = lambda: type(
         "Scheduler", (), {"status": lambda self: {"paused": False, "jobs": []}}
     )()

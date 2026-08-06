@@ -76,6 +76,9 @@ def test_quant_strategy_route_returns_honest_partial_dashboard() -> None:
     assert response.json()["regime"]["regime"] == "轮动震荡"
     assert response.json()["refresh_mode"] == "live"
     assert response.json()["data_age_seconds"] == 0
+    assert response.json()["candidate_scan_cached"] is False
+    assert response.json()["candidate_scan_age_seconds"] is None
+    assert response.json()["trigger_evidence_at"] is None
     assert service.calls == [(NOW, date(2026, 7, 30), 8)]
 
 

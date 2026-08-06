@@ -30,6 +30,11 @@ function ageLabel(seconds: number | null): string {
   return `${Math.floor(seconds / 3600)}小时前`;
 }
 
+function cacheLabel(cached: boolean, age: number | null): string {
+  if (age === null) return "尚未采集";
+  return `${cached ? "复用缓存" : "刚刚采集"} · ${ageLabel(age)}`;
+}
+
 function statusLabel(status: QuantLiveStatus): string {
   return {
     loading: "正在连接",
@@ -94,6 +99,7 @@ export function QuantLiveStatusBar({
           stale: "行情陈旧",
         }[strategy.refresh_mode] : statusLabel(strategyStatus)}</b>
         <small>{strategyEnabled ? `${ageLabel(strategyAge)} · ${strategy?.sources.slice(0, 2).join(" + ") || "本地通达信市场截面"}` : "当前页面未配置策略接口"}</small>
+        {strategyEnabled && strategy && <em className="quant-cache-detail">候选扫描：{cacheLabel(strategy.candidate_scan_cached, strategy.candidate_scan_age_seconds)} · 触发证据：{cacheLabel(strategy.trigger_evidence_cached, strategy.trigger_evidence_age_seconds)}</em>}
       </article>
       <article className={boardStatus}>
         <span><Database size={13} />候选池 30秒</span>

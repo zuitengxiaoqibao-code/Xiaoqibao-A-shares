@@ -73,6 +73,12 @@ class QuantStrategyDashboard(BaseModel):
     data_age_seconds: int = Field(ge=0)
     refresh_mode: QuantRefreshMode
     next_refresh_at: AwareDatetime
+    candidate_scan_at: AwareDatetime | None = None
+    candidate_scan_age_seconds: int | None = Field(default=None, ge=0)
+    candidate_scan_cached: bool = False
+    trigger_evidence_at: AwareDatetime | None = None
+    trigger_evidence_age_seconds: int | None = Field(default=None, ge=0)
+    trigger_evidence_cached: bool = False
     formula_version: Literal["a-share-short-strategy-v2.0"] = (
         "a-share-short-strategy-v2.0"
     )

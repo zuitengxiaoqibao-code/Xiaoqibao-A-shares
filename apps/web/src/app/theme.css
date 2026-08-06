@@ -1196,6 +1196,7 @@ body { font-size: 14px; }
 .quant-live-status article > span { color: #8097a9; font-size: 12px; }
 .quant-live-status article > b { color: #bcd0df; font-size: 13px; }
 .quant-live-status article > small { overflow: hidden; color: #647b8e; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.quant-live-status .quant-cache-detail { color: #7890a3; font-size: 12px; font-style: normal; line-height: 1.45; }
 .quant-live-status article.live > b { color: var(--quant-green); }
 .quant-live-status article.delayed > b, .quant-live-status article.error > b { color: var(--quant-gold); }
 .quant-live-status article.paused > b, .quant-live-status article.loading > b { color: #8ca2b5; }

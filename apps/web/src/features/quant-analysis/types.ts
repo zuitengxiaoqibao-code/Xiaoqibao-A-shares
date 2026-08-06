@@ -100,6 +100,12 @@ export type QuantStrategyDashboard = {
   data_age_seconds: number;
   refresh_mode: "live" | "delayed" | "postclose" | "stale";
   next_refresh_at: string;
+  candidate_scan_at: string | null;
+  candidate_scan_age_seconds: number | null;
+  candidate_scan_cached: boolean;
+  trigger_evidence_at: string | null;
+  trigger_evidence_age_seconds: number | null;
+  trigger_evidence_cached: boolean;
   formula_version: "a-share-short-strategy-v2.0";
   metrics: QuantRegimeMetrics;
   regime: {

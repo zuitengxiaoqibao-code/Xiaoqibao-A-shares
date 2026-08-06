@@ -167,6 +167,8 @@ class PollStateRepository:
           scope TEXT NOT NULL, symbol TEXT NOT NULL, observed_at TEXT NOT NULL,
           source_snapshot_id TEXT, payload TEXT, content_hash TEXT
         );
+        CREATE INDEX IF NOT EXISTS ix_intraday_market_symbol_observed
+        ON intraday_market_snapshot_events(symbol, observed_at, sequence);
         CREATE TABLE IF NOT EXISTS intraday_poll_batches (
           batch_id TEXT PRIMARY KEY, scope TEXT NOT NULL, occurred_at TEXT NOT NULL
         );

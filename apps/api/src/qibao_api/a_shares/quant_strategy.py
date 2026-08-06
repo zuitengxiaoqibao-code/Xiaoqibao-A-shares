@@ -442,6 +442,10 @@ def build_quant_strategy_dashboard(
     names: Mapping[str, str] | None = None,
     trigger_evidence: Mapping[str, TriggerEvidence] | None = None,
     generated_at: datetime | None = None,
+    candidate_scan_at: datetime | None = None,
+    candidate_scan_cached: bool = False,
+    trigger_evidence_at: datetime | None = None,
+    trigger_evidence_cached: bool = False,
     limit: int = 12,
 ) -> QuantStrategyDashboard:
     if limit < 1 or limit > 50:
@@ -450,6 +454,24 @@ def build_quant_strategy_dashboard(
         overview,
         generated_at or overview.observed_at,
     )
+    generated = generated_at or overview.observed_at
+    candidate_scan_timestamp = candidate_scan_at or generated
+    trigger_evidence_timestamp = trigger_evidence_at
+    candidate_scan_age = max(
+        0, int((generated - candidate_scan_timestamp).total_seconds())
+    )
+    trigger_evidence_age = (
+        max(0, int((generated - trigger_evidence_timestamp).total_seconds()))
+        if trigger_evidence_timestamp is not None else None
+    )
+    cache_metadata = {
+        "candidate_scan_at": candidate_scan_timestamp,
+        "candidate_scan_age_seconds": candidate_scan_age,
+        "candidate_scan_cached": candidate_scan_cached,
+        "trigger_evidence_at": trigger_evidence_timestamp,
+        "trigger_evidence_age_seconds": trigger_evidence_age,
+        "trigger_evidence_cached": trigger_evidence_cached,
+    }
     regime = overview.regime.regime
     missing = tuple(dict.fromkeys((
         *overview.regime.missing_factors,
@@ -461,6 +483,7 @@ def build_quant_strategy_dashboard(
             as_of=overview.as_of,
             observed_at=overview.observed_at,
             **refresh_metadata,
+            **cache_metadata,
             metrics=overview.regime_metrics,
             regime=overview.regime,
             strategy_models=_strategy_models(regime),
@@ -476,6 +499,7 @@ def build_quant_strategy_dashboard(
             as_of=overview.as_of,
             observed_at=overview.observed_at,
             **refresh_metadata,
+            **cache_metadata,
             metrics=overview.regime_metrics,
             regime=overview.regime,
             strategy_models=_strategy_models(regime),
@@ -508,6 +532,7 @@ def build_quant_strategy_dashboard(
         as_of=overview.as_of,
         observed_at=overview.observed_at,
         **refresh_metadata,
+        **cache_metadata,
         metrics=overview.regime_metrics,
         regime=overview.regime,
         strategy_models=_strategy_models(regime),
@@ -537,10 +562,10 @@ class QuantStrategyService:
         self.evidence_cache_ttl = timedelta(seconds=max(0, evidence_cache_seconds))
         self._candidate_cache: dict[
             tuple[date, int],
-            tuple[datetime, CandidateBoard, dict[str, str]],
+            tuple[datetime, datetime, CandidateBoard, dict[str, str]],
         ] = {}
         self._evidence_cache: dict[
-            tuple[date, int], tuple[datetime, dict[str, TriggerEvidence]]
+            tuple[date, int], tuple[datetime, datetime, dict[str, TriggerEvidence]]
         ] = {}
         self._candidate_cache_lock = RLock()
 
@@ -555,6 +580,8 @@ class QuantStrategyService:
             )
         cache_key = (selected_date, limit)
         cached = None
+        candidate_scan_cached = False
+        candidate_scan_at = now
         if self.cache_ttl > timedelta(0):
             with self._candidate_cache_lock:
                 cached = self._candidate_cache.get(cache_key)
@@ -572,13 +599,17 @@ class QuantStrategyService:
                 with self._candidate_cache_lock:
                     self._candidate_cache[cache_key] = (
                         now + self.cache_ttl,
+                        now,
                         board,
                         names,
                     )
                     self._evidence_cache.pop(cache_key, None)
         else:
-            _expires_at, board, names = cached
+            _expires_at, candidate_scan_at, board, names = cached
+            candidate_scan_cached = True
         evidence: dict[str, TriggerEvidence] = {}
+        trigger_evidence_cached = False
+        trigger_evidence_at: datetime | None = None
         if self.trigger_evidence_source is not None:
             evidence_cached = None
             if self.evidence_cache_ttl > timedelta(0):
@@ -588,7 +619,8 @@ class QuantStrategyService:
                         self._evidence_cache.pop(cache_key, None)
                         evidence_cached = None
             if evidence_cached is not None:
-                _evidence_expires_at, evidence = evidence_cached
+                _evidence_expires_at, trigger_evidence_at, evidence = evidence_cached
+                trigger_evidence_cached = True
             else:
                 stocks = {item.symbol: item for item in overview.market_stocks}
                 for item in board.short_term:
@@ -599,13 +631,19 @@ class QuantStrategyService:
                     with self._candidate_cache_lock:
                         self._evidence_cache[cache_key] = (
                             now + self.evidence_cache_ttl,
+                            now,
                             evidence,
                         )
+                trigger_evidence_at = now
         return build_quant_strategy_dashboard(
             overview,
             board,
             names=names,
             trigger_evidence=evidence,
             generated_at=now,
+            candidate_scan_at=candidate_scan_at,
+            candidate_scan_cached=candidate_scan_cached,
+            trigger_evidence_at=trigger_evidence_at,
+            trigger_evidence_cached=trigger_evidence_cached,
             limit=limit,
         )

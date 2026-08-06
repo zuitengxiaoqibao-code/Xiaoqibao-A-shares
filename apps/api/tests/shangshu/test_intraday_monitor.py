@@ -206,6 +206,21 @@ def test_success_batch_and_state_are_atomic_idempotent_and_restart_safe(tmp_path
     reopened = PollStateRepository(database)
     assert reopened.latest() == state
     assert len(reopened.snapshots()) == 1
+    indexes = {
+        row["name"] for row in reopened.connection.execute(
+            "PRAGMA index_list(intraday_market_snapshot_events)"
+        ).fetchall()
+    }
+    assert "ix_intraday_market_symbol_observed" in indexes
+    query_plan = reopened.connection.execute(
+        "EXPLAIN QUERY PLAN SELECT payload FROM intraday_market_snapshot_events "
+        "WHERE symbol=? AND payload IS NOT NULL ORDER BY observed_at, sequence",
+        ("000001",),
+    ).fetchall()
+    assert any(
+        "ix_intraday_market_symbol_observed" in row["detail"]
+        for row in query_plan
+    )
 
 
 def test_identical_snapshot_on_two_due_executions_advances_restart_due_time(tmp_path) -> None:

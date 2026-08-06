@@ -17,6 +17,12 @@ const dashboard: QuantStrategyDashboard = {
   data_age_seconds: 0,
   refresh_mode: "live",
   next_refresh_at: "2026-07-31T14:00:05+08:00",
+  candidate_scan_at: "2026-07-31T14:00:00+08:00",
+  candidate_scan_age_seconds: 0,
+  candidate_scan_cached: false,
+  trigger_evidence_at: "2026-07-31T14:00:00+08:00",
+  trigger_evidence_age_seconds: 0,
+  trigger_evidence_cached: false,
   formula_version: "a-share-short-strategy-v2.0",
   metrics: {
     up_ratio: "66", zt_ratio: "1.4", dt_ratio: "0.1", median_ret: "1.2",
