@@ -1,0 +1,116 @@
+# 一树 A 股观测台全站可视化与证据可信度 Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task with verification checkpoints.
+
+**Goal:** 用统一的真实数据可视化内核和证据状态契约，逐批升级全站页面，并通过便携 EXE 交付。
+
+**Architecture:** 先建立共享视觉原语、ECharts 主题和证据状态渲染器，再迁移信息总览、今日研判、个股观察、公司研究和量化分析；市场专题页按菜单语义逐页绑定专属图表组合。后端继续复用既有 API 与本地通达信/腾讯/缓存来源，第三阶段才扩展已实测的 TdxQuant 只读能力。
+
+**Tech Stack:** React 19, TypeScript 5.8, ECharts 5.6, CSS, Vitest, FastAPI, Pydantic, pytest, PyInstaller portable EXE。
+
+## Global Constraints
+
+- 所有用户交付通过 `dist/XiaoQiBao-Portable/xiaoqibao.exe`，不交付 HTML 或 localhost。
+- A 股上涨/改善使用 `--market-up: #f04f5f`，下跌/恶化使用 `--market-down: #2fcf91`。
+- 缺失、陈旧、冲突和未验证数据必须有状态，不用随机、截图静态数字或无关字段填空。
+- AI 只能解释已有证据，不创建证券代码、价格、新闻事实或评分。
+- 用户可见正文不低于 12px；桌面、窄屏和 390px 视口不能出现遮挡或横向溢出。
+- 构建前保留 `config/data/news/cache/logs/models/exports/backups`。
+
+### Task 1: 可视化状态与图表原语
+
+**Files:**
+- Create: `apps/web/src/shared/visualization/types.ts`
+- Create: `apps/web/src/shared/visualization/chartTheme.ts`
+- Create: `apps/web/src/shared/visualization/VisualPrimitives.tsx`
+- Create: `apps/web/src/shared/visualization/visualization.css`
+- Test: `apps/web/src/shared/visualization/VisualPrimitives.test.tsx`
+
+**Deliverable:** 统一的 `EvidenceState`、`DataStateNotice`、`ChartPanel`、`MetricBand`、`GaugeRow`、`RankBarList` 和 `EvidenceBadge`，提供 ready/partial/stale/unavailable/error 五种状态。
+
+### Task 2: ECharts 主题与图形工厂
+
+**Files:**
+- Modify: `apps/web/src/features/quant-analysis/QuantChart.tsx`
+- Create: `apps/web/src/shared/visualization/chartOptions.ts`
+- Test: `apps/web/src/shared/visualization/chartOptions.test.ts`
+
+**Deliverable:** 统一字体、坐标轴、tooltip、零轴、涨跌色和缺失点断线配置；提供 bar-line、dual-axis、radar、heatmap、treemap、gauge、candlestick 等工厂函数。
+
+### Task 3: 全局 CSS 基线迁移
+
+**Files:**
+- Modify: `apps/web/src/app/tokens.css`
+- Modify: `apps/web/src/app/theme.css`
+- Modify: `apps/web/src/app/terminal.css`
+- Test: `apps/web/src/app/typography.test.ts`, `apps/web/src/app/layout-safety.test.ts`
+
+**Deliverable:** 统一深色终端背景、边框、间距、字号、状态色和 reduced-motion；清理局部浅色和冲突的粉色上涨语义。
+
+### Task 4: 信息总览基准页
+
+**Files:**
+- Modify: `apps/web/src/features/market-overview/MarketOverviewView.tsx`
+- Modify: `apps/web/src/features/market-overview/OverviewTables.tsx`
+- Modify: `apps/web/src/features/market-overview/OverviewMinuteChart.tsx`
+- Modify: `apps/web/src/features/market-overview/overview.css`
+- Test: `apps/web/src/features/market-overview/MarketOverviewView.test.tsx`, `apps/web/src/features/market-overview/OverviewMinuteChart.test.tsx`
+
+**Deliverable:** 顶部指标带、指数分时、异动时间线、板块热力、热门板块/股票表统一为截图所示的高密度图形结构，保持真实数据和自动刷新。
+
+### Task 5: 今日研判与个股观察
+
+**Files:**
+- Modify: `apps/web/src/features/decision-workbench/TodayDecisionView.tsx`
+- Modify: `apps/web/src/features/stock-cockpit/StockDecisionCockpit.tsx`
+- Modify: `apps/web/src/features/stock-cockpit/KeySignalDashboard.tsx`
+- Modify: `apps/web/src/features/stock-timeline/StockEventKline.tsx`
+- Test: corresponding existing tests plus new visual state assertions
+
+**Deliverable:** 三阶段状态带、资金流向混合图、K 线事件索引、亮点/风险标签和来源账本统一展示。
+
+### Task 6: 公司研究与量化分析
+
+**Files:**
+- Modify: `apps/web/src/features/company-research/ResearchVisualSummary.tsx`
+- Modify: `apps/web/src/features/company-research/companyResearch.css`
+- Modify: `apps/web/src/features/quant-analysis/QuantAnalysisDashboard.tsx`
+- Modify: `apps/web/src/features/quant-analysis/ShortTermStrategyWorkbench.tsx`
+- Test: existing company research and quant tests plus chart option assertions
+
+**Deliverable:** 财务五维组合图、估值双轴历史、资产负债 treemap、研究仪表和策略投票仪表统一为真实数据状态驱动的面板。
+
+### Task 7: 市场专题页语义迁移
+
+**Files:**
+- Modify: `apps/web/src/features/market-overview/workspaces/DistinctMarketWorkspace.tsx`
+- Modify: `apps/web/src/features/market-overview/workspaces/WorkspaceBlocks.tsx`
+- Modify: `apps/web/src/features/market-overview/workspaces/workspaceRegistry.ts`
+- Test: `DistinctMarketWorkspace.test.tsx`, `workspaceRegistry.test.ts`
+
+**Deliverable:** 每个菜单绑定独立图形组合：涨停/连板/炸板、竞价、龙虎榜、突破、低位放量、热点/复盘等不再重复同一模板。
+
+### Task 8: TdxQuant 只读增强
+
+**Files:**
+- Modify: `apps/api/src/qibao_api/gongbu/tdx_local_overview.py`
+- Modify: `apps/api/src/qibao_api/main.py`
+- Modify: `apps/web/src/features/data-settings/LocalSourceSettingsSection.tsx`
+- Test: `apps/api/tests` relevant TDX tests and data settings tests
+
+**Deliverable:** 能力探测、`get_more_info`/`get_stock_info`/`get_ipo_info`/`get_kzz_info`/`formula_process_mul_*` 只读接入；专业数据包缺失时返回明确降级，不碰交易接口。
+
+### Task 9: EXE 交付与全站验收
+
+**Files:**
+- Modify: `docs/verification/2026-08-06-sitewide-visual-evidence-redesign.md`
+
+**Commands:**
+- `pnpm --dir . --filter "@qibao/web" test`
+- `.venv/Scripts/python.exe -m pytest apps/api/tests -q`
+- `pnpm --dir . --filter "@qibao/web" build`
+- `powershell -ExecutionPolicy Bypass -File scripts/build-portable.ps1 -SkipTests`
+- `powershell -ExecutionPolicy Bypass -File scripts/run-portable-smoke.ps1`
+
+**Deliverable:** 便携 EXE、测试证据、SHA-256 和持久目录保留记录。
+
