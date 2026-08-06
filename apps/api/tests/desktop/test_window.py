@@ -20,6 +20,12 @@ def test_window_shell_is_created_before_waiting_for_api(monkeypatch) -> None:
     window = FakeWindow()
     order: list[str] = []
 
+    monkeypatch.setitem(
+        sys.modules,
+        "pyi_splash",
+        SimpleNamespace(close=lambda: order.append("boot-splash-closed")),
+    )
+
     def create_window(title: str, **options):
         order.append("window-created")
         assert title == "一树电子商务-A股观测台"
@@ -45,7 +51,12 @@ def test_window_shell_is_created_before_waiting_for_api(monkeypatch) -> None:
 
     run_window(start_application)
 
-    assert order == ["window-created", "webview-started", "api-ready"]
+    assert order == [
+        "window-created",
+        "webview-started",
+        "boot-splash-closed",
+        "api-ready",
+    ]
     assert window.loaded_url == "http://127.0.0.1:43210/?desktopBoot=42"
     assert any("24" in script and "桌面窗口已显示" in script for script in window.scripts)
     assert any("42" in script and "本地 API 已就绪" in script for script in window.scripts)

@@ -7,6 +7,7 @@ spec_dir = Path(SPECPATH)
 project_root = spec_dir.parent
 api_src = project_root / "apps" / "api" / "src"
 icon_path = project_root / "packaging" / "assets" / "xiaoqibao.ico"
+splash_path = project_root / "packaging" / "assets" / "xiaoqibao-splash.png"
 
 hiddenimports = (
     collect_submodules("qibao_api")
@@ -30,9 +31,20 @@ a = Analysis(
     noarchive=False,
 )
 pyz = PYZ(a.pure)
+splash = Splash(
+    str(splash_path),
+    binaries=a.binaries,
+    datas=a.datas,
+    text_pos=None,
+    minify_script=True,
+    always_on_top=True,
+    max_img_size=(480, 480),
+    center="active",
+)
 exe = EXE(
     pyz,
     a.scripts,
+    splash,
     [],
     exclude_binaries=True,
     name="xiaoqibao",
@@ -47,6 +59,7 @@ coll = COLLECT(
     exe,
     a.binaries,
     a.datas,
+    splash.binaries,
     strip=False,
     upx=False,
     name="XiaoQiBao-Portable",

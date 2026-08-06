@@ -38,14 +38,28 @@ try {
         try {
             $Health = Invoke-RestMethod `
                 -Uri "http://127.0.0.1:$Port/health" `
-                -TimeoutSec 1
+                -TimeoutSec 5
             break
         } catch {
             Start-Sleep -Milliseconds 200
         }
     } while ([DateTime]::UtcNow -lt $Deadline)
 
-    if ($null -eq $Health) { throw "Portable health check timed out" }
+    if ($null -eq $Health) {
+        $Process.Refresh()
+        Write-Warning (
+            "Portable health timeout diagnostics: pid={0}; cpu={1:N1}s; working_set={2:N1}MB; threads={3}" -f
+            $Process.Id,
+            $Process.CPU,
+            ($Process.WorkingSet64 / 1MB),
+            $Process.Threads.Count
+        )
+        $LogPath = Join-Path $SmokeRoot "logs\xiaoqibao.log"
+        if (Test-Path -LiteralPath $LogPath) {
+            Get-Content -LiteralPath $LogPath -Tail 80 | Write-Warning
+        }
+        throw "Portable health check timed out"
+    }
     $HomeResponse = Invoke-WebRequest `
         -Uri "http://127.0.0.1:$Port/" `
         -TimeoutSec 5 `

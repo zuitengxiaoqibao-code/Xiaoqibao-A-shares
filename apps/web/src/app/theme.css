@@ -1036,7 +1036,7 @@ body { font-size: 13px; }
 }
 .quant-hero {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 290px);
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 370px);
   align-items: end;
   gap: 24px;
   margin-bottom: 18px;
@@ -1074,15 +1074,29 @@ body { font-size: 13px; }
   text-wrap: pretty;
 }
 .quant-instrument-control {
+  position: relative;
   display: grid;
-  gap: 7px;
-  padding: 13px 14px;
-  border: 1px solid var(--quant-line);
-  background: rgba(7, 14, 22, .84);
-  box-shadow: inset 0 1px rgba(255, 255, 255, .025);
+  gap: 9px;
+  padding: 15px 16px;
+  border: 1px solid rgba(244, 199, 106, .72);
+  background: linear-gradient(135deg, rgba(39, 29, 13, .58), rgba(7, 14, 22, .96) 58%);
+  box-shadow: inset 0 1px rgba(255, 239, 184, .08), 0 0 22px rgba(244, 199, 106, .1);
 }
+.quant-instrument-control > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.quant-instrument-control > header > span { color: #f5dda2; font: 600 13px "Orbitron", "Microsoft YaHei UI", sans-serif; }
+.quant-instrument-control > header > b { padding: 3px 7px; border: 1px solid #3c596e; color: #8fa7b8; font-size: 12px; font-weight: 600; }
+.quant-instrument-control > header > b.candidate { border-color: rgba(65, 217, 162, .48); color: var(--quant-green); }
+.quant-instrument-control > header > b.custom { border-color: rgba(52, 214, 255, .48); color: var(--quant-cyan); }
+.quant-selected-instrument { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.quant-selected-symbol { color: var(--quant-gold); font: 600 25px "Orbitron", "JetBrains Mono", monospace; text-shadow: 0 0 13px rgba(244, 199, 106, .24); }
+.quant-selected-name { overflow: hidden; color: #e2edf4; font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .quant-instrument-control label,
-.quant-instrument-control small { color: #698094; font-size: 12px; }
+.quant-instrument-control small { color: #8297a9; font-size: 12px; }
+.quant-symbol-search { min-height: 40px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid #3f596a; background: #07121b; color: var(--quant-cyan); }
+.quant-symbol-search:focus-within { border-color: var(--quant-gold); box-shadow: 0 0 14px rgba(244, 199, 106, .12); }
+.quant-symbol-search input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: #ecf3f7; font: 13px "JetBrains Mono", "Microsoft YaHei UI", monospace; }
+.quant-symbol-search input::placeholder { color: #637c8d; }
+.quant-candidate-switch { display: grid; gap: 5px; }
 .quant-instrument-control select {
   width: 100%;
   min-height: 38px;
@@ -1098,6 +1112,16 @@ body { font-size: 13px; }
 .quant-instrument-control select:hover,
 .quant-instrument-control select:focus-visible { border-color: var(--quant-cyan); box-shadow: 0 0 14px rgba(52, 214, 255, .12); }
 .quant-instrument-control select:focus-visible { outline: 2px solid rgba(52, 214, 255, .3); outline-offset: 2px; }
+.quant-symbol-message { display: flex; align-items: center; gap: 7px; margin: 0; color: #8ca2b5; font-size: 12px; }
+.quant-symbol-message.error { color: #ff9db8; }
+.quant-symbol-message button { margin-left: auto; border: 1px solid currentColor; background: transparent; color: inherit; font-size: 12px; cursor: pointer; }
+.quant-symbol-results { position: absolute; z-index: 20; top: calc(100% - 54px); right: 15px; left: 15px; max-height: 230px; overflow-y: auto; border: 1px solid rgba(244, 199, 106, .56); background: #071018; box-shadow: 0 14px 28px rgba(0, 0, 0, .42); }
+.quant-symbol-results > button { width: 100%; min-height: 52px; display: grid; grid-template-columns: 70px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 8px 10px; border: 0; border-bottom: 1px solid var(--quant-line-soft); background: transparent; color: #d7e4ec; text-align: left; cursor: pointer; }
+.quant-symbol-results > button:hover, .quant-symbol-results > button:focus-visible { outline: 0; background: rgba(244, 199, 106, .09); }
+.quant-symbol-results > button b { color: var(--quant-gold); font-size: 13px; }
+.quant-symbol-results > button span { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.quant-symbol-results > button small { color: #7790a3; font-size: 12px; }
+.quant-symbol-results > p { margin: 0; padding: 12px; color: #8ca2b5; font-size: 12px; }
 
 .quant-live-status { margin: 0 0 14px; border: 1px solid var(--quant-line); background: rgba(7, 14, 22, .86); box-shadow: inset 0 1px rgba(255, 255, 255, .025); }
 .quant-live-status > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 38px; padding: 8px 12px; border-bottom: 1px solid var(--quant-line-soft); }

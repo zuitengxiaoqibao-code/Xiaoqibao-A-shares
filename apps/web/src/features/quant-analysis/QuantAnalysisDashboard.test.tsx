@@ -5,6 +5,7 @@ import type { BacktestResult } from "../backtest/types";
 import type { FirstLimitUpBoard, FirstLimitUpCandidate } from "../first-limit-up/types";
 import type { KronosForecastResponse, QuantStrategyDashboard } from "./types";
 import { QuantAnalysisDashboard } from "./QuantAnalysisDashboard";
+import type { InstrumentSearchResponse } from "../stock-cockpit/types";
 
 vi.mock("./QuantChart", () => ({
   QuantChart: ({ ariaLabel }: { ariaLabel: string }) => <div role="img" aria-label={ariaLabel} />,
@@ -120,6 +121,91 @@ function unavailableForecast(symbol: string): KronosForecastResponse {
 }
 
 describe("QuantAnalysisDashboard", () => {
+  it("prefers the previously selected global stock over the first-limit-up priority", async () => {
+    render(<QuantAnalysisDashboard
+      loadBoard={async () => board}
+      loadTicks={async (symbol) => ticks(symbol)}
+      runBacktest={async (symbol) => backtest(symbol)}
+      selectedSymbol="000001"
+    />);
+
+    expect(await screen.findByText("000001", { selector: ".quant-selected-symbol" })).toBeInTheDocument();
+    expect(screen.getByText("样本二", { selector: ".quant-selected-name" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "量化分析股票" })).toHaveValue("000001");
+  });
+
+  it("resolves the name of a restored stock outside the first-limit-up pool", async () => {
+    const search = vi.fn(async (query: string): Promise<InstrumentSearchResponse> => ({
+      query,
+      items: [{
+        symbol: "600519", name: "贵州茅台", exchange: "sh",
+        observed_at: "2026-08-06T10:00:00+08:00", quote_quality: "ready",
+      }],
+      server_time: "2026-08-06T10:00:00+08:00",
+      source_status: "ready",
+    }));
+    render(<QuantAnalysisDashboard
+      loadBoard={async () => board}
+      loadTicks={async (symbol) => ticks(symbol)}
+      runBacktest={async (symbol) => backtest(symbol)}
+      selectedSymbol="600519"
+      searchInstruments={search}
+    />);
+
+    await waitFor(() => expect(search).toHaveBeenCalledWith("600519"));
+    expect(await screen.findByText("贵州茅台", { selector: ".quant-selected-name" })).toBeInTheDocument();
+    expect(screen.getByText("自定义标的")).toBeInTheDocument();
+  });
+
+  it("searches by stock name and switches to any verified A-share", async () => {
+    const search = vi.fn(async (query: string): Promise<InstrumentSearchResponse> => ({
+      query,
+      items: [{
+        symbol: "600519", name: "贵州茅台", exchange: "sh",
+        observed_at: "2026-08-06T10:00:00+08:00", quote_quality: "ready",
+      }],
+      server_time: "2026-08-06T10:00:00+08:00",
+      source_status: "ready",
+    }));
+    const onSelectSymbol = vi.fn();
+    render(<QuantAnalysisDashboard
+      loadBoard={async () => board}
+      loadTicks={async (symbol) => ticks(symbol)}
+      runBacktest={async (symbol) => backtest(symbol)}
+      searchInstruments={search}
+      onSelectSymbol={onSelectSymbol}
+    />);
+
+    fireEvent.change(await screen.findByRole("searchbox", { name: "查询量化分析标的" }), {
+      target: { value: "贵州茅台" },
+    });
+    await waitFor(() => expect(search).toHaveBeenCalledWith("贵州茅台"));
+    fireEvent.click(await screen.findByRole("option", { name: /600519.*贵州茅台/ }));
+
+    expect(onSelectSymbol).toHaveBeenCalledWith("600519");
+    expect(await screen.findByText("600519", { selector: ".quant-selected-symbol" })).toBeInTheDocument();
+    expect(screen.getByText("贵州茅台", { selector: ".quant-selected-name" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "量化因子雷达" }))
+      .toHaveTextContent("未进入首次涨停候选池");
+  });
+
+  it("refuses backtest and Kronos evidence returned for another stock", async () => {
+    render(<QuantAnalysisDashboard
+      loadBoard={async () => board}
+      loadTicks={async (symbol) => ticks(symbol)}
+      runBacktest={async () => ({ ...backtest("000001"), total_return: "9.99" })}
+      loadKronosForecast={async () => unavailableForecast("000001")}
+      selectedSymbol="600001"
+    />);
+
+    const backtestPanel = await screen.findByRole("region", { name: "回测风险收益" });
+    await waitFor(() => expect(backtestPanel).toHaveTextContent("等待历史回测"));
+    expect(backtestPanel).not.toHaveTextContent("999.0%");
+    const kronosPanel = screen.getByRole("region", { name: "Kronos 价格路径预测" });
+    expect(kronosPanel).toHaveTextContent("等待预测状态");
+    expect(kronosPanel).not.toHaveTextContent("Kronos 模型未启用");
+  });
+
   it("uses the shared terminal page shell", async () => {
     render(<QuantAnalysisDashboard
       loadBoard={async () => board}

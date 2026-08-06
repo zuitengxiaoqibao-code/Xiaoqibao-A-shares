@@ -58,6 +58,9 @@ class LocalApiServer:
         while time.monotonic() < deadline:
             if not self._thread.is_alive():
                 raise RuntimeError("local API exited during startup")
+            if not self._server.started:
+                time.sleep(0.05)
+                continue
             try:
                 with urlopen(f"{self.url}/health", timeout=0.5) as response:
                     if response.status == 200:

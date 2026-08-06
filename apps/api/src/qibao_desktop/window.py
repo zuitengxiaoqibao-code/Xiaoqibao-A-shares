@@ -6,6 +6,17 @@ from collections.abc import Callable
 logger = logging.getLogger(__name__)
 
 
+def _close_boot_splash() -> None:
+    try:
+        import pyi_splash
+    except ImportError:
+        return
+    try:
+        pyi_splash.close()
+    except Exception:
+        logger.warning("failed to close boot splash", exc_info=True)
+
+
 def _startup_html() -> str:
     return """<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -31,6 +42,7 @@ def run_window(start_application: Callable[[], str]) -> None:
     )
 
     def load_application() -> None:
+        _close_boot_splash()
         window.evaluate_js(
             "window.qibaoStartup.update(24,'桌面窗口已显示','正在等待本地 API 完成健康检查')"
         )

@@ -6,7 +6,9 @@ import {
 
 import type { BacktestResult } from "../backtest/types";
 import type { FirstLimitUpBoard, FirstLimitUpCandidate } from "../first-limit-up/types";
+import type { AShareInstrument, InstrumentSearchResponse } from "../stock-cockpit/types";
 import { KronosForecastPanel } from "./KronosForecastPanel";
+import { QuantInstrumentSelector } from "./QuantInstrumentSelector";
 import { QuantLiveStatusBar } from "./QuantLiveStatusBar";
 import { QuantChart } from "./QuantChart";
 import { ShortTermStrategyWorkbench } from "./ShortTermStrategyWorkbench";
@@ -27,6 +29,9 @@ type Props = {
   runBacktest: (symbol: string, signal?: AbortSignal) => Promise<BacktestResult>;
   loadKronosForecast?: QuantForecastLoader;
   loadQuantStrategy?: QuantStrategyLoader;
+  selectedSymbol?: string | null;
+  searchInstruments?: (query: string) => Promise<InstrumentSearchResponse>;
+  onSelectSymbol?: (symbol: string) => void;
 };
 
 const gridColor = "rgba(74, 105, 135, .22)";
@@ -124,8 +129,9 @@ function candidatesFrom(board: FirstLimitUpBoard | null): FirstLimitUpCandidate[
   });
 }
 
-export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, runBacktest, loadKronosForecast, loadQuantStrategy }: Props) {
-  const [selected, setSelected] = useState<string | null>(null);
+export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, runBacktest, loadKronosForecast, loadQuantStrategy, selectedSymbol, searchInstruments, onSelectSymbol }: Props) {
+  const [selected, setSelected] = useState<string | null>(selectedSymbol ?? null);
+  const [selectedIdentity, setSelectedIdentity] = useState<AShareInstrument | null>(null);
   const [backtest, setBacktest] = useState<BacktestResult | null>(null);
   const [backtestError, setBacktestError] = useState("");
   const [forecast, setForecast] = useState<KronosForecastResponse | null>(null);
@@ -153,15 +159,37 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
 
   const candidates = useMemo(() => candidatesFrom(board), [board]);
   useEffect(() => {
-    if (!candidates.length) {
-      setSelected(null);
+    if (selectedSymbol) {
+      setSelected(selectedSymbol);
       return;
     }
-    if (!selected || !candidates.some((item) => item.symbol === selected)) {
+    if (!candidates.length) {
+      if (!selected) setSelected(null);
+      return;
+    }
+    if (!selected) {
       setSelected(candidates[0].symbol);
     }
-  }, [candidates, selected]);
+  }, [candidates, selected, selectedSymbol]);
   const candidate = candidates.find((item) => item.symbol === selected) ?? null;
+  const selectedName = candidate?.name ?? (selectedIdentity?.symbol === selected ? selectedIdentity.name : null);
+  const selectSymbol = useCallback((symbol: string, identity?: AShareInstrument) => {
+    setSelected(symbol);
+    setSelectedIdentity(identity ?? null);
+    onSelectSymbol?.(symbol);
+  }, [onSelectSymbol]);
+  useEffect(() => {
+    if (!selected || candidate || selectedIdentity?.symbol === selected || !searchInstruments) return;
+    let active = true;
+    void searchInstruments(selected).then((response) => {
+      if (!active) return;
+      const identity = response.items.find((item) => item.symbol === selected);
+      if (identity) setSelectedIdentity(identity);
+    }).catch(() => {
+      // Keep the verified symbol usable when the identity directory is temporarily unavailable.
+    });
+    return () => { active = false; };
+  }, [candidate, searchInstruments, selected, selectedIdentity?.symbol]);
   const tickLoader = useCallback(
     () => selected ? loadTicks(selected) : Promise.resolve([]),
     [loadTicks, selected],
@@ -226,26 +254,21 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
   }, [boardAsOf, loadKronosForecast, selected]);
 
   const latestTick = ticks.at(-1) ?? null;
+  const selectedBacktest = backtest?.symbol === selected ? backtest : null;
+  const selectedForecast = forecast?.symbol === selected ? forecast : null;
   const tickEmptyMessage = !candidate
-    ? "等待候选标的"
+    ? selected ? tickResource.status === "loading" ? "正在读取盘中 TICK" : tickResource.error || "暂无已归档盘中 TICK" : "等待分析标的"
     : tickResource.status === "loading"
       ? "正在读取盘中 TICK"
       : tickResource.error || "暂无已归档盘中 TICK";
-  const metrics = signalMetrics(candidate, backtest);
+  const metrics = signalMetrics(candidate, selectedBacktest);
   const radar = candidate ? factorRadar(candidate) : null;
-  const equity = equityPoints(backtest);
+  const equity = equityPoints(selectedBacktest);
 
   return <main className="terminal-page quant-analysis-page" aria-label="首次涨停量化分析">
     <header className="quant-hero">
       <div><p className="quant-kicker"><RadioTower size={15} />FIRST LIMIT-UP / QUANT LAB</p><h1>量化分析仪表盘</h1><p>把盘中快照、规则因子与历史回测放进同一张证据面板；这里只做观察，不生成自动交易指令。</p></div>
-      <div className="quant-instrument-control">
-        <label htmlFor="quant-symbol">分析标的</label>
-        <select id="quant-symbol" aria-label="量化分析股票" value={selected ?? ""} onChange={(event) => setSelected(event.target.value || null)} disabled={!candidates.length}>
-          {!candidates.length && <option value="">暂无候选</option>}
-          {candidates.map((item) => <option value={item.symbol} key={item.symbol}>{item.symbol} · {item.name}</option>)}
-        </select>
-        <small>{board ? `规则快照 ${board.as_of}` : "正在读取规则快照"}</small>
-      </div>
+      <QuantInstrumentSelector symbol={selected} name={selectedName} candidates={candidates} candidate={candidate} boardAsOf={board?.as_of} search={searchInstruments} onSelect={selectSymbol} />
     </header>
 
     <QuantLiveStatusBar
@@ -260,13 +283,13 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     />
 
     {boardResource.status === "error" && !board && <div className="quant-page-error"><ShieldAlert size={18} />首次涨停候选数据暂不可用</div>}
-    {board && !candidate && <div className="quant-page-error"><Database size={18} />当前没有可供量化分析的首次涨停候选</div>}
+    {board && !selected && <div className="quant-page-error"><Database size={18} />当前没有可供量化分析的股票</div>}
 
     <div className="quant-quadrants" aria-busy={boardResource.status === "loading"}>
       <section className="quant-panel quant-tick-panel" role="region" aria-label="高频 TICK 分时">
         <header><div><span>Q1 / LIVE TRACE</span><h2>高频 TICK 分时</h2></div><div className={`quant-feed-state ${latestTick?.quality ?? "blocked"}`}><i />{latestTick ? latestTick.quality === "ready" ? "归档在线" : "数据降级" : "等待采样"}</div></header>
         {latestTick && <div className="quant-price-overlay"><strong>{Number(latestTick.price).toFixed(2)}</strong><span className={Number(latestTick.change_percent) >= 0 ? "up" : "down"}>{Number(latestTick.change_percent) >= 0 ? "+" : ""}{Number(latestTick.change_percent).toFixed(2)}%</span><small>{timeLabel(latestTick.observed_at)} · {latestTick.source}</small></div>}
-        {ticks.length > 0 ? <QuantChart option={tickOption(ticks)} ariaLabel={`${candidate?.name ?? "当前股票"}盘中价格和成交量`} /> : <div className="quant-empty"><Activity size={24} /><b>{tickEmptyMessage}</b><p>系统不会用随机走势填充图表；进入盘中监测名单后才会累积采样点。</p></div>}
+        {ticks.length > 0 ? <QuantChart option={tickOption(ticks)} ariaLabel={`${selectedName ?? selected ?? "当前股票"}盘中价格和成交量`} /> : <div className="quant-empty"><Activity size={24} /><b>{tickEmptyMessage}</b><p>系统不会用随机走势填充图表；进入盘中监测名单后才会累积采样点。</p></div>}
       </section>
 
       <section className="quant-panel quant-signal-panel" role="region" aria-label="信号引擎">
@@ -278,15 +301,15 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
 
       <section className="quant-panel quant-radar-panel" role="region" aria-label="量化因子雷达">
         <header><div><span>Q3 / FACTOR ARRAY</span><h2>量化因子雷达</h2></div><small>{radar ? `证据覆盖 ${radar.verifiedCount}/6` : "等待证据"}</small></header>
-        {candidate ? <><QuantChart option={radarOption(candidate)} ariaLabel={`${candidate.name}首次涨停规则因子雷达`} /><p className="quant-panel-note">雷达值由 PE、周/月线距低点、回撤阶段、盘整天数和规则分派生；待验证项目按 0 显示并计入覆盖提示。</p></> : <div className="quant-empty"><b>暂无规则因子</b></div>}
+        {candidate ? <><QuantChart option={radarOption(candidate)} ariaLabel={`${candidate.name}首次涨停规则因子雷达`} /><p className="quant-panel-note">雷达值由 PE、周/月线距低点、回撤阶段、盘整天数和规则分派生；待验证项目按 0 显示并计入覆盖提示。</p></> : <div className="quant-empty"><b>{selected ? "未进入首次涨停候选池" : "暂无规则因子"}</b><p>{selected ? "该区域不使用其他股票的候选分或规则因子。" : "选择股票后再检查候选资格。"}</p></div>}
       </section>
 
       <section className="quant-panel quant-backtest-panel" role="region" aria-label="回测风险收益">
-        <header><div><span>Q4 / RISK RETURN</span><h2>回测风险收益</h2></div>{backtest && <small>{backtest.metrics.closed_trade_count} 笔闭合交易</small>}</header>
-        {backtest && equity.length > 0 ? <><QuantChart option={backtestOption(backtest)} ariaLabel={`${candidate?.name ?? "当前股票"}历史回测权益和回撤`} /><div className="quant-backtest-stats"><span>总收益<b>{(Number(backtest.total_return) * 100).toFixed(1)}%</b></span><span>最大回撤<b>{(Number(backtest.max_drawdown) * 100).toFixed(1)}%</b></span><span>样本状态<b>{backtest.metrics.closed_trade_count ? "可计算" : "不足"}</b></span></div></> : <div className="quant-empty"><AlertTriangle size={24} /><b>{backtestError || "等待历史回测"}</b><p>需要完整日线和闭合交易样本，胜率、赔率与 EV 才会显示。</p></div>}
+        <header><div><span>Q4 / RISK RETURN</span><h2>回测风险收益</h2></div>{selectedBacktest && <small>{selectedBacktest.metrics.closed_trade_count} 笔闭合交易</small>}</header>
+        {selectedBacktest && equity.length > 0 ? <><QuantChart option={backtestOption(selectedBacktest)} ariaLabel={`${selectedName ?? selected ?? "当前股票"}历史回测权益和回撤`} /><div className="quant-backtest-stats"><span>总收益<b>{(Number(selectedBacktest.total_return) * 100).toFixed(1)}%</b></span><span>最大回撤<b>{(Number(selectedBacktest.max_drawdown) * 100).toFixed(1)}%</b></span><span>样本状态<b>{selectedBacktest.metrics.closed_trade_count ? "可计算" : "不足"}</b></span></div></> : <div className="quant-empty"><AlertTriangle size={24} /><b>{backtestError || "等待历史回测"}</b><p>需要完整日线和闭合交易样本，胜率、赔率与 EV 才会显示。</p></div>}
       </section>
 
-      <KronosForecastPanel forecast={forecast} loading={forecastLoading} error={forecastError} />
+      <KronosForecastPanel forecast={selectedForecast} loading={forecastLoading} error={forecastError} />
     </div>
 
     {loadQuantStrategy && <ShortTermStrategyWorkbench

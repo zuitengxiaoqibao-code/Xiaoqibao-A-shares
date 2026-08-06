@@ -164,6 +164,28 @@ describe("CompanyResearchView", () => {
     expect(openAShare).toHaveBeenCalledWith("600519");
   });
 
+  it("publishes a company selected from search to the shared stock state", async () => {
+    const onSelectSymbol = vi.fn();
+    render(<CompanyResearchView
+      load={vi.fn(async () => research)}
+      search={vi.fn(async (query) => ({
+        query,
+        items: [{
+          symbol: "600519", name: "贵州茅台", exchange: "sh" as const,
+          observed_at: "2026-08-06T10:00:00+08:00", quote_quality: "ready" as const,
+        }],
+        server_time: "2026-08-06T10:00:00+08:00",
+        source_status: "ready" as const,
+      }))}
+      onSelectSymbol={onSelectSymbol}
+    />);
+
+    fireEvent.change(screen.getByLabelText("股票代码或名称"), { target: { value: "贵州茅台" } });
+    fireEvent.click(screen.getByRole("button", { name: "查询" }));
+
+    await waitFor(() => expect(onSelectSymbol).toHaveBeenCalledWith("600519"));
+  });
+
   it("uses the shared terminal theme shell", async () => {
     render(<CompanyResearchView
       selectedSymbol="600519"

@@ -242,6 +242,38 @@ describe("Dashboard beginner shell", () => {
     expect(screen.getByRole("region", { name: "回测风险收益" })).toBeInTheDocument();
   });
 
+  it("keeps the selected stock and wires stock-name search into quant analysis", async () => {
+    window.history.replaceState({}, "", "/a-shares?symbol=000001");
+    const searchAShareInstruments = vi.fn(async (query: string) => ({
+      query,
+      items: [{
+        symbol: "600519", name: "贵州茅台", exchange: "sh" as const,
+        observed_at: "2026-08-06T10:00:00+08:00", quote_quality: "ready" as const,
+      }],
+      server_time: "2026-08-06T10:00:00+08:00",
+      source_status: "ready" as const,
+    }));
+    render(<SelectedInstrumentProvider><Dashboard
+      loadSnapshot={() => Promise.resolve(card)}
+      loadFirstLimitUp={() => Promise.resolve(firstLimitUpBoard)}
+      loadQuantTicks={() => Promise.resolve([])}
+      runBacktest={(symbol) => Promise.resolve({ ...quantBacktest, symbol })}
+      searchAShareInstruments={searchAShareInstruments}
+    /></SelectedInstrumentProvider>);
+
+    fireEvent.click(screen.getByRole("button", { name: "专家模式" }));
+    fireEvent.click(screen.getByRole("button", { name: "量化分析" }));
+
+    expect(await screen.findByText("000001", { selector: ".quant-selected-symbol" })).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("searchbox", { name: "查询量化分析标的" }), {
+      target: { value: "贵州茅台" },
+    });
+    await waitFor(() => expect(searchAShareInstruments).toHaveBeenCalledWith("贵州茅台"));
+    fireEvent.click(await screen.findByRole("option", { name: /600519.*贵州茅台/ }));
+
+    expect(new URL(window.location.href).searchParams.get("symbol")).toBe("600519");
+  });
+
   it("wires the short-term strategy loader through the quant-analysis route", async () => {
     const loadQuantStrategy = vi.fn(async () => quantStrategy);
     render(<Dashboard

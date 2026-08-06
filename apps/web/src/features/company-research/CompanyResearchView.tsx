@@ -13,6 +13,7 @@ type Props = {
   load: (symbol: string, asOf?: string, signal?: AbortSignal, onProgress?: LoadProgressCallback) => Promise<CompanyResearchResponse>;
   search: (query: string) => Promise<InstrumentSearchResponse>;
   selectedSymbol?: string | null;
+  onSelectSymbol?: (symbol: string) => void;
   onOpenAShare?: (symbol: string) => void;
 };
 
@@ -182,7 +183,7 @@ function ResearchDashboard({ value, peers, onOpenAShare }: { value: CompanyResea
   </div>;
 }
 
-export function CompanyResearchView({ load, search, selectedSymbol, onOpenAShare }: Props) {
+export function CompanyResearchView({ load, search, selectedSymbol, onSelectSymbol, onOpenAShare }: Props) {
   const [query, setQuery] = useState("");
   const [suggestions, setSuggestions] = useState<InstrumentSearchResponse["items"]>([]);
   const [entries, setEntries] = useState<ResearchEntry[]>([]);
@@ -242,6 +243,10 @@ export function CompanyResearchView({ load, search, selectedSymbol, onOpenAShare
     initialized.current = true;
     void addCompany(selectedSymbol);
   }, [selectedSymbol]);
+
+  useEffect(() => {
+    if (activeSymbol && activeSymbol !== selectedSymbol) onSelectSymbol?.(activeSymbol);
+  }, [activeSymbol, onSelectSymbol, selectedSymbol]);
 
   useEffect(() => () => { controllers.current.forEach((controller) => controller.abort()); }, []);
 
