@@ -166,6 +166,51 @@ describe("DataSettingsView", () => {
     expect(await screen.findByText("设置已保存，重新打开软件后生效")).toBeInTheDocument();
   });
 
+  it("rechecks an enabled unavailable TDX bridge while the settings page is visible", async () => {
+    vi.useFakeTimers();
+    try {
+      const unavailable = {
+        settings_state: "ready" as const,
+        settings: {
+          auto_discovery: true,
+          tdx_install_paths: [],
+          ths_install_paths: [],
+          tdx_rpc_enabled: true,
+          tdx_rpc_url: "http://127.0.0.1:17709/",
+        },
+        scanned_at: "2026-07-30T02:00:00Z",
+        terminals: [],
+        active_tdx_vipdoc: null,
+        tdx_rpc: {
+          status: "unavailable" as const,
+          reachable: false,
+          endpoint: "http://127.0.0.1:17709/",
+          observed_at: "2026-07-30T02:00:00Z",
+          capabilities: [],
+        },
+        restart_required: false,
+      };
+      const detect = vi.fn().mockResolvedValue({
+        ...unavailable,
+        tdx_rpc: { ...unavailable.tdx_rpc, status: "ready", reachable: true },
+      });
+      render(<DataSettingsView
+        loadAI={() => Promise.resolve(emptySettings)}
+        saveAI={vi.fn()}
+        deleteAI={vi.fn()}
+        loadLocalSources={() => Promise.resolve(unavailable)}
+        detectLocalSources={detect}
+        saveLocalSources={vi.fn()}
+      />);
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      expect(detect).not.toHaveBeenCalled();
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+      expect(detect).toHaveBeenCalledWith(unavailable.settings, expect.any(AbortSignal));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("shows masked AI state without rendering the secret", async () => {
     render(<DataSettingsView
       loadAI={() => Promise.resolve({ configured: true, base_url: "http://localhost:11434/v1", model: "local-model", api_key_hint: "****alue" })}

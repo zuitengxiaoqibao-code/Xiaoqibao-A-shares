@@ -823,6 +823,7 @@ body { font-size: 14px; }
 .tdx-rpc-capability-grid article strong { color: var(--text-soft); font-size: 13px; }
 .tdx-rpc-capability-grid article small { margin-top: 3px; overflow: hidden; color: var(--muted); font-size: 12px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
 .tdx-rpc-capability-status > footer { padding: 9px 12px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.tdx-rpc-auto-retry { margin: 0; padding: 0 12px 10px; color: var(--focus-warning); font-size: 12px; line-height: 1.5; }
 .speech-settings-section { position: relative; overflow: hidden; border-color: rgba(67, 213, 192, .34); }
 .speech-settings-section::before { position: absolute; inset: 0 auto 0 0; width: 2px; content: ""; background: var(--status-live); box-shadow: 0 0 16px var(--status-live); }
 .speech-cloud-state { padding: 5px 8px; border: 1px solid rgba(67, 213, 192, .3); color: var(--status-live); font: 600 12px/1 Orbitron, sans-serif; }

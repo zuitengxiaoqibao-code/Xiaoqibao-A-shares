@@ -57,6 +57,9 @@ export function LocalSourceSettingsSection({ load, detect, save }: Props) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const controller = useRef<AbortController | null>(null);
+  const runRef = useRef<((operation: LocalSourceSettingsWriter, saved: boolean) => Promise<void>) | null>(null);
+  const busyRef = useRef(false);
+  busyRef.current = busy;
 
   useEffect(() => {
     controller.current?.abort();
@@ -117,6 +120,21 @@ export function LocalSourceSettingsSection({ load, detect, save }: Props) {
       if (!request.signal.aborted) setBusy(false);
     }
   };
+  runRef.current = run;
+
+  const rpcUnavailable = result?.settings.tdx_rpc_enabled === true && result.tdx_rpc.status === "unavailable";
+  useEffect(() => {
+    if (!rpcUnavailable) return;
+    const recheck = () => {
+      if (document.visibilityState === "visible" && !busyRef.current) void runRef.current?.(detect, false);
+    };
+    const timer = window.setInterval(recheck, 60_000);
+    document.addEventListener("visibilitychange", recheck);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", recheck);
+    };
+  }, [detect, rpcUnavailable]);
 
   return <section className="settings-section local-source-settings-section">
     <div className="settings-heading">
@@ -199,6 +217,7 @@ export function LocalSourceSettingsSection({ load, detect, save }: Props) {
           </article>)}
         </div>
         <footer>最近探测：{new Date(rpcStatus.observed_at).toLocaleString("zh-CN", { hour12: false })} · 仅探测只读接口，不连接券商、不下单</footer>
+        {rpcUnavailable && <p className="tdx-rpc-auto-retry" role="status">桥接暂不可用；页面保持打开时每 60 秒自动重新检测，恢复后会更新能力状态。</p>}
       </section>}
     </details>
 
