@@ -139,6 +139,28 @@ describe("DistinctMarketWorkspace", () => {
     expect(screen.queryByText(/0\.0%/)).not.toBeInTheDocument();
   });
 
+  it("does not turn unavailable market fields into zero-valued workspace metrics", () => {
+    const unavailable = {
+      ...overview,
+      status: "unavailable" as const,
+      market_data: {
+        source: "unavailable",
+        quality: "unavailable" as const,
+        observed_at: null,
+        quote_count: 0,
+        universe_count: 0,
+      },
+      breadth: { rising_count: 0, falling_count: 0, flat_count: 0, valid_count: 0 },
+      limit_ecology: { limit_up_count: 0, limit_down_count: 0, broken_limit_up_count: 0, seal_rate_percent: null },
+    } as unknown as MarketOverviewResponse;
+
+    render(<DistinctMarketWorkspace feature="涨停板" data={unavailable} />);
+
+    const dashboard = screen.getByRole("region", { name: "涨停板关键仪表" });
+    expect(dashboard).toHaveTextContent("未接入");
+    expect(dashboard).not.toHaveTextContent("严格涨停0");
+  });
+
   it("mounts all 50 workspaces without falling back to the retired generic dashboard", () => {
     for (const definition of WORKSPACE_DEFINITIONS) {
       const view = render(<DistinctMarketWorkspace feature={definition.label} data={overview} />);

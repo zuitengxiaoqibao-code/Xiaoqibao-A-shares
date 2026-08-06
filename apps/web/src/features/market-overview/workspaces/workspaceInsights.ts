@@ -89,6 +89,18 @@ const unavailable = (key: MetricKey, label: string, detail: string, icon: Worksp
 const countSymbols = (items: Array<{ symbols: string[] }>) => new Set(items.flatMap((item) => item.symbols)).size;
 const signedMoney = (value: number) => `${value >= 0 ? "+" : ""}${value.toFixed(2)}亿`;
 
+const MARKET_DEPENDENT_METRICS: Partial<Record<MetricKey, string>> = {
+  "gap-up": "高开样本", "gap-down": "低开样本", "gap-recovery": "高开延续",
+  "auction-pass": "竞价规则通过", "limit-up": "严格涨停", "broken-limit": "触板未封",
+  "limit-down": "当前跌停", "seal-rate": "封板率", "risk-stocks": "风险股票",
+  "sector-total": "板块样本", "sector-positive": "上涨板块", "sector-limit": "涨停扩散板块",
+  "top-sector": "综合强度第一", "top-sector-breadth": "领涨板块广度", "top-sector-amount": "板块成交活跃",
+  "sentiment": "市场情绪", "rising": "上涨家数", "falling": "下跌家数", "market-amount": "两市成交",
+  "regime": "市场风格", "risk-score": "市场风险分", "heat-score": "市场热度分",
+  "active-stocks": "行情样本", "top-stock": "涨幅领先", "high-amplitude": "最大振幅",
+  "attention-top": "观察热度第一", "theme-stock-top": "题材叠加最多",
+};
+
 function metric(key: MetricKey, data: MarketOverviewResponse, model: WorkspaceMarketModel): WorkspaceInsight {
   const review = data.review;
   const seatEvidenceReady = hasDragonTigerEvidence(review);
@@ -105,6 +117,10 @@ function metric(key: MetricKey, data: MarketOverviewResponse, model: WorkspaceMa
   const auctionPass = model.stocks.filter((item) => item.gap >= -1 && item.gap <= 4 && item.change >= item.gap - 1 && item.closePosition >= 50 && item.amount > 0);
   const riskStocks = model.stocks.filter((item) => item.state === "broken_limit_up" || item.state === "limit_down" || item.change <= -3);
   const coverage = review && review.universe_count > 0 ? review.history_ready_count / review.universe_count * 100 : 0;
+
+  if ((data.status === "unavailable" || data.market_data.quality === "unavailable") && MARKET_DEPENDENT_METRICS[key]) {
+    return unavailable(key, MARKET_DEPENDENT_METRICS[key], "行情主源不可用，暂不计算该指标", "data");
+  }
 
   switch (key) {
     case "anomaly-total": return ready(key, "已验证异动", String(model.anomalies.length), "本地异动库记录", "neutral", "pulse");
