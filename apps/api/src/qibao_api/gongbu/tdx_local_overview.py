@@ -118,6 +118,22 @@ def tdx_read_only_capability_catalog() -> tuple[dict[str, str], ...]:
     )
 
 
+def _probe_result_is_usable(key: str, result: object) -> bool:
+    if result is None:
+        return False
+    if isinstance(result, dict):
+        if "ErrorId" in result and str(result.get("ErrorId")) != "0":
+            return False
+        if key in {"catalog", "sectors", "ipo"}:
+            return isinstance(result.get("Value"), list) and bool(result.get("Value"))
+        if key == "snapshot":
+            return any(result.get(field) not in (None, "", "--") for field in ("Now", "LastClose", "Price"))
+        return len(result) > 1
+    if isinstance(result, (list, tuple, set)):
+        return bool(result)
+    return True
+
+
 def probe_tdx_capabilities(rpc, *, stock_code: str = "600000.SH") -> dict[str, object]:
     """Probe only read-only TDX methods and return honest capability state.
 
@@ -154,7 +170,9 @@ def probe_tdx_capabilities(rpc, *, stock_code: str = "600000.SH") -> dict[str, o
             for name, value in template.items()
         }
         try:
-            rpc.call(method, params)
+            result = rpc.call(method, params)
+            if not _probe_result_is_usable(key, result):
+                raise ValueError("empty or invalid response")
         except Exception as error:  # probe must continue and report each method independently
             capabilities.append({
                 "key": key,

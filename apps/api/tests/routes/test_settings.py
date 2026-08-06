@@ -257,7 +257,11 @@ def test_enabled_tdx_rpc_reports_partial_capabilities_without_echoing_errors(
 
         def call(self, method: str, params: dict) -> object:
             if method == "get_stock_list":
-                return {"ErrorId": "0", "Value": []}
+                return {"ErrorId": "0", "Value": [{"Code": "600000.SH", "Name": "浦发银行"}]}
+            if method == "get_market_snapshot":
+                return {"ErrorId": "0", "Now": "9.28"}
+            if method == "get_sector_list":
+                return {"ErrorId": "0", "Value": [{"Code": "BK0001", "Name": "测试板块"}]}
             raise OSError(secret)
 
         def close(self) -> None:

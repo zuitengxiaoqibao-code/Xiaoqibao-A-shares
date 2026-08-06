@@ -220,7 +220,7 @@ def test_probe_tdx_capabilities_reports_real_read_only_methods_and_partial_suppo
             if method == "get_market_snapshot":
                 return {"ErrorId": "0", "Now": "9.28"}
             if method == "get_sector_list":
-                return {"ErrorId": "0", "Value": []}
+                return {"ErrorId": "0", "Value": [{"Code": "BK0001", "Name": "测试板块"}]}
             raise OSError("unsupported method")
 
     rpc = FakeRpc()
@@ -250,3 +250,24 @@ def test_probe_tdx_capabilities_marks_everything_unavailable_when_bridge_is_down
     assert result["status"] == "unavailable"
     assert result["reachable"] is False
     assert all(item["status"] == "unavailable" for item in result["capabilities"])
+
+
+def test_probe_tdx_capabilities_does_not_treat_empty_or_error_payloads_as_ready() -> None:
+    class EmptyRpc:
+        def available(self) -> bool:
+            return True
+
+        def call(self, method: str, params: dict) -> object:
+            if method == "get_stock_list":
+                return {"ErrorId": "0", "Value": []}
+            if method == "get_sector_list":
+                return {"ErrorId": "12", "Value": []}
+            return None
+
+    result = probe_tdx_capabilities(EmptyRpc())
+
+    statuses = {item["key"]: item["status"] for item in result["capabilities"]}
+    assert statuses["catalog"] == "unavailable"
+    assert statuses["sectors"] == "unavailable"
+    assert statuses["snapshot"] == "unavailable"
+    assert result["status"] == "unavailable"
