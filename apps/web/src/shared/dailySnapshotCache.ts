@@ -18,11 +18,18 @@ export type DailySnapshotListItem<T> = DailySnapshotHit<T> & {
   symbol: string;
 };
 
-function localDay(value: Date): string {
-  const year = value.getFullYear();
-  const month = String(value.getMonth() + 1).padStart(2, "0");
-  const day = String(value.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+const shanghaiDateFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Shanghai",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+export function shanghaiDay(value: Date): string {
+  const parts = Object.fromEntries(
+    shanghaiDateFormatter.formatToParts(value).map((part) => [part.type, part.value]),
+  );
+  return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
 function scopePrefix(scope: string): string {
@@ -70,7 +77,7 @@ export function readDailySnapshot<T>(
   symbol: string,
   now = new Date(),
 ): DailySnapshotHit<T> | null {
-  const day = localDay(now);
+  const day = shanghaiDay(now);
   try {
     removeOtherDays(scope, day);
     const key = cacheKey(scope, day, symbol);
@@ -98,7 +105,7 @@ export function listDailySnapshots<T>(
   scope: string,
   now = new Date(),
 ): DailySnapshotListItem<T>[] {
-  const day = localDay(now);
+  const day = shanghaiDay(now);
   removeOtherDays(scope, day);
   const entries: DailySnapshotListItem<T>[] = [];
   for (const key of scopeKeys(scope)) {
@@ -131,7 +138,7 @@ export function writeDailySnapshot<T>(
   value: T,
   now = new Date(),
 ): DailySnapshotHit<T> {
-  const day = localDay(now);
+  const day = shanghaiDay(now);
   const cachedAt = now.toISOString();
   const envelope: CacheEnvelope<T> = { symbol, day, cachedAt, value };
   try {

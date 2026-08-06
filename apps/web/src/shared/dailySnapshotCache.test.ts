@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   listDailySnapshots,
   readDailySnapshot,
+  shanghaiDay,
   writeDailySnapshot,
 } from "./dailySnapshotCache";
 
@@ -41,6 +42,23 @@ describe("dailySnapshotCache", () => {
       new Date("2026-08-03T09:15:00+08:00"),
     )).toBeNull();
     expect(localStorage.length).toBe(0);
+  });
+
+  it("uses the Shanghai trading date at the midnight boundary", () => {
+    expect(shanghaiDay(new Date("2026-08-03T15:59:59.000Z"))).toBe("2026-08-03");
+    expect(shanghaiDay(new Date("2026-08-03T16:00:00.000Z"))).toBe("2026-08-04");
+    writeDailySnapshot(
+      "stock-cockpit",
+      "600519",
+      { symbol: "600519", value: 71 },
+      new Date("2026-08-03T15:59:59.000Z"),
+    );
+
+    expect(readDailySnapshot(
+      "stock-cockpit",
+      "600519",
+      new Date("2026-08-03T16:00:00.000Z"),
+    )).toBeNull();
   });
 
   it("removes malformed or mismatched stock snapshots", () => {

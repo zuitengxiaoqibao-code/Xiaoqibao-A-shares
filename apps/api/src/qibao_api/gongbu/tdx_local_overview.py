@@ -44,6 +44,7 @@ class TdxRealtimeQuote:
     volume: Decimal
     amount_wan: Decimal
     observed_at: datetime | None = None
+    market_cap_yi: Decimal | None = None
 
     @property
     def change_percent(self) -> Decimal:
@@ -221,6 +222,12 @@ def parse_tdx_snapshot(
     opening = _decimal(payload.get("Open"))
     volume = _decimal(payload.get("Volume"))
     amount_wan = _decimal(payload.get("Amount"))
+    # Only accept an explicitly hundred-million-yuan field. TDX builds differ in
+    # the units of generic MarketValue/MarketCap fields, so those are ignored
+    # instead of being silently converted into a false market-cap value.
+    market_cap_yi = _decimal(payload.get("MarketCapYi") or payload.get("market_cap_yi"))
+    if market_cap_yi is not None and market_cap_yi < 0:
+        market_cap_yi = None
     if (
         previous_close is None
         or price is None
@@ -242,6 +249,7 @@ def parse_tdx_snapshot(
         open=opening if opening is not None and opening > 0 else previous_close,
         volume=volume if volume is not None and volume >= 0 else Decimal(),
         amount_wan=amount_wan if amount_wan is not None and amount_wan >= 0 else Decimal(),
+        market_cap_yi=market_cap_yi,
     )
 
 
@@ -645,7 +653,7 @@ class LocalTdxOverviewSource:
                     amount_yi=(item.amount_wan / Decimal("10000")).quantize(
                         TWO_PLACES, rounding=ROUND_HALF_UP
                     ),
-                    market_cap_yi=None,
+                    market_cap_yi=item.market_cap_yi,
                     first_limit_time=None,
                     position=(
                         "涨停" if item.price >= _limit_price(item, 1)

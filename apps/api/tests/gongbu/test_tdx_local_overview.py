@@ -58,6 +58,41 @@ def test_parse_tdx_snapshot_uses_real_amount_and_prices() -> None:
     assert result.amount_wan == Decimal("60919.41")
 
 
+def test_parse_tdx_snapshot_accepts_only_explicit_market_cap_yi() -> None:
+    result = parse_tdx_snapshot(
+        "600000.SH",
+        "浦发银行",
+        {
+            "ErrorId": "0",
+            "LastClose": "9.19",
+            "Now": "9.33",
+            "Max": "9.34",
+            "Min": "9.17",
+            "Open": "9.19",
+            "Volume": "655951",
+            "Amount": "60919.41",
+            "MarketCapYi": "2734.50",
+            "MarketValue": "273450000000",
+        },
+    )
+
+    assert result is not None
+    assert result.market_cap_yi == Decimal("2734.50")
+
+    without_explicit_unit = parse_tdx_snapshot(
+        "600000.SH",
+        "浦发银行",
+        {
+            "ErrorId": "0", "LastClose": "9.19", "Now": "9.33",
+            "Max": "9.34", "Min": "9.17", "Open": "9.19",
+            "Volume": "655951", "Amount": "60919.41",
+            "MarketValue": "273450000000",
+        },
+    )
+    assert without_explicit_unit is not None
+    assert without_explicit_unit.market_cap_yi is None
+
+
 def test_market_statistics_cover_breadth_turnover_and_limit_ecology() -> None:
     quotes = (
         quote("600001", "主板涨停", previous_close="10", price="11", high="11", amount_wan="10000"),
