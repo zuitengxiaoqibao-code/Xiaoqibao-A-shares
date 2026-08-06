@@ -332,6 +332,22 @@ describe("QuantAnalysisDashboard", () => {
     expect(document.body).not.toHaveTextContent(/NaN|Infinity/);
   });
 
+  it("renders unavailable values instead of NaN when a live quote is malformed", async () => {
+    const malformedBoard = {
+      ...board,
+      pool: [{ ...candidate("600001", "样本一"), pullback_pct: "not-a-number" }],
+    } as FirstLimitUpBoard;
+    render(<QuantAnalysisDashboard
+      loadBoard={async () => malformedBoard}
+      loadTicks={async (symbol) => [{ ...ticks(symbol)[0], price: "bad", change_percent: "bad" }]}
+      runBacktest={async (symbol) => backtest(symbol, 0)}
+    />);
+
+    expect(await screen.findByText("数据不可用", { selector: ".quant-price-overlay span" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "信号引擎" })).toHaveTextContent("72.5");
+    expect(document.body).not.toHaveTextContent(/NaN|Infinity/);
+  });
+
   it("isolates tick and backtest failures so rule evidence remains available", async () => {
     render(<QuantAnalysisDashboard
       loadBoard={async () => board}

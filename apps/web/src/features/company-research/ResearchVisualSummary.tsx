@@ -33,27 +33,34 @@ function score(value: ResearchDimension): number | null {
   return parsed === null ? null : Math.max(0, Math.min(100, parsed));
 }
 
-function safeRatio(value: number | null, total: number | null): number {
-  if (value === null || total === null || total <= 0) return 0;
+function safeRatio(value: number | null, total: number | null): number | null {
+  if (value === null || total === null || total <= 0) return null;
   return Math.max(0, Math.min(100, value / total * 100));
 }
 
 function Donut({ label, value, total, tone }: { label: string; value: number | null; total: number | null; tone: "liability" | "equity" }) {
   const ratio = safeRatio(value, total);
-  return <div className={`research-donut research-capital-donut ${tone}`} style={{ "--donut-value": `${ratio * 3.6}deg` } as CSSProperties}>
-    <div><strong>{ratio.toFixed(1)}%</strong><span>{label}</span></div>
+  return <div className={`research-donut research-capital-donut ${tone} ${ratio === null ? "unavailable" : ""}`} style={{ "--donut-value": `${(ratio ?? 0) * 3.6}deg` } as CSSProperties}>
+    <div><strong>{ratio === null ? "--" : `${ratio.toFixed(1)}%`}</strong><span>{label}</span></div>
   </div>;
 }
 
 function CompositionMap({ assets, liabilities, equity }: { assets: number; liabilities: number | null; equity: number | null }) {
-  const capital = (liabilities ?? 0) + (equity ?? 0);
-  const liabilityRatio = capital > 0 ? safeRatio(liabilities, capital) : 0;
-  const equityRatio = capital > 0 ? safeRatio(equity, capital) : 0;
+  const capital = liabilities !== null && equity !== null ? liabilities + equity : null;
+  const balanced = capital !== null && assets > 0 && Math.abs(capital - assets) / assets <= 0.05;
+  const liabilityRatio = safeRatio(liabilities, capital);
+  const equityRatio = safeRatio(equity, capital);
+  if (capital === null || liabilityRatio === null || equityRatio === null || !balanced) {
+    return <div className="research-composition-map research-composition-map--unavailable" aria-label="资产负债构成图">
+      <div><span>资产负债构成</span><strong>构成待核验</strong></div>
+      <small>{capital === null ? "负债与权益字段不完整" : `资产与负债权益不平衡（资产 ${amount(String(assets))} · 资本 ${amount(String(capital))}）`}</small>
+    </div>;
+  }
   return <div className="research-composition-map" aria-label="资产负债构成图">
     <div className="research-composition-assets"><span>资产总额</span><strong>{amount(String(assets))}</strong></div>
     <div className="research-composition-capital">
-      {liabilities !== null && <div className="liability" style={{ width: `${liabilityRatio}%` }}><span>负债合计</span><strong>{amount(String(liabilities))}</strong><small>{liabilityRatio.toFixed(1)}%</small></div>}
-      {equity !== null && <div className="equity" style={{ width: `${equityRatio}%` }}><span>所有者权益</span><strong>{amount(String(equity))}</strong><small>{equityRatio.toFixed(1)}%</small></div>}
+      <div className="liability" style={{ width: `${liabilityRatio}%` }}><span>负债合计</span><strong>{amount(String(liabilities))}</strong><small>{liabilityRatio.toFixed(1)}%</small></div>
+      <div className="equity" style={{ width: `${equityRatio}%` }}><span>所有者权益</span><strong>{amount(String(equity))}</strong><small>{equityRatio.toFixed(1)}%</small></div>
     </div>
   </div>;
 }
@@ -67,28 +74,39 @@ function TrendBars({ periods }: { periods: FinancialPeriod[] }) {
   const minRevenue = Math.min(...revenueValues, 0);
   const maxRevenue = Math.max(...revenueValues, 0);
   const revenueRange = Math.max(maxRevenue - minRevenue, 1);
-  const points = rows.map((row, index) => {
+  const revenuePoints = rows.map((row, index) => {
     const revenue = numeric(row.revenue);
+    if (revenue === null) return null;
     const x = rows.length === 1 ? 50 : index / (rows.length - 1) * 100;
-    const y = revenue === null ? 90 : 88 - (revenue - minRevenue) / revenueRange * 72;
+    const y = 88 - (revenue - minRevenue) / revenueRange * 72;
     return `${x.toFixed(2)},${Math.max(10, Math.min(90, y)).toFixed(2)}`;
-  }).join(" ");
+  });
+  const lineSegments: string[][] = [];
+  let gap = true;
+  revenuePoints.forEach((point) => {
+    if (point === null) { gap = true; return; }
+    const current = lineSegments.at(-1);
+    if (current && !gap) current.push(point);
+    else lineSegments.push([point]);
+    gap = false;
+  });
   return <div className="research-trend-combo" aria-label="多年财务趋势图">
-    <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><polyline points={points} /></svg>
+    <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">{lineSegments.filter((segment) => segment.length > 1).map((segment, index) => <polyline points={segment.join(" ")} key={index} />)}</svg>
     {rows.map((row) => {
       const assets = numeric(row.total_assets);
       const liabilities = numeric(row.total_liabilities);
       const equity = numeric(row.total_equity);
-      const capital = Math.max((liabilities ?? 0) + (equity ?? 0), assets ?? 0);
-      const columnHeight = capital > 0 ? Math.max(6, capital / maxCapital * 100) : 0;
-      const liabilityRatio = capital > 0 ? safeRatio(liabilities, capital) : 0;
-      const equityRatio = capital > 0 ? safeRatio(equity, capital) : 0;
+      const capital = liabilities !== null && equity !== null ? liabilities + equity : null;
+      const columnHeight = assets !== null && assets > 0 ? Math.max(6, assets / maxCapital * 100) : 0;
+      const liabilityRatio = safeRatio(liabilities, capital);
+      const equityRatio = safeRatio(equity, capital);
+      const partial = assets === null || liabilities === null || equity === null || liabilityRatio === null || equityRatio === null;
       return <div className="research-trend-column" key={row.period}>
-        <div className="research-trend-stack" title={`资产 ${amount(row.total_assets)} · 负债 ${amount(row.total_liabilities)} · 权益 ${amount(row.total_equity)} · 营收 ${amount(row.revenue)}`} style={{ "--capital-height": `${columnHeight}%` } as CSSProperties}>
-          <span className="research-trend-segment liability" style={{ height: `${liabilityRatio}%` }} />
-          <span className="research-trend-segment equity" style={{ height: `${equityRatio}%` }} />
+        <div className={`research-trend-stack ${partial ? "is-partial" : ""}`} title={`资产 ${amount(row.total_assets)} · 负债 ${amount(row.total_liabilities)} · 权益 ${amount(row.total_equity)} · 营收 ${amount(row.revenue)}`} style={{ "--capital-height": `${columnHeight}%` } as CSSProperties}>
+          {liabilityRatio !== null && <span className="research-trend-segment liability" style={{ height: `${liabilityRatio}%` }} />}
+          {equityRatio !== null && <span className="research-trend-segment equity" style={{ height: `${equityRatio}%` }} />}
         </div>
-        <b>{row.period.slice(0, 4)}</b>
+        <b title={partial ? "该报告期部分字段缺失" : undefined}>{row.period.slice(0, 4)}{partial ? "*" : ""}</b>
       </div>;
     })}
   </div>;
@@ -99,7 +117,8 @@ function ResearchVisualSummary({ value }: Props) {
   const assets = numeric(latest?.total_assets);
   const liabilities = numeric(latest?.total_liabilities);
   const equity = numeric(latest?.total_equity);
-  const capital = liabilities !== null || equity !== null ? (liabilities ?? 0) + (equity ?? 0) : assets;
+  const capital = liabilities !== null && equity !== null ? liabilities + equity : null;
+  const capitalReady = capital !== null && capital > 0;
   const dimensions = value.dimensions.slice(0, 9);
   const growth = numeric(value.financial_history.revenue_cagr_3y);
   const profitGrowth = numeric(value.financial_history.net_profit_cagr_3y);
@@ -112,7 +131,7 @@ function ResearchVisualSummary({ value }: Props) {
         <header><h3>资本结构</h3><small>{latest?.period ?? "报告期不可用"}</small></header>
         {latest && assets !== null ? <div className="research-visual-split">
           <div className="research-capital-donuts"><Donut label="负债率" value={liabilities} total={capital} tone="liability" /><Donut label="权益率" value={equity} total={capital} tone="equity" /></div>
-          <div className="research-visual-table"><div><span>资产总额</span><b>{amount(latest.total_assets)}</b></div><div><span>负债合计</span><b>{amount(latest.total_liabilities)}</b></div><div><span>所有者权益</span><b>{amount(latest.total_equity)}</b></div><div><span>资产负债率</span><b>{percent(numeric(latest.debt_ratio))}</b></div></div>
+          <div className="research-visual-table"><div><span>资产总额</span><b>{amount(latest.total_assets)}</b></div><div><span>负债合计</span><b>{amount(latest.total_liabilities)}</b></div><div><span>所有者权益</span><b>{amount(latest.total_equity)}</b></div><div><span>资产负债率</span><b>{percent(numeric(latest.debt_ratio))}</b></div>{!capitalReady && <div className="research-visual-table-warning"><span>结构状态</span><b>资本结构数据不足</b></div>}</div>
         </div> : <div className="research-visual-empty">资产负债表数据暂不可用</div>}
       </article>
 

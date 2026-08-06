@@ -151,17 +151,21 @@
 .research-donut.equity { --donut-color: var(--status-warning); }
 .research-capital-donuts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; align-items: center; }
 .research-capital-donuts .research-donut::before { width: 80px; height: 80px; }
+.research-donut.unavailable { --donut-color: var(--text-muted); background: conic-gradient(var(--donut-color) 0 360deg); }
 .research-visual-table { display: grid; border-top: 1px solid var(--border-subtle); border-left: 1px solid var(--border-subtle); }
 .research-visual-table > div { min-height: 41px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 7px 10px; border-right: 1px solid var(--border-subtle); border-bottom: 1px solid var(--border-subtle); }
 .research-visual-table span { color: var(--text-muted); font-size: 12px; }
 .research-visual-table b { color: var(--text-primary); font: 700 13px var(--font-data); }
 .research-visual-table .positive, .research-valuation-board .positive { color: var(--market-up); }
 .research-visual-table .negative, .research-valuation-board .negative { color: var(--market-down); }
+.research-visual-table-warning { background: color-mix(in srgb, var(--status-warning) 10%, transparent); }
+.research-visual-table-warning b { color: var(--status-warning); font-size: 12px; }
 .research-trend-combo { position: relative; height: 235px; display: flex; align-items: stretch; justify-content: space-around; gap: 8px; padding: 8px 16px 0; border-left: 1px solid var(--border-subtle); border-bottom: 1px solid var(--border-subtle); background: repeating-linear-gradient(to top, transparent 0 45px, rgba(115, 137, 156, .16) 46px); }
 .research-trend-combo > svg { position: absolute; z-index: 2; inset: 8px 16px 25px; width: calc(100% - 32px); height: calc(100% - 33px); overflow: visible; pointer-events: none; }
 .research-trend-combo > svg polyline { fill: none; stroke: var(--market-up); stroke-width: 1.8; vector-effect: non-scaling-stroke; filter: drop-shadow(0 0 3px color-mix(in srgb, var(--market-up) 35%, transparent)); }
 .research-trend-column { min-width: 35px; flex: 1; display: grid; grid-template-rows: minmax(0, 1fr) 24px; align-items: end; gap: 5px; }
 .research-trend-stack { width: 24px; height: var(--capital-height); min-height: 8px; display: flex; flex-direction: column; align-self: flex-end; justify-content: flex-end; gap: 1px; }
+.research-trend-stack.is-partial { opacity: .62; outline: 1px dashed var(--status-warning); outline-offset: 2px; }
 .research-trend-segment { width: 100%; min-height: 0; border: 1px solid color-mix(in srgb, currentColor 55%, transparent); transition: filter 140ms ease; }
 .research-trend-segment:hover { filter: brightness(1.35); }
 .research-trend-segment.liability { color: var(--focus-info); background: var(--focus-info); }

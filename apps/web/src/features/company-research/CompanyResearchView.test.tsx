@@ -91,6 +91,30 @@ describe("CompanyResearchView", () => {
     expect(overview.querySelector(".research-trend-combo")).toBeTruthy();
   });
 
+  it("does not turn missing or imbalanced capital fields into fake percentages", async () => {
+    const incomplete = {
+      ...research,
+      financial_history: {
+        ...research.financial_history,
+        latest_period: {
+          ...research.financial_history.annual_periods[0],
+          total_liabilities: null,
+          total_equity: "155000000000",
+        },
+      },
+    } as CompanyResearchResponse;
+    render(<CompanyResearchView
+      selectedSymbol="600519"
+      load={vi.fn(async () => incomplete)}
+      search={vi.fn(async () => ({ query: "", items: [], server_time: "", source_status: "ready" as const }))}
+    />);
+
+    const overview = await screen.findByRole("region", { name: "财务可视化总览" });
+    expect(overview).toHaveTextContent("资本结构数据不足");
+    expect(overview).toHaveTextContent("构成待核验");
+    expect(overview).not.toHaveTextContent("0.0%负债率");
+  });
+
   it("makes unverifiable dimensions explicit and avoids directive language", async () => {
     const { container } = render(<CompanyResearchView
       selectedSymbol="600519"

@@ -56,6 +56,12 @@ function timeLabel(value: string): string {
   }).format(new Date(value));
 }
 
+function finiteNumber(value: string | number | null | undefined): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function tickOption(ticks: IntradayTick[]): EChartsOption {
   return {
     ...panelOption(),
@@ -257,6 +263,10 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
   }, [boardAsOf, loadKronosForecast, selected]);
 
   const latestTick = ticks.at(-1) ?? null;
+  const latestPrice = finiteNumber(latestTick?.price);
+  const latestChangePercent = finiteNumber(latestTick?.change_percent);
+  const candidatePe = finiteNumber(candidate?.pe_ttm);
+  const candidatePullback = finiteNumber(candidate?.pullback_pct);
   const selectedBacktest = backtest?.symbol === selected ? backtest : null;
   const selectedForecast = forecast?.symbol === selected ? forecast : null;
   const tickEmptyMessage = !candidate
@@ -290,8 +300,8 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
       <div className="tdx-quote-strip">
         <div><span>当前标的</span><strong>{selected}</strong><small>{selectedName ?? "名称待验证"}</small></div>
         <div><span>首次涨停日期</span><strong>{candidate?.limit_up_date ?? "--"}</strong><small>{candidate ? "候选规则已关联" : "未进入候选池"}</small></div>
-        <div><span>PE(TTM)</span><strong className={candidate?.pe_ttm && Number(candidate.pe_ttm) > 0 ? "up" : "muted"}>{candidate?.pe_ttm ?? "--"}</strong><small>仅展示已验证估值</small></div>
-        <div><span>当前回撤</span><strong className={candidate && Number(candidate.pullback_pct) > 0 ? "down" : "muted"}>{candidate ? `${(Number(candidate.pullback_pct) * 100).toFixed(1)}%` : "--"}</strong><small>相对首次涨停收盘</small></div>
+        <div><span>PE(TTM)</span><strong className={candidatePe !== null && candidatePe > 0 ? "up" : "muted"}>{candidatePe === null ? "--" : candidatePe.toFixed(2)}</strong><small>仅展示已验证估值</small></div>
+        <div><span>当前回撤</span><strong className={candidatePullback !== null && candidatePullback > 0 ? "down" : "muted"}>{candidatePullback === null ? "--" : `${(candidatePullback * 100).toFixed(1)}%`}</strong><small>相对首次涨停收盘</small></div>
         <div><span>规则状态</span><strong className={candidate?.selection_status === "qualified" ? "up" : "muted"}>{candidate?.selection_status === "qualified" ? "已通过" : candidate ? "待核验" : "无候选规则"}</strong><small>{candidate?.stage ?? "custom"}</small></div>
       </div>
       <StockEventKline symbol={selected} asOf={boardAsOf} load={loadTimeline} />
@@ -303,7 +313,7 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     <div className="quant-quadrants" aria-busy={boardResource.status === "loading"}>
       <section className="quant-panel quant-tick-panel" role="region" aria-label="高频 TICK 分时">
         <header><div><span>Q1 / LIVE TRACE</span><h2>高频 TICK 分时</h2></div><div className={`quant-feed-state ${latestTick?.quality ?? "blocked"}`}><i />{latestTick ? latestTick.quality === "ready" ? "归档在线" : "数据降级" : "等待采样"}</div></header>
-        {latestTick && <div className="quant-price-overlay"><strong>{Number(latestTick.price).toFixed(2)}</strong><span className={Number(latestTick.change_percent) >= 0 ? "up" : "down"}>{Number(latestTick.change_percent) >= 0 ? "+" : ""}{Number(latestTick.change_percent).toFixed(2)}%</span><small>{timeLabel(latestTick.observed_at)} · {latestTick.source}</small></div>}
+        {latestTick && <div className="quant-price-overlay"><strong>{latestPrice === null ? "--" : latestPrice.toFixed(2)}</strong><span className={latestChangePercent === null ? "unavailable" : latestChangePercent >= 0 ? "up" : "down"}>{latestChangePercent === null ? "数据不可用" : `${latestChangePercent >= 0 ? "+" : ""}${latestChangePercent.toFixed(2)}%`}</span><small>{timeLabel(latestTick.observed_at)} · {latestTick.source}</small></div>}
         {ticks.length > 0 ? <QuantChart option={tickOption(ticks)} ariaLabel={`${selectedName ?? selected ?? "当前股票"}盘中价格和成交量`} /> : <div className="quant-empty"><Activity size={24} /><b>{tickEmptyMessage}</b><p>系统不会用随机走势填充图表；进入盘中监测名单后才会累积采样点。</p></div>}
       </section>
 

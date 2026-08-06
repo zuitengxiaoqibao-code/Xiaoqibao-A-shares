@@ -1150,8 +1150,8 @@ body { font-size: 13px; }
 .tdx-quote-strip > div:last-child { border-right: 0; }
 .tdx-quote-strip span, .tdx-quote-strip small { color: #718596; font-size: 12px; }
 .tdx-quote-strip strong { overflow: hidden; color: #e6eef3; font: 700 18px var(--font-data); text-overflow: ellipsis; white-space: nowrap; }
-.tdx-quote-strip strong.up { color: var(--quant-magenta); }
-.tdx-quote-strip strong.down { color: var(--quant-green); }
+.tdx-quote-strip strong.up { color: var(--market-up); }
+.tdx-quote-strip strong.down { color: var(--market-down); }
 .tdx-quote-strip strong.muted { color: #8297a9; }
 .tdx-research-overview .stock-event-kline { margin: 0; border: 0; border-left: 0; box-shadow: none; }
 .tdx-research-overview .stock-event-kline-header, .tdx-research-overview .stock-event-kline-footer { background: #071018; }
@@ -1269,8 +1269,9 @@ body { font-size: 13px; }
 }
 .quant-price-overlay strong { color: #dff7ff; font: 600 21px "JetBrains Mono", monospace; }
 .quant-price-overlay span { font: 600 12px "JetBrains Mono", monospace; }
-.quant-price-overlay span.up { color: var(--quant-magenta); }
-.quant-price-overlay span.down { color: var(--quant-green); }
+.quant-price-overlay span.up { color: var(--market-up); }
+.quant-price-overlay span.down { color: var(--market-down); }
+.quant-price-overlay span.unavailable { color: var(--status-warning); }
 .quant-price-overlay small { grid-column: 1 / -1; color: #61798c; font-size: 12px; }
 
 .quant-signal-list {
