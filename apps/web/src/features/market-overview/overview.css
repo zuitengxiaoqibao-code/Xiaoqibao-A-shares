@@ -469,3 +469,9 @@
   .homepage-startup-progress > i { animation: none; }
   .homepage-startup-progress > span { transition: none; }
 }
+
+/* Keep the overview dense without making ordinary labels hard to read. */
+.market-overview-page,
+.distinct-workspace { font-size: 14px; }
+.market-overview-page small,
+.distinct-workspace small { font-size: 13px; }

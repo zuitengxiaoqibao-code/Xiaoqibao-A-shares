@@ -8,9 +8,9 @@
   --font-display: "Orbitron", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
   --font-body: "JetBrains Mono", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
   --font-data: "JetBrains Mono", Consolas, "Microsoft YaHei UI", "Microsoft YaHei", monospace;
-  --font-xs: 12px;
-  --font-sm: 12px;
-  --font-md: 13px;
+  --font-xs: 13px;
+  --font-sm: 13px;
+  --font-md: 14px;
   font-family: var(--font-body);
   font-synthesis: none;
   letter-spacing: 0;
@@ -284,7 +284,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--signal); ou
 @media (max-width: 760px) { .today-decision-view { padding: 14px 12px 28px; }.decision-scope { align-items: stretch; flex-direction: column; margin-bottom: 16px; }.decision-scope-switch { width: 100%; grid-auto-columns: minmax(0, 1fr); }.decision-scope-switch button { min-height: 44px; padding-inline: 8px; }.decision-workbench { padding: 16px 12px 28px; }.today-decision-view > .decision-workbench { padding: 0; }.decision-header { align-items: stretch; flex-direction: column; }.decision-date-controls { display: grid; grid-template-columns: 1fr auto; }.decision-header input, .decision-date-controls button { width: 100%; min-height: 44px; }.session-status { align-items: flex-start; flex-direction: column; padding: 10px; }.session-status > div { flex-wrap: wrap; }.phase-tabs button { min-height: 72px; padding-inline: 8px; }.phase-tabs button > span { font-size: 12px; }.decision-columns { grid-template-columns: 1fr; }.decision-rail { position: static; }.phase-context > header { align-items: flex-start; flex-direction: column; }.phase-context-metrics { justify-content: flex-start; }.phase-event-meta { align-items: flex-start; flex-direction: column; }.market-overview-grid, .market-overview-pending { grid-template-columns: 1fr; }.market-overview-pending small { grid-column: auto; }.decision-advice > header h3 { overflow-wrap: anywhere; }.decision-advice > footer { align-items: flex-start; flex-direction: column; } }
 
 /* Keep dense operational views readable on ordinary laptop and mobile displays. */
-body { font-size: 13px; }
+body { font-size: 14px; }
 .brand-block span,
 .domain-switcher small,
 .nav-label,
@@ -295,6 +295,29 @@ body { font-size: 13px; }
 .domain-switcher b,
 .nav-item b,
 .bond-entry b { font-size: 13px; }
+
+/* Do not let dense labels collapse into the old 12px default. */
+.terminal-page,
+.distinct-workspace,
+.market-overview-page,
+.today-decision-view,
+.stock-cockpit,
+.company-research-page,
+.quant-analysis-page { font-size: 14px; }
+.terminal-page small,
+.distinct-workspace small,
+.market-overview-page small,
+.today-decision-view small,
+.stock-cockpit small,
+.company-research-page small,
+.quant-analysis-page small { font-size: 13px !important; }
+.terminal-page p,
+.distinct-workspace p,
+.market-overview-page p,
+.today-decision-view p,
+.stock-cockpit p,
+.company-research-page p,
+.quant-analysis-page p { line-height: 1.6; }
 
 .a-share-header > div > p:last-child,
 .research-freeze span,

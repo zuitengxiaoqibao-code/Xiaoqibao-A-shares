@@ -19,4 +19,15 @@ describe("site typography", () => {
     expect(css).toContain("--status-warning: #e5b84b");
     expect(css).toContain("--status-live: #39c8dd");
   });
+
+  it("raises the readable body and dense-label baselines", () => {
+    const tokens = readFileSync("src/app/tokens.css", "utf8");
+    const theme = readFileSync("src/app/theme.css", "utf8");
+
+    expect(tokens).toContain("--font-xs: 13px");
+    expect(tokens).toContain("--font-sm: 13px");
+    expect(tokens).toContain("--font-md: 14px");
+    expect(theme).toContain("body { font-size: 14px; }");
+    expect(theme).toContain(".terminal-page small");
+  });
 });

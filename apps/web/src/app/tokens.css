@@ -15,6 +15,9 @@
   --status-unavailable: #7d8993;
   --font-display: "Orbitron", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
   --font-body: "JetBrains Mono", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  --font-xs: 13px;
+  --font-sm: 13px;
+  --font-md: 14px;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
