@@ -155,7 +155,7 @@ try {
         $QuantStrategyStatus = $QuantStrategy.status
     }
     $Professional = Invoke-RestMethod `
-        -Uri "http://127.0.0.1:$Port/api/v1/tdx/local/professional?method=get_financial_data&table_list=Fn&stock_codes=600000" `
+        -Uri "http://127.0.0.1:$Port/api/v1/tdx/local/professional?method=get_financial_data&table_list=Fn193&stock_codes=600000" `
         -TimeoutSec 30
     if ($Professional.status -notin @("ready", "partial", "unavailable")) {
         throw "Portable TDX professional probe did not return an honest data status"

@@ -82,6 +82,8 @@ def test_portable_smoke_supports_a_release_data_mode() -> None:
     assert "XiaoQiBao-Portable" in script
     assert "Release data mode" in script
     assert "/api/v1/tdx/local/professional" in script
+    assert "table_list=Fn193" in script
+    assert "table_list=Fn&" not in script
 
 
 def test_portable_spec_does_not_collect_cross_platform_or_unused_tool_submodules() -> None:

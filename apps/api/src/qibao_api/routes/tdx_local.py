@@ -23,6 +23,24 @@ from qibao_api.gongbu.tdx_local_professional import TdxProfessionalDataUnavailab
 router = APIRouter(prefix="/api/v1/tdx/local", tags=["通达信只读数据"])
 
 
+def _professional_unavailable_detail(error: Exception) -> str:
+    """Return a safe, actionable reason without exposing vendor internals."""
+    message = str(error)
+    if message == "TDX Python professional call unavailable":
+        return "官方 Python 专业接口初始化或调用失败；请确认通达信客户端已打开并完成专业插件初始化"
+    if message == "TDX Python professional client unavailable":
+        return "已发现官方 Python 模块，但专业客户端未初始化；请先打开通达信并等待插件就绪"
+    if message == "TDX Python professional module unavailable":
+        return "未能加载官方 Python 专业模块或配套 DLL；请在数据设置中检查通达信安装目录"
+    if message == "TDX local bridge unavailable":
+        return "本地通达信只读桥不可达；请确认桥接服务已启动并监听配置端口"
+    if message == "TDX professional response is empty":
+        return "通达信专业接口返回空结果；当前没有可验证的专业字段"
+    if message == "TDX professional response has no verified table fields":
+        return "通达信返回结果缺少可验证的 Fn/GP/BK/SC/GO 字段"
+    return "本地通达信专业数据不可用；未生成替代或模拟数据"
+
+
 @router.get("/ipo-calendar", response_model=TdxIpoCalendarResponse)
 def get_ipo_calendar(
     source: Annotated[object, Depends(get_tdx_ipo_source)],
@@ -89,7 +107,7 @@ def get_professional_data(
     except (TdxProfessionalDataUnavailable, OSError, ValueError) as error:
         return TdxProfessionalResponse(
             status="unavailable",
-            detail=f"本地通达信专业数据不可用（{type(error).__name__}）",
+            detail=_professional_unavailable_detail(error),
         )
     views = tuple(
         TdxProfessionalRowView.model_validate(item, from_attributes=True)

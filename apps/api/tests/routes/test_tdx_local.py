@@ -126,6 +126,25 @@ def test_tdx_local_professional_route_hides_internal_failure_details() -> None:
     assert "secret" not in response.text
 
 
+def test_tdx_local_professional_route_explains_known_python_initialization_failure() -> None:
+    class PythonUnavailableSource:
+        def fetch(self, **kwargs):
+            raise TdxProfessionalDataUnavailable("TDX Python professional call unavailable")
+
+    api = client(professional_source=PythonUnavailableSource())
+    response = api.get(
+        "/api/v1/tdx/local/professional",
+        params=[
+            ("method", "get_financial_data"),
+            ("table_list", "Fn193"),
+            ("stock_codes", "600000"),
+        ],
+    )
+
+    assert response.status_code == 200
+    assert response.json()["detail"] == "官方 Python 专业接口初始化或调用失败；请确认通达信客户端已打开并完成专业插件初始化"
+
+
 def test_tdx_local_routes_hide_internal_failure_details() -> None:
     api = client(ipo_source=IpoSource(fail=True), formula_source=FormulaSource(fail=True))
 
