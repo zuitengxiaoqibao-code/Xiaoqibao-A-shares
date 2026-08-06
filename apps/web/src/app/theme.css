@@ -1200,6 +1200,7 @@ body { font-size: 14px; }
 .quant-scan-progress-wrap { display: grid; gap: 4px; margin-top: 2px; }
 .quant-scan-progress { position: relative; height: 4px; overflow: hidden; border: 1px solid rgba(52, 214, 255, .26); background: #102330; }
 .quant-scan-progress i { position: absolute; inset: 0 auto 0 -35%; width: 35%; background: linear-gradient(90deg, transparent, var(--quant-cyan), transparent); box-shadow: 0 0 9px var(--quant-cyan); animation: quant-scan-progress 1.35s ease-in-out infinite; }
+.quant-scan-progress.determinate i { inset: 0 auto 0 0; width: 0; background: var(--quant-cyan); animation: none; transition: width .25s ease-out; }
 .quant-scan-progress-wrap small { color: #6f8798; font-size: 12px; line-height: 1.35; }
 @keyframes quant-scan-progress { from { transform: translateX(0); } to { transform: translateX(385%); } }
 @media (prefers-reduced-motion: reduce) { .quant-scan-progress i { animation: none; left: 0; width: 100%; opacity: .45; } }

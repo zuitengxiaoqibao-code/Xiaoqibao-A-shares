@@ -412,6 +412,43 @@ def test_service_can_defer_first_candidate_scan_without_blocking_request() -> No
     service.close()
 
 
+def test_deferred_scan_exposes_real_factor_progress_when_available() -> None:
+    import threading
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def load_board_with_progress(_as_of, _limit, *, progress):
+        progress("computing_factors", 25, 100)
+        started.set()
+        release.wait(timeout=2)
+        progress("ranking", 100, 100)
+        return board()
+
+    service = QuantStrategyService(
+        SimpleNamespace(current=lambda now: overview()),
+        SimpleNamespace(candidates_with_progress=load_board_with_progress),
+        SimpleNamespace(resolve=lambda symbol: None),
+        defer_initial_scan=True,
+    )
+
+    pending = service.current(NOW)
+    assert pending.candidate_scan_state == "pending"
+    assert started.wait(timeout=1)
+
+    progress = service.current(NOW + timedelta(seconds=1))
+    assert progress.candidate_scan_phase == "computing_factors"
+    assert progress.candidate_scan_processed == 25
+    assert progress.candidate_scan_total == 100
+
+    release.set()
+    for _ in range(20):
+        if service.candidate_scan_ready(NOW):
+            break
+        __import__("time").sleep(0.01)
+    service.close()
+
+
 def test_deferred_scan_failure_is_safe_and_explicit() -> None:
     release = __import__("threading").Event()
 

@@ -368,6 +368,15 @@
 - 新增前端回归：验证后台预热提示、`aria-busy=true`、无 `aria-valuenow`，以及 5 秒到 7 秒的动态时间更新。
 - 真实数据边界保持不变：完成前候选列表为空，失败时显示固定可行动原因，成功后才消费真实候选。
 
+## 2026-08-07 真实扫描进度交付复验
+
+- API 全量回归：`1146 passed, 1 skipped`；前端全量回归：73 个测试文件、`475 passed`；Vite/TypeScript 生产构建通过。
+- 真实发布目录 smoke：窗口首帧 `94ms`，API 就绪 `2152ms`，完整验证 `11295ms`；首页 `144ms`、信息总览 `1097ms`、量化首次请求 `171ms`、专业探针 `1020ms`；量化真实候选 `7` 只、市场风格覆盖 `85.00%`，专业字段 `unavailable`。
+- 隔离目录 smoke：窗口首帧 `113ms`，API 就绪 `2465ms`，完整验证 `4527ms`；信息总览 `ready`，无真实样本时量化 `unavailable`，未生成模拟候选。
+- 进度契约回归覆盖 `loading_history`、`computing_factors`、`ranking`、`ready`、`failed` 以及真实 `processed/total` 百分比；无计数阶段不显示虚假百分比。
+- smoke 后应用进程与探测进程均已释放，`127.0.0.1:17709` 未被本程序占用，`config/data/news/cache/logs/models/exports/backups` 全部保留。
+- 本轮 EXE SHA-256：`896D6C80A2850451C631B87485425F7F134307B44B9679E53261E8D2F41560E9`。
+
 ### 当前计划与目标
 
 - [ ] 通达信客户端完成专业插件初始化并恢复只读桥后，逐项实测 `Fn/GP/BK/SC/GO`，记录请求、响应形状、字段单位、来源和时间戳。

@@ -106,6 +106,9 @@ export type QuantStrategyDashboard = {
   candidate_scan_state: "ready" | "pending" | "failed";
   candidate_scan_started_at: string | null;
   candidate_scan_error: string | null;
+  candidate_scan_phase: "loading_history" | "computing_factors" | "ranking" | "ready" | "failed";
+  candidate_scan_processed: number | null;
+  candidate_scan_total: number | null;
   trigger_evidence_at: string | null;
   trigger_evidence_age_seconds: number | null;
   trigger_evidence_cached: boolean;

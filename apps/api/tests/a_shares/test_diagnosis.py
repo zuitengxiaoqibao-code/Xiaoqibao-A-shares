@@ -700,6 +700,28 @@ def test_candidates_use_only_local_symbols_with_enough_history() -> None:
     assert board.as_of == AS_OF
 
 
+def test_candidates_with_progress_reports_real_factor_counts() -> None:
+    service = AShareDiagnosisService(
+        bar_repository=FakeBars({"600000": bars(), "000001": bars(count=40)}),
+        market_source=FakeMarket(), finance_source=FailingFinance(),
+        news_repository=EmptyNews(),
+    )
+    updates = []
+
+    board = service.candidates_with_progress(
+        AS_OF,
+        limit=20,
+        progress=lambda phase, processed, total: updates.append(
+            (phase, processed, total)
+        ),
+    )
+
+    assert board.short_term[0].symbol == "600000"
+    assert ("computing_factors", 0, 1) in updates
+    assert ("computing_factors", 1, 1) in updates
+    assert updates[-1] == ("ready", 1, 1)
+
+
 def test_candidate_scores_cover_requested_watchlist_outside_top_board() -> None:
     service = AShareDiagnosisService(
         bar_repository=FakeBars({

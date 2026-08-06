@@ -35,6 +35,8 @@ SECTION_NAMES = {
     "funds", "events", "industry", "risk",
 }
 
+CandidateProgressCallback = Callable[[str, int | None, int | None], None]
+
 
 class DiagnosisUnavailableError(RuntimeError):
     pass
@@ -162,11 +164,14 @@ class AShareDiagnosisService:
 
     def candidates(
         self, as_of: date, limit: int = 20, *, cutoff: datetime | None = None,
+        progress: CandidateProgressCallback | None = None,
     ) -> CandidateBoard:
         factor_as_of = self._candidate_as_of(as_of, cutoff)
         symbols, histories, snapshots, exclusions = self._candidate_inputs(
-            factor_as_of, cutoff=cutoff
+            factor_as_of, cutoff=cutoff, progress=progress
         )
+        if progress is not None:
+            progress("ranking", len(symbols), len(symbols))
         sources = tuple(sorted({item.source for item in snapshots}))
         latest_trade_date = max(
             (item.latest_trade_date for item in snapshots if item.latest_trade_date),
@@ -194,6 +199,8 @@ class AShareDiagnosisService:
                 ),
             })
         if self.research_repository is None:
+            if progress is not None:
+                progress("ready", len(symbols), len(symbols))
             return board
         input_payload = {
             "as_of": factor_as_of.isoformat(),
@@ -206,7 +213,22 @@ class AShareDiagnosisService:
         snapshot_id = self.research_repository.append_candidate_board(
             board, input_payload=input_payload
         )
-        return self.research_repository.get_candidate_board(snapshot_id)
+        result = self.research_repository.get_candidate_board(snapshot_id)
+        if progress is not None:
+            progress("ready", len(symbols), len(symbols))
+        return result
+
+    def candidates_with_progress(
+        self,
+        as_of: date,
+        limit: int = 20,
+        *,
+        cutoff: datetime | None = None,
+        progress: CandidateProgressCallback,
+    ) -> CandidateBoard:
+        return self.candidates(
+            as_of, limit, cutoff=cutoff, progress=progress
+        )
 
     def candidate_scores(
         self,
@@ -294,7 +316,10 @@ class AShareDiagnosisService:
 
     def _candidate_inputs(
         self, as_of: date, *, cutoff: datetime | None = None,
+        progress: CandidateProgressCallback | None = None,
     ):
+        if progress is not None:
+            progress("loading_history", None, None)
         if cutoff is None:
             symbols = self.bar_repository.symbols_with_history(60, as_of)
             histories = self.bar_repository.latest_many(symbols, 60, as_of)
@@ -303,9 +328,11 @@ class AShareDiagnosisService:
             histories = self.bar_repository.latest_many(
                 symbols, 60, as_of, cutoff=cutoff,
             )
+        if progress is not None:
+            progress("computing_factors", 0, len(symbols))
         snapshots = []
         exclusions = []
-        for symbol in symbols:
+        for index, symbol in enumerate(symbols, start=1):
             try:
                 snapshot = build_factor_snapshot(histories.get(symbol, []), as_of)
                 if (
@@ -323,6 +350,8 @@ class AShareDiagnosisService:
                 exclusions.append(CandidateExclusion(
                     symbol=symbol, reason_code="invalid_history", detail=str(error)
                 ))
+            if progress is not None and (index == len(symbols) or index % 25 == 0):
+                progress("computing_factors", index, len(symbols))
         return symbols, histories, snapshots, exclusions
 
     async def diagnose(

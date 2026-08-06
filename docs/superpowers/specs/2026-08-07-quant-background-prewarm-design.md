@@ -20,6 +20,13 @@
 - `candidate_scan_started_at`: 后台任务开始时间
 - `candidate_scan_error`: 失败原因（仅内部可行动文本）
 
+扫描阶段进一步细分为：
+
+- `candidate_scan_phase`: `loading_history`、`computing_factors`、`ranking`、`ready` 或 `failed`
+- `candidate_scan_processed` / `candidate_scan_total`: 仅在逐股因子计算实际推进时填充真实计数
+
+前端只在 `computing_factors` 且 `total > 0` 时计算百分比；历史读取和排序阶段继续显示无确定百分比的动态等待。
+
 前端状态栏将扫描状态显示为“后台预热中”“扫描失败”或原有的“刚刚采集/复用缓存”。
 
 ## 测试与验收
@@ -29,3 +36,4 @@
 - 前端量化、首页和短线策略工作台测试必须通过。
 - EXE smoke 必须确认窗口先出现、专业字段仍诚实显示 `unavailable`、退出后没有残留进程。
 - `pending` 状态必须使用无确定进度动画和已运行时间；只有扫描器提供真实处理数量/阶段后才允许显示确定百分比。
+- 因子扫描阶段的百分比必须由 `processed / total` 得到并限制在 0–100；不得通过计时器、平均速度或固定步长伪造。

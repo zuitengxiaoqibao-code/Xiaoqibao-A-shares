@@ -14,6 +14,7 @@ QuantStrategyStatus = Literal["ready", "partial", "unavailable"]
 CandidateActionStatus = Literal["alert", "watch", "reject", "pending_trigger"]
 QuantRefreshMode = Literal["live", "delayed", "postclose", "stale"]
 CandidateScanState = Literal["ready", "pending", "failed"]
+CandidateScanPhase = Literal["loading_history", "computing_factors", "ranking", "ready", "failed"]
 
 
 class QuantStrategyCandidate(BaseModel):
@@ -80,6 +81,9 @@ class QuantStrategyDashboard(BaseModel):
     candidate_scan_state: CandidateScanState = "ready"
     candidate_scan_started_at: AwareDatetime | None = None
     candidate_scan_error: str | None = None
+    candidate_scan_phase: CandidateScanPhase = "ready"
+    candidate_scan_processed: int | None = Field(default=None, ge=0)
+    candidate_scan_total: int | None = Field(default=None, ge=0)
     trigger_evidence_at: AwareDatetime | None = None
     trigger_evidence_age_seconds: int | None = Field(default=None, ge=0)
     trigger_evidence_cached: bool = False

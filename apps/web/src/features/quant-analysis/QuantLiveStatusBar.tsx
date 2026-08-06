@@ -48,6 +48,15 @@ function candidateScanElapsed(strategy: QuantStrategyDashboard, now: number): nu
   return Math.max(0, Math.floor((now - started) / 1000));
 }
 
+function candidateScanDeterminate(strategy: QuantStrategyDashboard): { processed: number; total: number; percent: number } | null {
+  if (strategy.candidate_scan_state !== "pending" || strategy.candidate_scan_phase !== "computing_factors") return null;
+  const processed = strategy.candidate_scan_processed;
+  const total = strategy.candidate_scan_total;
+  if (processed === null || total === null || total <= 0 || processed < 0) return null;
+  const safeProcessed = Math.min(processed, total);
+  return { processed: safeProcessed, total, percent: Math.round((safeProcessed / total) * 100) };
+}
+
 function statusLabel(status: QuantLiveStatus): string {
   return {
     loading: "正在连接",
@@ -79,6 +88,7 @@ export function QuantLiveStatusBar({
     return strategy.data_age_seconds + elapsed;
   }, [now, strategy]);
   const scanElapsed = strategy ? candidateScanElapsed(strategy, now) : null;
+  const scanDeterminate = strategy ? candidateScanDeterminate(strategy) : null;
   const effectiveStrategyStatus = strategy?.refresh_mode === "stale"
     ? "delayed"
     : strategyStatus;
@@ -116,10 +126,20 @@ export function QuantLiveStatusBar({
         {strategyEnabled && strategy && <>
           <em className="quant-cache-detail">候选扫描：{candidateScanLabel(strategy)} · 触发证据：{cacheLabel(strategy.trigger_evidence_cached, strategy.trigger_evidence_age_seconds)}{strategy.candidate_scan_error ? ` · ${strategy.candidate_scan_error}` : ""}</em>
           {scanElapsed !== null && <div className="quant-scan-progress-wrap">
-            <div className="quant-scan-progress" role="progressbar" aria-label="候选扫描后台预热" aria-busy="true">
-              <i />
+            <div
+              className={`quant-scan-progress${scanDeterminate ? " determinate" : ""}`}
+              role="progressbar"
+              aria-label="候选扫描后台预热"
+              aria-busy="true"
+              aria-valuemin={scanDeterminate ? 0 : undefined}
+              aria-valuemax={scanDeterminate ? 100 : undefined}
+              aria-valuenow={scanDeterminate?.percent}
+            >
+              <i style={scanDeterminate ? { width: `${scanDeterminate.percent}%` } : undefined} />
             </div>
-            <small>已运行 {scanElapsed} 秒 · 进度由本地扫描决定</small>
+            <small>{scanDeterminate
+              ? `因子扫描 ${scanDeterminate.processed}/${scanDeterminate.total} · ${scanDeterminate.percent}%`
+              : `已运行 ${scanElapsed} 秒 · 进度由本地扫描决定`}</small>
           </div>}
         </>}
       </article>

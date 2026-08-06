@@ -451,6 +451,9 @@ def build_quant_strategy_dashboard(
     candidate_scan_state: str = "ready",
     candidate_scan_started_at: datetime | None = None,
     candidate_scan_error: str | None = None,
+    candidate_scan_phase: str = "ready",
+    candidate_scan_processed: int | None = None,
+    candidate_scan_total: int | None = None,
     limit: int = 12,
 ) -> QuantStrategyDashboard:
     if limit < 1 or limit > 50:
@@ -476,6 +479,9 @@ def build_quant_strategy_dashboard(
         "candidate_scan_state": candidate_scan_state,
         "candidate_scan_started_at": candidate_scan_started_at,
         "candidate_scan_error": candidate_scan_error,
+        "candidate_scan_phase": candidate_scan_phase,
+        "candidate_scan_processed": candidate_scan_processed,
+        "candidate_scan_total": candidate_scan_total,
         "trigger_evidence_at": trigger_evidence_timestamp,
         "trigger_evidence_age_seconds": trigger_evidence_age,
         "trigger_evidence_cached": trigger_evidence_cached,
@@ -587,6 +593,9 @@ class QuantStrategyService:
         self._candidate_scan_jobs: dict[tuple[date, int], Future] = {}
         self._candidate_scan_started: dict[tuple[date, int], datetime] = {}
         self._candidate_scan_errors: dict[tuple[date, int], str] = {}
+        self._candidate_scan_progress: dict[
+            tuple[date, int], tuple[str, int | None, int | None]
+        ] = {}
 
     def close(self) -> None:
         executor = self._candidate_scan_executor
@@ -603,13 +612,37 @@ class QuantStrategyService:
             job = self._candidate_scan_jobs.get(key)
         return job is not None and job.done()
 
-    def _scan_candidates(self, selected_date: date, limit: int):
-        board = self.candidate_service.candidates(selected_date, limit)
+    def _record_candidate_progress(
+        self,
+        cache_key: tuple[date, int],
+        phase: str,
+        processed: int | None,
+        total: int | None,
+    ) -> None:
+        with self._candidate_cache_lock:
+            self._candidate_scan_progress[cache_key] = (phase, processed, total)
+
+    def _scan_candidates(self, cache_key: tuple[date, int], selected_date: date, limit: int):
+        progress = lambda phase, processed=None, total=None: self._record_candidate_progress(
+            cache_key, phase, processed, total
+        )
+        progress("loading_history")
+        progress_loader = getattr(self.candidate_service, "candidates_with_progress", None)
+        if callable(progress_loader):
+            board = progress_loader(selected_date, limit, progress=progress)
+        else:
+            board = self.candidate_service.candidates(selected_date, limit)
+        progress("ranking")
         names = {}
         for item in board.short_term:
             instrument = self.instrument_directory.resolve(item.symbol)
             if instrument is not None:
                 names[item.symbol] = instrument.name
+        with self._candidate_cache_lock:
+            _phase, processed, total = self._candidate_scan_progress.get(
+                cache_key, ("ready", None, None)
+            )
+        progress("ready", processed, total)
         return board, names
 
     def _start_deferred_scan(
@@ -622,9 +655,10 @@ class QuantStrategyService:
             if existing is not None:
                 return
             self._candidate_scan_errors.pop(cache_key, None)
+            self._candidate_scan_progress[cache_key] = ("loading_history", None, None)
             self._candidate_scan_started[cache_key] = now
             self._candidate_scan_jobs[cache_key] = self._candidate_scan_executor.submit(
-                self._scan_candidates, selected_date, limit
+                self._scan_candidates, cache_key, selected_date, limit
             )
 
     def _consume_deferred_scan(self, cache_key: tuple[date, int], now: datetime):
@@ -639,10 +673,15 @@ class QuantStrategyService:
             message = SAFE_CANDIDATE_SCAN_ERROR
             with self._candidate_cache_lock:
                 self._candidate_scan_errors[cache_key] = message
+                self._candidate_scan_progress[cache_key] = ("failed", None, None)
                 self._candidate_scan_jobs.pop(cache_key, None)
                 self._candidate_scan_started.pop(cache_key, None)
             return None, None, "failed", started, message
         with self._candidate_cache_lock:
+            _phase, processed, total = self._candidate_scan_progress.get(
+                cache_key, ("ready", None, None)
+            )
+            self._candidate_scan_progress[cache_key] = ("ready", processed, total)
             self._candidate_cache[cache_key] = (
                 now + self.cache_ttl, now, board, names
             )
@@ -668,6 +707,9 @@ class QuantStrategyService:
         candidate_scan_state = "ready"
         candidate_scan_started_at = now
         candidate_scan_error = None
+        candidate_scan_phase = "ready"
+        candidate_scan_processed: int | None = None
+        candidate_scan_total: int | None = None
         if self.cache_ttl > timedelta(0):
             with self._candidate_cache_lock:
                 cached = self._candidate_cache.get(cache_key)
@@ -681,6 +723,14 @@ class QuantStrategyService:
                     board, names, candidate_scan_state,
                     candidate_scan_started_at, candidate_scan_error,
                 ) = self._consume_deferred_scan(cache_key, now)
+                with self._candidate_cache_lock:
+                    (
+                        candidate_scan_phase,
+                        candidate_scan_processed,
+                        candidate_scan_total,
+                    ) = self._candidate_scan_progress.get(
+                        cache_key, ("loading_history", None, None)
+                    )
                 if board is None:
                     board = CandidateBoard(
                         as_of=selected_date,
@@ -692,7 +742,7 @@ class QuantStrategyService:
                     )
                     names = {}
             else:
-                board, names = self._scan_candidates(selected_date, limit)
+                board, names = self._scan_candidates(cache_key, selected_date, limit)
                 if self.cache_ttl > timedelta(0):
                     with self._candidate_cache_lock:
                         self._candidate_cache[cache_key] = (
@@ -707,6 +757,12 @@ class QuantStrategyService:
             candidate_scan_cached = True
             candidate_scan_state = "ready"
             candidate_scan_started_at = candidate_scan_at
+            with self._candidate_cache_lock:
+                (
+                    candidate_scan_phase,
+                    candidate_scan_processed,
+                    candidate_scan_total,
+                ) = self._candidate_scan_progress.get(cache_key, ("ready", None, None))
         evidence: dict[str, TriggerEvidence] = {}
         trigger_evidence_cached = False
         trigger_evidence_at: datetime | None = None
@@ -748,5 +804,8 @@ class QuantStrategyService:
             candidate_scan_state=candidate_scan_state,
             candidate_scan_started_at=candidate_scan_started_at,
             candidate_scan_error=candidate_scan_error,
+            candidate_scan_phase=candidate_scan_phase,
+            candidate_scan_processed=candidate_scan_processed,
+            candidate_scan_total=candidate_scan_total,
             limit=limit,
         )
