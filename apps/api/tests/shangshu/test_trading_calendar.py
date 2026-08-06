@@ -53,6 +53,14 @@ def test_exchange_calendar_confirms_premarket_session_and_national_day() -> None
     assert schedule.is_trading_day(date(2027, 1, 4)) is None
 
 
+def test_exchange_calendar_defers_heavy_calendar_construction_until_lookup() -> None:
+    schedule = ExchangeCalendarsTradingDaySchedule()
+
+    assert schedule.calendar is None
+    assert schedule.is_trading_day(date(2026, 7, 17)) is True
+    assert schedule.calendar is not None
+
+
 class Response:
     content = (
         'v_sh000001="1~上证指数~000001~3500.00~3490.00~3501.00~123~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~20260715130630~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0";'

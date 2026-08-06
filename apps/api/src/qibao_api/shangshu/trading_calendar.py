@@ -1,7 +1,6 @@
 from datetime import date, datetime, timedelta
 from typing import Protocol
 
-import exchange_calendars
 import httpx
 
 
@@ -15,11 +14,18 @@ class TradingDaySchedule(Protocol):
 
 class ExchangeCalendarsTradingDaySchedule:
     def __init__(self, calendar=None) -> None:
-        self.calendar = calendar or exchange_calendars.get_calendar("XSHG")
+        self.calendar = calendar
+
+    def _resolved_calendar(self):
+        if self.calendar is None:
+            import exchange_calendars
+
+            self.calendar = exchange_calendars.get_calendar("XSHG")
+        return self.calendar
 
     def is_trading_day(self, value: date) -> bool | None:
         try:
-            return bool(self.calendar.is_session(value))
+            return bool(self._resolved_calendar().is_session(value))
         except ValueError:
             return None
 
