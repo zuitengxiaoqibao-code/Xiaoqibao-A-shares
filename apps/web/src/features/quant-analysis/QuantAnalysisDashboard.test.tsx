@@ -246,6 +246,22 @@ describe("QuantAnalysisDashboard", () => {
     expect(layout?.children[1]).toHaveTextContent("首次涨停候选快速切换");
   });
 
+  it("keeps instrument identity, search, and candidate switch in independent rows", async () => {
+    render(<QuantAnalysisDashboard
+      loadBoard={async () => board}
+      loadTicks={async (symbol) => ticks(symbol)}
+      runBacktest={async (symbol) => backtest(symbol)}
+      selectedSymbol="603228"
+    />);
+
+    const control = await screen.findByRole("region", { name: "当前量化分析标的" });
+    expect(control.querySelector(".quant-instrument-heading")).toHaveTextContent("分析标的");
+    expect(control.querySelector(".quant-selected-row")).toHaveTextContent("603228");
+    expect(control.querySelector(".quant-search-row input")).toBeInTheDocument();
+    expect(control.querySelector(".quant-candidate-row select")).toBeInTheDocument();
+    expect(control.querySelectorAll(".quant-instrument-layout > *")).toHaveLength(2);
+  });
+
   it("adds a detailed TDX-style event K-line workspace when the local timeline is available", async () => {
     render(<QuantAnalysisDashboard
       loadBoard={async () => board}

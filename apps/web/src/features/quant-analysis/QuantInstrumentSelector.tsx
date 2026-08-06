@@ -67,15 +67,15 @@ export function QuantInstrumentSelector({
   return <section className="quant-instrument-control" aria-label="当前量化分析标的">
     <div className="quant-instrument-layout split">
       <div className="quant-instrument-primary">
-        <header>
+        <header className="quant-instrument-heading">
           <span>分析标的</span>
           <b className={candidate ? "candidate" : "custom"}>{candidate ? "候选池标的" : "自定义标的"}</b>
         </header>
-        <div className="quant-selected-instrument">
+        <div className="quant-selected-instrument quant-selected-row">
           <strong className="quant-selected-symbol">{symbol ?? "------"}</strong>
           <span className="quant-selected-name">{name ?? (symbol ? "名称待验证" : "尚未选择")}</span>
         </div>
-        <label className="quant-symbol-search">
+        <label className="quant-symbol-search quant-search-row">
           <Search size={16} />
           <span className="visually-hidden">查询量化分析标的</span>
           <input
@@ -101,7 +101,7 @@ export function QuantInstrumentSelector({
         </div>}
       </div>
       <div className="quant-instrument-secondary">
-        <label className="quant-candidate-switch">
+        <label className="quant-candidate-switch quant-candidate-row">
           <span>首次涨停候选快速切换</span>
           <select
             aria-label="量化分析股票"
