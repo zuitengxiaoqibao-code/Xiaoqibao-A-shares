@@ -9,6 +9,7 @@ from qibao_api.gongbu.tdx_local_overview import (
     parse_tdx_snapshot,
     probe_tdx_capabilities,
 )
+import qibao_api.gongbu.tdx_local_overview as tdx_local_overview
 
 
 NOW = datetime(2026, 7, 29, 3, 30, tzinfo=timezone.utc)
@@ -261,6 +262,27 @@ def test_local_overview_refresh_loop_honors_startup_delay(tmp_path) -> None:
     source._refresh_loop()
 
     assert waits == [2.0]
+
+
+def test_local_overview_refresh_failures_are_rate_limited(tmp_path, monkeypatch) -> None:
+    source = LocalTdxOverviewSource(
+        cache_path=tmp_path / "overview.json",
+        rpc=None,
+        fallback=None,
+    )
+    warnings: list[tuple[object, ...]] = []
+    recoveries: list[tuple[object, ...]] = []
+    monkeypatch.setattr(tdx_local_overview.logger, "warning", lambda *args, **kwargs: warnings.append(args))
+    monkeypatch.setattr(tdx_local_overview.logger, "info", lambda *args, **kwargs: recoveries.append(args))
+
+    error = OSError("bridge unavailable")
+    for _ in range(21):
+        source._record_refresh_failure(error)
+
+    assert len(warnings) == 2
+    assert "error_type=%s" in str(warnings[0][0])
+    source._record_refresh_success()
+    assert len(recoveries) == 1
 
 
 def test_probe_tdx_capabilities_reports_real_read_only_methods_and_partial_support() -> None:

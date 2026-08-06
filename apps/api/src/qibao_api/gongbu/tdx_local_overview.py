@@ -513,6 +513,8 @@ class LocalTdxOverviewSource:
         self._snapshot = self._load_cache()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._refresh_failure_count = 0
+        self._last_refresh_error_type: str | None = None
 
     def current(self) -> OverviewMarketSnapshot | None:
         with self._lock:
@@ -591,10 +593,37 @@ class LocalTdxOverviewSource:
         while not self._stop.is_set():
             try:
                 self.refresh()
-            except Exception:
-                logger.warning("local TDX overview refresh failed", exc_info=True)
+                self._record_refresh_success()
+            except Exception as error:
+                self._record_refresh_failure(error)
             if self._stop.wait(self.refresh_seconds):
                 break
+
+    def _record_refresh_failure(self, error: Exception) -> None:
+        error_type = type(error).__name__
+        self._refresh_failure_count += 1
+        should_log = (
+            self._refresh_failure_count == 1
+            or error_type != self._last_refresh_error_type
+            or self._refresh_failure_count % 20 == 0
+        )
+        if should_log:
+            logger.warning(
+                "local TDX overview refresh failed; error_type=%s failures=%s",
+                error_type,
+                self._refresh_failure_count,
+                exc_info=True,
+            )
+        self._last_refresh_error_type = error_type
+
+    def _record_refresh_success(self) -> None:
+        if self._refresh_failure_count > 0:
+            logger.info(
+                "local TDX overview refresh recovered after %s failures",
+                self._refresh_failure_count,
+            )
+        self._refresh_failure_count = 0
+        self._last_refresh_error_type = None
 
     def _fetch_quotes(
         self,

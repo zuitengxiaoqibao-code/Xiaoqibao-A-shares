@@ -10,6 +10,8 @@
 - 新增 5 个边界回归场景，前端本轮全量测试为 71 个文件、453 项通过；API 1099 项通过、1 项按环境跳过；生产构建通过；乱码扫描和 `git diff --check` 通过。
 - 本批源码改动后已重建便携 EXE 并完成两次实际 smoke。首次冷盘窗口 302ms、API 5588ms、完整验证 11344ms；紧接着复测窗口 118ms、API 2456ms、完整验证 3304ms。复测阶段日志显示业务 `lifespan-ready` 为 578ms，因此第一次较慢主要来自 Windows 冷盘加载/安全扫描波动，不是本批业务初始化回退。两次信息总览均为 `ready`，量化策略均为 `unavailable`（真实样本不足，不虚构）。
 - 本批 EXE SHA-256：`ADDE66B11C2DBA238FC693C02F526D7D6C9B8AA31EF6FECC1CF8F373EB494610`。
+- 通达信本地 overview 后台刷新日志已限频：首次失败、错误类型变化和每 20 次失败记录一次完整诊断，恢复时记录一次；新增回归测试覆盖 21 次连续失败只产生 2 条警告。
+- 日志限频改动后重新构建并 smoke：窗口 133ms、API 2809ms、完整验证 3773ms；信息总览 `ready`，量化策略 `unavailable`。最终 EXE SHA-256：`3BE9E00822D43D2C7BF451FAFDD79BD8D957202A5F14C3C209ACD56C9EE41C55`。
 
 ## 本轮完成
 
@@ -53,7 +55,7 @@
 ## 验证结果
 
 - 前端测试：71 个测试文件，453 项通过。
-- API 测试：1099 项通过，1 项按环境跳过。
+- API 测试：1100 项通过，1 项按环境跳过。
 - 前端生产构建：通过。
 - 便携 EXE 构建：通过（保留 `config/data/news/cache/logs/models/exports/backups`）。
 - EXE 烟测：通过。
@@ -62,7 +64,7 @@
   - 本轮串行三次完整验证：3371ms、3201ms、3212ms
   - 信息总览：`ready`
   - 量化策略：`unavailable`（真实样本不足，保持诚实降级）
-- EXE SHA-256：`ADDE66B11C2DBA238FC693C02F526D7D6C9B8AA31EF6FECC1CF8F373EB494610`
+- EXE SHA-256：`3BE9E00822D43D2C7BF451FAFDD79BD8D957202A5F14C3C209ACD56C9EE41C55`
 
 ## 交付文件
 
