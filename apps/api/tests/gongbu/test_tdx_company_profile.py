@@ -38,6 +38,9 @@ def test_tdx_company_profile_cleans_and_limits_each_section() -> None:
     assert len(result.company_overview) == 1200
     assert result.industry_analysis == "白酒行业 需求稳定"
     assert result.latest_tips == "2026 年中报已披露"
+    assert len(result.latest_tip_items) == 1
+    assert result.latest_tip_items[0].category == "其他"
+    assert result.latest_tip_items[0].raw_text == "2026 年中报已披露"
     assert client.closed is True
 
 
@@ -69,6 +72,7 @@ def test_tdx_company_profile_extracts_only_the_requested_section_from_mapping() 
     assert result.company_overview == "主营业务为高端白酒"
     assert result.industry_analysis == "白酒行业集中度较高"
     assert result.latest_tips == "最新公告摘要"
+    assert result.latest_tip_items[0].category == "公告与合同"
 
 
 def test_tdx_company_profile_summarizes_node_failures_for_users() -> None:

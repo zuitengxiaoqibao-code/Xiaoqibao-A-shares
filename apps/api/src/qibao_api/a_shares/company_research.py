@@ -30,6 +30,15 @@ DIMENSION_WEIGHTS = {
 }
 
 
+def summarize_latest_tips(items: tuple[Any, ...]) -> str:
+    if not items:
+        return "无可核验催化证据"
+    positive = sum(1 for item in items if item.tone == "positive")
+    risk = sum(1 for item in items if item.tone == "risk")
+    neutral = len(items) - positive - risk
+    return f"已识别 {len(items)} 项事件：催化 {positive} · 中性 {neutral} · 风险 {risk}"
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -179,7 +188,6 @@ class CompanyResearchService:
         latest = history.latest_period
         fundamentals = diagnosis.sections["fundamentals"]
         valuation = diagnosis.sections["valuation"]
-        event_count = diagnosis.sections["events"].metrics.get("event_count")
         profile_ids = ((_evidence_id(profile.source, "profile"),) if profile.observed_at else ())
         financial_ids = tuple(
             _evidence_id(history.source, item.period.isoformat()) for item in history.annual_periods
@@ -297,7 +305,7 @@ class CompanyResearchService:
             scored_dimension("valuation", "估值吸引力", valuation_score, "只按PE/PB做宽口径风险分层，不声称跨行业低估。", {
                 "pe_ttm": pe, "pb": pb,
             }, valuation.evidence_ids, "腾讯未返回可用PE/PB。"),
-            unavailable("catalysts", "未来催化", f"已冻结关联事件 {event_count or 0} 条；{profile.latest_tips or '最新提示暂缺'}", "催化因素仅展示证据，不自动评分。"),
+            unavailable("catalysts", "未来催化", summarize_latest_tips(profile.latest_tip_items), "催化因素仅展示证据，不自动评分。"),
         )
 
     def _counter_case(

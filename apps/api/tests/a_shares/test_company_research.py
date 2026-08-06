@@ -10,6 +10,7 @@ from qibao_api.contracts.company_research import (
     FinancialHistory,
     FinancialPeriod,
 )
+from qibao_api.gongbu.tdx_latest_tips import parse_latest_tips
 
 
 NOW = datetime(2026, 8, 3, tzinfo=timezone.utc)
@@ -96,9 +97,11 @@ class FinancialSource:
 
 class ProfileSource:
     def fetch(self, symbol: str) -> CompanyProfileEvidence:
+        latest_tips = "●最新公告：2026-08-05 公司签署合作协议 | ●业绩预告：2026-07-15 预计净利润同比下降"
         return CompanyProfileEvidence(
             status="ready", company_overview="主营高端白酒",
-            industry_analysis="行业需求仍在增长", latest_tips="最新财报已披露",
+            industry_analysis="行业需求仍在增长", latest_tips=latest_tips,
+            latest_tip_items=parse_latest_tips(latest_tips, source="mootdx-f10", observed_at=NOW),
             source="mootdx-f10", observed_at=NOW, reasons=(),
         )
 
@@ -118,6 +121,8 @@ async def test_company_research_scores_only_verified_dimensions() -> None:
     assert all(item.status in {"clear", "triggered", "unavailable"} for item in result.counter_case)
     assert next(item for item in result.dimensions if item.key == "business_model").score is None
     assert result.valuation.observation_range_status == "unavailable"
+    catalyst = next(item for item in result.dimensions if item.key == "catalysts")
+    assert catalyst.summary == "已识别 2 项事件：催化 1 · 中性 0 · 风险 1"
 
 
 @pytest.mark.asyncio

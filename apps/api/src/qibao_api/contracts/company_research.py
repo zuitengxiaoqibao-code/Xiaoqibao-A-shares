@@ -7,6 +7,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ResearchStatus = Literal["ready", "partial", "unavailable"]
 EvidenceStatus = Literal["ready", "clear", "triggered", "unavailable"]
+LatestTipCategory = Literal["公告与合同", "业绩预告", "资金与融资", "交易异动", "风险提醒", "其他"]
+LatestTipTone = Literal["positive", "neutral", "risk", "unknown"]
 
 
 class FinancialPeriod(BaseModel):
@@ -82,6 +84,20 @@ class ValuationObservation(BaseModel):
     observed_at: datetime | None
 
 
+class LatestTipItem(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    category: LatestTipCategory
+    title: str
+    date: str | None
+    tone: LatestTipTone
+    summary: str
+    source: str
+    observed_at: datetime | None
+    raw_text: str
+
+
 class CompanyProfileEvidence(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -89,6 +105,7 @@ class CompanyProfileEvidence(BaseModel):
     company_overview: str | None
     industry_analysis: str | None
     latest_tips: str | None
+    latest_tip_items: tuple[LatestTipItem, ...] = ()
     source: str
     observed_at: datetime | None
     reasons: tuple[str, ...] = ()

@@ -10,6 +10,7 @@ from qibao_api.contracts.company_research import (
     CompanyResearchResponse,
     CounterCaseItem,
     FinancialHistory,
+    LatestTipItem,
     ValuationObservation,
 )
 
@@ -88,3 +89,19 @@ def test_company_research_rejects_score_when_coverage_is_below_sixty_percent() -
 
 def test_company_research_allows_null_score_when_evidence_is_incomplete() -> None:
     assert response().final_score is None
+
+
+def test_company_profile_serializes_structured_latest_tip_evidence() -> None:
+    item = LatestTipItem(
+        id="mootdx-f10:abc", category="公告与合同", title="公告与合同",
+        date="2026-08-05", tone="positive", summary="签署战略合作协议",
+        source="mootdx-f10", observed_at=datetime(2026, 8, 6, tzinfo=timezone.utc),
+        raw_text="●最新公告：2026-08-05 签署战略合作协议",
+    )
+    profile = CompanyProfileEvidence(
+        status="ready", company_overview="概况", industry_analysis="行业",
+        latest_tips=item.raw_text, latest_tip_items=(item,), source="mootdx-f10",
+        observed_at=item.observed_at,
+    )
+
+    assert profile.model_dump(mode="json")["latest_tip_items"][0]["date"] == "2026-08-05"

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from qibao_api.contracts.company_research import CompanyProfileEvidence
+from qibao_api.gongbu.tdx_latest_tips import parse_latest_tips
 from qibao_api.gongbu.tdx_client import TdxOperationError, create_tdx_client
 
 
@@ -63,11 +64,15 @@ class TdxCompanyProfileSource:
                 close()
         available = sum(value is not None for value in values.values())
         status = "ready" if available == len(categories) else "partial" if available else "unavailable"
+        latest_tip_items = parse_latest_tips(
+            values.get("latest_tips"), source="mootdx-f10", observed_at=self.clock() if available else None,
+        )
         return CompanyProfileEvidence(
             status=status,
             company_overview=values.get("company_overview"),
             industry_analysis=values.get("industry_analysis"),
             latest_tips=values.get("latest_tips"),
+            latest_tip_items=latest_tip_items,
             source="mootdx-f10",
             observed_at=self.clock() if available else None,
             reasons=tuple(reasons),

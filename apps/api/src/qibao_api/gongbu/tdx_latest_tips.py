@@ -3,27 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 from datetime import date, datetime
-from typing import Literal
-
-from pydantic import BaseModel, ConfigDict
-
-
-LatestTipCategory = Literal["公告与合同", "业绩预告", "资金与融资", "交易异动", "风险提醒", "其他"]
-LatestTipTone = Literal["positive", "neutral", "risk", "unknown"]
-
-
-class LatestTipItem(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    id: str
-    category: LatestTipCategory
-    title: str
-    date: str | None
-    tone: LatestTipTone
-    summary: str
-    source: str
-    observed_at: datetime | None
-    raw_text: str
+from qibao_api.contracts.company_research import LatestTipCategory, LatestTipItem, LatestTipTone
 
 
 _DATE_RE = re.compile(r"(?P<year>20\d{2})[-/.年](?P<month>\d{1,2})[-/.月](?P<day>\d{1,2})日?(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?")
