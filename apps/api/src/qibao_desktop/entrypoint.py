@@ -11,6 +11,7 @@ from qibao_desktop.instance import (
 )
 from qibao_desktop.logging_config import configure_desktop_logging
 from qibao_desktop.paths import desktop_layout
+from qibao_desktop.startup_progress import read_startup_progress
 from qibao_desktop.window import run_window
 
 
@@ -70,7 +71,12 @@ def main(argv: list[str] | None = None) -> int:
                     server.wait_until_ready()
                     return server.url
 
-                run_window(start_application)
+                run_window(
+                    start_application,
+                    startup_progress=lambda: read_startup_progress(
+                        layout.logs_dir / "xiaoqibao.log"
+                    ),
+                )
         return 0
     except AlreadyRunningError:
         activated = activate_existing_window("一树电子商务-A股观测台")

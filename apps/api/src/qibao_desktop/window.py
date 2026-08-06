@@ -1,6 +1,9 @@
 import json
 import logging
+import threading
 from collections.abc import Callable
+
+from qibao_desktop.startup_progress import StartupProgress
 
 
 logger = logging.getLogger(__name__)
@@ -27,7 +30,17 @@ def _startup_html() -> str:
 </style></head><body><div class="shell"><aside class="nav"><div class="brand">一树-A股观测台<small>A-SHARE OBSERVATION TERMINAL</small></div><i></i><span></span><span></span><span></span><span></span><span></span></aside><main class="page"><header class="top"><small>A-SHARE / MARKET OVERVIEW</small><b>信息总览</b></header><section class="grid"><span></span><span></span><span></span><span></span></section></main></div><section class="boot" role="dialog" aria-label="正在启动一树电子商务-A股观测台"><div class="panel"><div class="eyebrow">DESKTOP STARTUP PIPELINE</div><h1>正在启动一树电子商务-A股观测台</h1><p class="detail" id="detail">桌面进程已初始化</p><div class="meter"><div class="bar homepage-progress-tracer" id="bar"></div></div><div class="row"><span id="step">准备本地运行环境</span><b class="percent" id="percent">1%</b></div><div class="scan"></div></div></section><script>let currentProgress=1,progressTarget=1,progressTimer=null;function renderProgress(){document.getElementById('bar').style.width=currentProgress+'%';document.getElementById('percent').textContent=currentProgress+'%'}function advanceProgress(){if(currentProgress>=progressTarget){clearInterval(progressTimer);progressTimer=null;return}currentProgress+=1;renderProgress()}window.qibaoStartup={update:function(value,step,detail){progressTarget=Math.max(progressTarget,value);if(!progressTimer)progressTimer=setInterval(advanceProgress,20);document.getElementById('step').textContent=step;document.getElementById('detail').textContent=detail},fail:function(detail){document.getElementById('step').textContent='启动失败';document.getElementById('detail').textContent=detail;document.getElementById('bar').style.background='#ff5f6d'}}</script></body></html>"""
 
 
-def run_window(start_application: Callable[[], str]) -> None:
+def _startup_progress_script(progress: StartupProgress) -> str:
+    step = json.dumps(progress.step, ensure_ascii=False)
+    detail = json.dumps(progress.detail, ensure_ascii=False)
+    return f"window.qibaoStartup.update({progress.percent},{step},{detail})"
+
+
+def run_window(
+    start_application: Callable[[], str],
+    *,
+    startup_progress: Callable[[], StartupProgress | None] | None = None,
+) -> None:
     try:
         import webview
     except ImportError as error:
@@ -46,13 +59,41 @@ def run_window(start_application: Callable[[], str]) -> None:
         window.evaluate_js(
             "window.qibaoStartup.update(24,'桌面窗口已显示','正在等待本地 API 完成健康检查')"
         )
+        stop_progress = threading.Event()
+        progress_thread: threading.Thread | None = None
+        if startup_progress is not None:
+            def watch_progress() -> None:
+                last_stage: str | None = None
+                while not stop_progress.wait(0.08):
+                    try:
+                        progress = startup_progress()
+                    except Exception:
+                        logger.debug("desktop startup progress read failed", exc_info=True)
+                        continue
+                    if progress is None or progress.stage == last_stage:
+                        continue
+                    last_stage = progress.stage
+                    window.evaluate_js(_startup_progress_script(progress))
+
+            progress_thread = threading.Thread(
+                target=watch_progress,
+                name="qibao-startup-progress",
+                daemon=True,
+            )
+            progress_thread.start()
         try:
             url = start_application()
         except Exception as error:
+            stop_progress.set()
+            if progress_thread is not None:
+                progress_thread.join(timeout=1)
             logger.exception("local API failed while desktop shell was visible")
             message = json.dumps(f"本地 API 启动失败：{error}", ensure_ascii=False)
             window.evaluate_js(f"window.qibaoStartup.fail({message})")
             return
+        stop_progress.set()
+        if progress_thread is not None:
+            progress_thread.join(timeout=1)
         window.evaluate_js(
             "window.qibaoStartup.update(42,'本地 API 已就绪','正在挂载首页资源与真实市场数据')"
         )

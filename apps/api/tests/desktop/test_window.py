@@ -1,7 +1,55 @@
 import sys
+import threading
 from types import SimpleNamespace
 
-from qibao_desktop.window import run_window
+from qibao_desktop.startup_progress import StartupProgress
+from qibao_desktop.window import _startup_progress_script, run_window
+
+
+def test_startup_progress_script_uses_verified_milestone_values() -> None:
+    script = _startup_progress_script(
+        StartupProgress(
+            stage="market-sentiment-ready",
+            percent=38,
+            step="市场情绪服务已就绪",
+            detail="正在准备首页与量化服务",
+        )
+    )
+
+    assert "window.qibaoStartup.update(38" in script
+    assert "市场情绪服务已就绪" in script
+    assert "正在准备首页与量化服务" in script
+
+
+def test_window_publishes_verified_startup_progress_while_api_waits(monkeypatch) -> None:
+    window = FakeWindow()
+    progress_seen = threading.Event()
+
+    monkeypatch.setitem(
+        sys.modules,
+        "webview",
+        SimpleNamespace(
+            create_window=lambda *_args, **_options: window,
+            start=lambda callback, **_options: callback(),
+        ),
+    )
+
+    def read_progress() -> StartupProgress:
+        progress_seen.set()
+        return StartupProgress(
+            stage="market-sentiment-ready",
+            percent=38,
+            step="市场情绪服务已就绪",
+            detail="正在准备首页与量化服务",
+        )
+
+    def start_application() -> str:
+        assert progress_seen.wait(timeout=1)
+        return "http://127.0.0.1:43210"
+
+    run_window(start_application, startup_progress=read_progress)
+
+    assert any("window.qibaoStartup.update(38" in script for script in window.scripts)
 
 
 class FakeWindow:

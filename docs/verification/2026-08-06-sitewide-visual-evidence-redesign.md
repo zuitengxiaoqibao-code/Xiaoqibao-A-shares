@@ -377,6 +377,15 @@
 - smoke 后应用进程与探测进程均已释放，`127.0.0.1:17709` 未被本程序占用，`config/data/news/cache/logs/models/exports/backups` 全部保留。
 - 本轮 EXE SHA-256：`896D6C80A2850451C631B87485425F7F134307B44B9679E53261E8D2F41560E9`。
 
+## 2026-08-07 桌面启动真实里程碑复验
+
+- 启动专项回归：桌面相关测试 `15 passed`（含启动阶段解析、日志尾部读取、启动脚本和窗口等待期间更新）。
+- 全量回归：API `1151 passed, 1 skipped`；前端 73 个测试文件、`475 passed`；Vite/TypeScript 生产构建通过。
+- 真实发布目录连续两次 smoke：一次窗口/API/完整验证为 `297/5554/19340ms`（冷盘环境波动），随后热启动为 `59/2021/11091ms`；两次均为信息总览 `ready`、量化真实候选 `7` 只、覆盖 `85.00%`。
+- 隔离目录 smoke：窗口/API/完整验证为 `112/2395/4425ms`；信息总览 `ready`，真实样本不足时量化 `unavailable`。
+- 发布日志实际记录并被解析的里程碑包括 `local-sources-ready`、`repositories-ready`、`bond-universe-ready`、`services-and-instrument-directory-ready`、`a-share-universe-ready`、`market-sentiment-ready` 和 `lifespan-ready`。
+- smoke 后应用/探测进程均已释放，`127.0.0.1:17709` 未监听，持久目录全部保留；本轮 EXE SHA-256：`5F1B0E34E6E39CA54CED4FFCE5B098F81BF3FEF68437D45021D14AEB1FA210A3`。
+
 ### 当前计划与目标
 
 - [ ] 通达信客户端完成专业插件初始化并恢复只读桥后，逐项实测 `Fn/GP/BK/SC/GO`，记录请求、响应形状、字段单位、来源和时间戳。

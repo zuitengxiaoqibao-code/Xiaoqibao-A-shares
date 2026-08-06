@@ -61,8 +61,9 @@ def test_entrypoint_sets_portable_paths_and_stops_after_window(
     monkeypatch.setattr(entrypoint, "SingleInstance", FakeInstance)
     monkeypatch.setattr(entrypoint, "configure_desktop_logging", lambda _path: None)
     existing_count = len(FakeServer.instances)
-    def run_window(start_application):
+    def run_window(start_application, **kwargs):
         seen["server_created_before_window"] = len(FakeServer.instances) > existing_count
+        seen["startup_progress_reader"] = kwargs.get("startup_progress")
         seen["url"] = start_application()
 
     monkeypatch.setattr(entrypoint, "run_window", run_window)
@@ -77,6 +78,7 @@ def test_entrypoint_sets_portable_paths_and_stops_after_window(
     assert result == 0
     assert server.started and server.stopped
     assert seen["server_created_before_window"] is True
+    assert callable(seen["startup_progress_reader"])
     assert server.launched
     assert seen["url"] == server.url
     assert (tmp_path / "config").is_dir()
@@ -110,7 +112,7 @@ def test_gui_prepares_runtime_and_launches_api_before_window(
     monkeypatch.setattr(entrypoint, "promote_previous_data_layout", lambda _layout: None)
     monkeypatch.setattr(entrypoint, "_create_local_api_server", lambda _port: FakeServer())
 
-    def run_window(start_application):
+    def run_window(start_application, **_kwargs):
         order.append("window-started")
         start_application()
 
@@ -132,7 +134,7 @@ def test_entrypoint_preserves_current_data_and_archives_previous_conflicts(
     monkeypatch.setattr(entrypoint, "_create_local_api_server", lambda _port: FakeServer())
     monkeypatch.setattr(entrypoint, "SingleInstance", FakeInstance)
     monkeypatch.setattr(entrypoint, "configure_desktop_logging", lambda _path: None)
-    monkeypatch.setattr(entrypoint, "run_window", lambda start: start())
+    monkeypatch.setattr(entrypoint, "run_window", lambda start, **_kwargs: start())
 
     assert entrypoint.main(["--portable-root", str(tmp_path)]) == 0
 
@@ -150,7 +152,7 @@ def test_server_is_stopped_when_window_fails(tmp_path: Path, monkeypatch) -> Non
     monkeypatch.setattr(
         entrypoint,
         "run_window",
-        lambda _start: (_ for _ in ()).throw(RuntimeError("window failed")),
+        lambda _start, **_kwargs: (_ for _ in ()).throw(RuntimeError("window failed")),
     )
 
     assert entrypoint.main(["--portable-root", str(tmp_path)]) == 1
