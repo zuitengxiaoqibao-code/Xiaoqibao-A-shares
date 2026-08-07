@@ -328,3 +328,9 @@
 - [x] 有完整缓存时先立即返回并标记 `market-overview-cache`，后台线程刷新最新指数、分钟线、新闻和本地市场数据；刷新失败保留旧证据并增加固定失败标记。
 - [x] 应用退出时取消信息总览后台刷新，保持便携目录和端口释放行为。
 - [x] API 全量回归、生产构建和真实/隔离 EXE smoke 已通过；发布目录建立缓存后，信息总览请求由约 `5215ms` 降至 `616/569ms`。
+
+## 2026-08-07 continuation: professional probe coverage
+
+- [x] 便携 smoke 从单一 `Fn193` 探针扩展为五类逐字段探针：`get_financial_data/Fn193`、`get_gpjy_value/GP1`、`get_bkjy_value/BK5`、`get_scjy_value/SC1`、`get_gp_one_data/GO1`。
+- [x] 每类探针单独校验 `ready/partial/unavailable`，汇总只表示五类真实返回状态，不把缓存文件发现或单一字段成功冒充整体专业能力。
+- [x] 当前真实发布 smoke 五类均为 `unavailable`，原因保持为通达信专业 Python 接口未完成客户端/插件初始化；等待外部桥恢复后直接复用同一验收命令。

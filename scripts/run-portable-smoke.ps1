@@ -171,13 +171,34 @@ try {
         }
         $QuantStrategyStatus = $QuantStrategy.status
     }
+    $ProfessionalProbes = @(
+        [pscustomobject]@{ Method = "get_financial_data"; TableList = "Fn193" },
+        [pscustomobject]@{ Method = "get_gpjy_value"; TableList = "GP1" },
+        [pscustomobject]@{ Method = "get_bkjy_value"; TableList = "BK5" },
+        [pscustomobject]@{ Method = "get_scjy_value"; TableList = "SC1" },
+        [pscustomobject]@{ Method = "get_gp_one_data"; TableList = "GO1" }
+    )
     $StageStartedMs = $StartedAt.ElapsedMilliseconds
-    $ProfessionalUri = "http://127.0.0.1:{0}/api/v1/tdx/local/professional?method=get_financial_data&table_list=Fn193&stock_codes=600000" -f $Port
-    $Professional = Invoke-RestMethod -Uri $ProfessionalUri -TimeoutSec 30
-    $ProfessionalRequestMs = $StartedAt.ElapsedMilliseconds - $StageStartedMs
-    if ($Professional.status -notin @("ready", "partial", "unavailable")) {
-        throw "Portable TDX professional probe did not return an honest data status"
+    $ProfessionalResults = @()
+    foreach ($Probe in $ProfessionalProbes) {
+        $ProfessionalUri = "http://127.0.0.1:{0}/api/v1/tdx/local/professional?method={1}&table_list={2}&stock_codes=600000" -f `
+            $Port, $Probe.Method, $Probe.TableList
+        $Professional = Invoke-RestMethod -Uri $ProfessionalUri -TimeoutSec 30
+        if ($Professional.status -notin @("ready", "partial", "unavailable")) {
+            throw "Portable TDX professional probe did not return an honest data status"
+        }
+        $ProfessionalResults += [pscustomobject]@{
+            method = $Probe.Method
+            table = $Probe.TableList
+            status = $Professional.status
+            detail = if ($Professional.detail) {
+                $Professional.detail
+            } else {
+                "rows=$($Professional.rows.Count)"
+            }
+        }
     }
+    $ProfessionalRequestMs = $StartedAt.ElapsedMilliseconds - $StageStartedMs
     $QuantDetail = if ($null -ne $QuantStrategy) {
         if ($QuantStrategy.status -eq "partial") {
             "candidates=$($QuantStrategy.candidates.Count); coverage=$($QuantStrategy.regime.coverage_percent)%"
@@ -189,9 +210,21 @@ try {
     } else {
         "unavailable"
     }
-    $ProfessionalDetail = if ($Professional.detail) { $Professional.detail } else { "rows=$($Professional.rows.Count)" }
+    $ProfessionalStatus = if ($ProfessionalResults.status -contains "ready") {
+        "ready"
+    } elseif ($ProfessionalResults.status -contains "partial") {
+        "partial"
+    } else {
+        "unavailable"
+    }
+    $ProfessionalSummary = ($ProfessionalResults | ForEach-Object {
+        "{0}:{1}={2}" -f $_.method, $_.table, $_.status
+    }) -join ","
+    $ProfessionalDetail = ($ProfessionalResults | ForEach-Object {
+        "{0} {1}" -f $_.method, $_.detail
+    }) -join "; "
     Write-Host ("Portable smoke passed; window visible in {0}ms; API ready in {1}ms; verification completed in {2}ms; requests home={3}ms overview={4}ms quant={5}ms professional={6}ms; overview {7}; quant strategy {8} ({9}); tdx professional {10} ({11})" -f `
-        $WindowVisibleMs, $HealthReadyMs, $StartedAt.ElapsedMilliseconds, $HomeRequestMs, $OverviewRequestMs, $QuantStrategyRequestMs, $ProfessionalRequestMs, $Overview.status, $QuantStrategyStatus, $QuantDetail, $Professional.status, $ProfessionalDetail)
+        $WindowVisibleMs, $HealthReadyMs, $StartedAt.ElapsedMilliseconds, $HomeRequestMs, $OverviewRequestMs, $QuantStrategyRequestMs, $ProfessionalRequestMs, $Overview.status, $QuantStrategyStatus, $QuantDetail, $ProfessionalStatus, "$ProfessionalSummary; $ProfessionalDetail")
 } finally {
     if (-not $Process.HasExited) {
         Stop-Process -Id $Process.Id

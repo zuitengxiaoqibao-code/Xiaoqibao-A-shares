@@ -415,6 +415,13 @@
 - API 全量 `1153 passed, 1 skipped`；专项信息总览/生命周期回归 `24 passed`；生产构建通过；EXE SHA-256：`84AA38BF398D6B151D596F93E731EFEED8D72C0D8496CDBAE6C8DF417756B5DB`。
 - smoke 后无应用或探测残留进程，`127.0.0.1:17709` 未监听，便携持久目录全部保留。
 
+## 2026-08-07 通达信专业五类探针复验
+
+- 便携 smoke 已逐项请求 `get_financial_data/Fn193`、`get_gpjy_value/GP1`、`get_bkjy_value/BK5`、`get_scjy_value/SC1`、`get_gp_one_data/GO1`。
+- 五类结果均为 `unavailable`，没有因单字段、缓存文件或模块发现状态而误报 `ready`；每类返回原因均为官方 Python 专业接口初始化/调用失败。
+- 专业探针总耗时 `5206ms`；本次发布 smoke 窗口/API/完整验证 `56/1968/14450ms`，信息总览请求 `563ms`，量化真实候选 7 只、市场风格覆盖 85.00%。
+- `apps/api/tests/desktop/test_packaging.py` 专业探针覆盖回归 `11 passed`；smoke 后应用/探测进程释放，`127.0.0.1:17709` 未监听。
+
 ### 当前计划与目标
 
 - [ ] 通达信客户端完成专业插件初始化并恢复只读桥后，逐项实测 `Fn/GP/BK/SC/GO`，记录请求、响应形状、字段单位、来源和时间戳。

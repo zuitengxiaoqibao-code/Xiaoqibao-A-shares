@@ -82,8 +82,25 @@ def test_portable_smoke_supports_a_release_data_mode() -> None:
     assert "XiaoQiBao-Portable" in script
     assert "Release data mode" in script
     assert "/api/v1/tdx/local/professional" in script
-    assert "table_list=Fn193" in script
+    assert 'TableList = "Fn193"' in script
     assert "table_list=Fn&" not in script
+
+
+def test_portable_smoke_probes_every_professional_field_family() -> None:
+    smoke_path = _project_root() / "scripts" / "run-portable-smoke.ps1"
+    script = smoke_path.read_text(encoding="utf-8")
+
+    for method, table in (
+        ("get_financial_data", "Fn193"),
+        ("get_gpjy_value", "GP1"),
+        ("get_bkjy_value", "BK5"),
+        ("get_scjy_value", "SC1"),
+        ("get_gp_one_data", "GO1"),
+    ):
+        assert method in script
+        assert table in script
+    assert "$ProfessionalProbes" in script
+    assert "$ProfessionalSummary" in script
 
 
 def test_portable_smoke_reports_individual_request_timings() -> None:
