@@ -1,8 +1,10 @@
 import hashlib
 import threading
+from concurrent.futures import Future, ThreadPoolExecutor
 from collections import defaultdict
 from datetime import datetime, time, timedelta
 from decimal import Decimal, ROUND_HALF_UP
+from pathlib import Path
 from typing import Callable
 from zoneinfo import ZoneInfo
 
@@ -44,6 +46,8 @@ class MarketOverviewService:
         market_review_source=None,
         trading_calendar=None,
         cache_seconds: int = 5,
+        cache_path: Path | None = None,
+        defer_initial_refresh: bool = False,
     ) -> None:
         self.sentiment_repository = sentiment_repository
         self.news_repository = news_repository
@@ -54,9 +58,17 @@ class MarketOverviewService:
         self.market_review_source = market_review_source
         self.trading_calendar = trading_calendar
         self.cache_ttl = timedelta(seconds=cache_seconds)
+        self.cache_path = cache_path
+        self.defer_initial_refresh = defer_initial_refresh and cache_path is not None
         self._lock = threading.RLock()
         self._cached_at: datetime | None = None
         self._cached: MarketOverviewResponse | None = None
+        self._refresh_future: Future | None = None
+        self._refresh_executor = (
+            ThreadPoolExecutor(max_workers=1, thread_name_prefix="market-overview")
+            if self.defer_initial_refresh else None
+        )
+        self._closed = False
 
     def current(self, now: datetime) -> MarketOverviewResponse:
         if now.tzinfo is None or now.utcoffset() is None:
@@ -68,10 +80,112 @@ class MarketOverviewService:
                 and now - self._cached_at < self.cache_ttl
             ):
                 return self._cached
+            if self._cached is None and self.cache_path is not None:
+                cached = self._read_cache(now)
+                if cached is not None:
+                    self._cached = cached
+                    self._cached_at = now
+                    if self.defer_initial_refresh:
+                        self._schedule_refresh_locked(now)
+                    return cached
+            if self._cached is not None and self.defer_initial_refresh:
+                self._schedule_refresh_locked(now)
+                return self._cached
             response = self._build(now)
             self._cached = response
             self._cached_at = now
+            self._write_cache(response)
             return response
+
+    def close(self) -> None:
+        executor = self._refresh_executor
+        if executor is None:
+            return
+        with self._lock:
+            self._closed = True
+            if self._refresh_future is not None:
+                self._refresh_future.cancel()
+        executor.shutdown(wait=False, cancel_futures=True)
+        self._refresh_executor = None
+
+    def _schedule_refresh_locked(self, now: datetime) -> None:
+        if self._closed or self._refresh_executor is None:
+            return
+        if self._refresh_future is not None and not self._refresh_future.done():
+            return
+        self._refresh_future = self._refresh_executor.submit(
+            self._refresh_cached_snapshot, now
+        )
+
+    def _refresh_cached_snapshot(self, now: datetime) -> None:
+        try:
+            response = self._build(now)
+        except Exception:
+            with self._lock:
+                if self._cached is not None:
+                    self._cached = self._with_metadata(
+                        self._cached,
+                        warning="market_overview_refresh_failed",
+                    )
+                    self._cached_at = now
+            return
+        with self._lock:
+            if self._closed:
+                return
+            self._cached = response
+            self._cached_at = now
+            self._write_cache(response)
+
+    def _read_cache(self, now: datetime) -> MarketOverviewResponse | None:
+        if self.cache_path is None or not self.cache_path.exists():
+            return None
+        try:
+            response = MarketOverviewResponse.model_validate_json(
+                self.cache_path.read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError):
+            return None
+        return self._with_metadata(response, now=now, source="market-overview-cache")
+
+    def _write_cache(self, response: MarketOverviewResponse) -> None:
+        if self.cache_path is None:
+            return
+        temporary = self.cache_path.with_suffix(self.cache_path.suffix + ".tmp")
+        try:
+            self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary.write_text(response.model_dump_json(), encoding="utf-8")
+            temporary.replace(self.cache_path)
+        except OSError:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def _with_metadata(
+        self,
+        response: MarketOverviewResponse,
+        *,
+        now: datetime | None = None,
+        source: str | None = None,
+        warning: str | None = None,
+    ) -> MarketOverviewResponse:
+        updates: dict[str, object] = {}
+        if now is not None:
+            local_now = now.astimezone(CHINA_TZ)
+            market_data = response.market_data.model_copy(update={
+                "phase": self._market_phase(local_now),
+                "freshness": self._market_freshness(
+                    response.market_data.observed_at,
+                    response.market_data.quality,
+                    local_now,
+                ),
+            })
+            updates["market_data"] = market_data
+        if source is not None:
+            updates["sources"] = tuple(dict.fromkeys((*response.sources, source)))
+        if warning is not None:
+            updates["warnings"] = tuple(dict.fromkeys((*response.warnings, warning)))
+        return response.model_copy(update=updates) if updates else response
 
     def _build(self, now: datetime) -> MarketOverviewResponse:
         local_now = now.astimezone(CHINA_TZ)

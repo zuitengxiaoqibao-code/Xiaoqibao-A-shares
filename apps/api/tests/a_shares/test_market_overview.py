@@ -1,6 +1,9 @@
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
+import time
 
 import httpx
 
@@ -165,6 +168,22 @@ class OfflineHttpSource:
         raise httpx.ConnectError("offline")
 
 
+class BlockingSource(Source):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = Event()
+        self.release = Event()
+
+    def fetch_indices(self):
+        self.calls += 1
+        self.started.set()
+        self.release.wait(timeout=5)
+        raise OSError("refresh blocked")
+
+    def fetch_minutes(self):
+        raise OSError("refresh blocked")
+
+
 class LocalMarketSource:
     def current(self):
         return OverviewMarketSnapshot(
@@ -244,12 +263,14 @@ def service(
     clock=lambda: NOW,
     local_market_source=None,
     news_repository=None,
+    **kwargs,
 ) -> MarketOverviewService:
     return MarketOverviewService(
         sentiment_repository=SentimentRepository(),
         news_repository=news_repository or NewsRepository(),
         first_limit_up_repository=FirstLimitRepository(), source=source, clock=clock,
         local_market_source=local_market_source,
+        **kwargs,
     )
 
 
@@ -347,3 +368,32 @@ def test_overview_prefers_independent_local_realtime_market_statistics() -> None
     assert "net_positive_ratio" in result.regime.missing_factors
     assert result.regime.rule_matched is False
     assert "tdx-local-realtime" in result.sources
+
+
+def test_overview_reuses_persisted_snapshot_while_latest_refresh_runs_in_background(
+    tmp_path: Path,
+) -> None:
+    cache_path = tmp_path / "market-overview.json"
+    initial = service(Source(), clock=lambda: NOW, cache_path=cache_path)
+    initial.current(NOW)
+    initial.close()
+
+    source = BlockingSource()
+    cached = service(
+        source,
+        clock=lambda: NOW,
+        cache_path=cache_path,
+        defer_initial_refresh=True,
+    )
+
+    result = cached.current(NOW + timedelta(seconds=20))
+
+    assert result.observed_at == NOW
+    assert "market-overview-cache" in result.sources
+    assert source.started.wait(timeout=1)
+
+    source.release.set()
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline and not source.calls:
+        time.sleep(0.01)
+    cached.close()

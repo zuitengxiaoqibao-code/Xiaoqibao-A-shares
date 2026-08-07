@@ -935,6 +935,8 @@ async def lifespan(application: FastAPI):
                     local_market_source=local_tdx_overview_source,
                     market_review_source=local_market_review_source,
                     trading_calendar=trading_calendar,
+                    cache_path=portable_root / "cache" / "market-overview.json",
+                    defer_initial_refresh=is_portable_runtime,
                 )
                 application.state.quant_strategy_service = QuantStrategyService(
                     application.state.market_overview_service,
@@ -1026,6 +1028,11 @@ async def lifespan(application: FastAPI):
                 )
                 if quant_strategy_service is not None:
                     quant_strategy_service.close()
+                market_overview_service = getattr(
+                    application.state, "market_overview_service", None
+                )
+                if market_overview_service is not None:
+                    market_overview_service.close()
                 if local_market_review_source is not None:
                     local_market_review_source.close()
                 if history_symbol_reconciliation_task is not None:

@@ -406,6 +406,15 @@
 - CPython 基线 `python -X importtime -c "import qibao_api.main"` 约 `637ms`；较大的单项包括 FastAPI/Pydantic schema、公司研究/诊断契约和多路由模块。当前不据此盲目排除依赖。
 - 后续优化门槛：任何懒加载或打包调整都必须同时通过 API/前端回归、真实发布 smoke、隔离 smoke，并记录冷盘与热启动两组结果。
 
+## 2026-08-07 信息总览缓存优先与后台刷新
+
+- 新增 `market-overview.json` 便携缓存：只写入上一轮实际生成的 `MarketOverviewResponse`，读取时按当前盘前/盘中/收盘后阶段重新计算 freshness。
+- 有完整缓存时，信息总览接口先返回缓存并附带 `market-overview-cache` 来源标记，后台刷新完成后下一次轮询消费最新结果；刷新异常只保留旧证据并增加固定 `market_overview_refresh_failed` 警告。
+- 真实发布 smoke 三次：首次建立缓存时信息总览请求 `5215ms`，随后两次为 `616ms`、`569ms`；窗口/API/完整验证分别为 `308/5584/19805ms`、`61/1998/10710ms`、`56/1983/10583ms`。
+- 隔离 smoke：窗口/API/完整验证 `114/2445/4461ms`，无发布持久缓存时仍遵循真实数据边界，量化保持 `unavailable`。
+- API 全量 `1153 passed, 1 skipped`；专项信息总览/生命周期回归 `24 passed`；生产构建通过；EXE SHA-256：`84AA38BF398D6B151D596F93E731EFEED8D72C0D8496CDBAE6C8DF417756B5DB`。
+- smoke 后无应用或探测残留进程，`127.0.0.1:17709` 未监听，便携持久目录全部保留。
+
 ### 当前计划与目标
 
 - [ ] 通达信客户端完成专业插件初始化并恢复只读桥后，逐项实测 `Fn/GP/BK/SC/GO`，记录请求、响应形状、字段单位、来源和时间戳。
