@@ -14,6 +14,7 @@ class StartupProgress:
 
 
 _STAGE_PROGRESS: dict[str, tuple[int, str, str]] = {
+    "api-app-imported": (25, "API 模块已加载", "正在初始化本地数据服务"),
     "local-sources-ready": (28, "本地数据源已检查", "正在完成本地数据服务初始化"),
     "repositories-ready": (31, "本地数据库已就绪", "正在挂载研究与行情仓库"),
     "bond-universe-ready": (33, "可转债数据服务已就绪", "正在准备 A 股市场服务"),

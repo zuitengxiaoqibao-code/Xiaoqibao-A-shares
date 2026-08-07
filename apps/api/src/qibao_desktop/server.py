@@ -1,8 +1,12 @@
+import logging
 import socket
 import threading
 import time
 
 import uvicorn
+
+
+logger = logging.getLogger(__name__)
 
 
 class LocalApiServer:
@@ -52,7 +56,21 @@ class LocalApiServer:
         return self._thread.is_alive()
 
     def _run(self) -> None:
+        self._load_application()
         self._server.run(sockets=[self._socket])
+
+    def _load_application(self):
+        configured = self._server.config.app
+        if not isinstance(configured, str):
+            return configured
+        started = time.perf_counter()
+        loaded = uvicorn.importer.import_from_string(configured)
+        self._server.config.app = loaded
+        logger.info(
+            "desktop startup stage=api-app-imported import_ms=%d",
+            round((time.perf_counter() - started) * 1000),
+        )
+        return loaded
 
     def launch(self) -> None:
         if self._thread.ident is not None:

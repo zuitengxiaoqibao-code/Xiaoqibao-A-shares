@@ -4,6 +4,7 @@ from urllib.request import urlopen
 
 from fastapi import FastAPI
 
+from qibao_desktop import server as server_module
 from qibao_desktop.server import LocalApiServer
 
 
@@ -30,6 +31,31 @@ def test_local_api_server_pins_only_the_desktop_protocols(monkeypatch) -> None:
     assert captured["lifespan"] == "on"
     assert captured["interface"] == "asgi3"
     server._socket.close()
+
+
+def test_local_api_server_preloads_string_app_and_records_import_milestone(monkeypatch) -> None:
+    server = LocalApiServer(app="qibao_api.main:app", port=0)
+    imported = object()
+    messages = []
+    monkeypatch.setattr(
+        "qibao_desktop.server.uvicorn.importer.import_from_string",
+        lambda value: messages.append(value) or imported,
+    )
+    monkeypatch.setattr(server_module.logger, "info", lambda *args, **kwargs: messages.append(args))
+
+    try:
+        result = server._load_application()
+    finally:
+        server._socket.close()
+
+    assert result is imported
+    assert server._server.config.app is imported
+    assert "qibao_api.main:app" in messages
+    assert any(
+        "api-app-imported" in item[0]
+        for item in messages
+        if isinstance(item, tuple) and item
+    )
 
 
 def test_local_api_server_initializes_without_a_console(monkeypatch) -> None:
