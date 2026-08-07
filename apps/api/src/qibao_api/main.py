@@ -4,8 +4,9 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, suppress
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time as datetime_time, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import FastAPI, Request
@@ -194,6 +195,7 @@ from qibao_api.zhongshu.postclose_review import PostcloseReviewService
 
 logger = logging.getLogger(__name__)
 PORTABLE_HISTORY_RECONCILIATION_DELAY_SECONDS = 15.0
+CHINA_TZ = ZoneInfo("Asia/Shanghai")
 
 
 def _create_database_engine(database_url: str):
@@ -272,6 +274,13 @@ def _refresh_market_sentiment(service, now: datetime) -> None:
 
 def _defer_initial_market_sentiment_refresh(executor, service, now: datetime) -> None:
     executor.submit(_refresh_market_sentiment, service, now)
+
+
+def _should_defer_initial_market_sentiment_refresh(now: datetime) -> bool:
+    """Avoid queueing a known premarket no-op behind startup disk work."""
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("now must include a timezone")
+    return now.astimezone(CHINA_TZ).time() >= datetime_time(9, 30)
 
 
 async def _refresh_a_share_universe(compliance, source, directory) -> None:
@@ -916,14 +925,16 @@ async def lifespan(application: FastAPI):
                 application.state.scheduler.market_sentiment_service = (
                     application.state.market_sentiment_service
                 )
+                startup_now = datetime.now(timezone.utc)
                 if (
                     is_portable_runtime
                     and local_tdx_overview_source.current() is not None
+                    and _should_defer_initial_market_sentiment_refresh(startup_now)
                 ):
                     _defer_initial_market_sentiment_refresh(
                         history_sync_executor,
                         application.state.market_sentiment_service,
-                        datetime.now(timezone.utc),
+                        startup_now,
                     )
                 log_startup_stage("market-sentiment-ready")
                 application.state.market_overview_service = MarketOverviewService(

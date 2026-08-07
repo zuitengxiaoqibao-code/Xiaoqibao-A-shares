@@ -84,6 +84,15 @@ def test_initial_market_sentiment_refresh_is_submitted_to_background() -> None:
     assert calls == [(main_module._refresh_market_sentiment, (service, now))]
 
 
+def test_initial_market_sentiment_refresh_is_not_submitted_before_session() -> None:
+    assert not main_module._should_defer_initial_market_sentiment_refresh(
+        datetime(2026, 8, 7, 0, 0, tzinfo=timezone.utc)
+    )
+    assert main_module._should_defer_initial_market_sentiment_refresh(
+        datetime(2026, 8, 7, 2, 0, tzinfo=timezone.utc)
+    )
+
+
 def test_initial_market_sentiment_refresh_skips_expected_premarket_phase_without_traceback(caplog) -> None:
     class Service:
         def refresh(self, _now):
