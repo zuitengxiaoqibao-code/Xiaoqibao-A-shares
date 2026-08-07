@@ -4,7 +4,7 @@ import importlib.util
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from threading import Lock
@@ -360,13 +360,17 @@ class TdxQuantPythonSource:
         *,
         module_loader=None,
         clock=lambda: datetime.now(timezone.utc),
+        failure_cooldown: timedelta = timedelta(seconds=10),
     ) -> None:
         self.roots = tuple(Path(root) for root in roots)
         self._custom_module_loader = module_loader is not None
         self.module_loader = module_loader or self._load_module
         self.clock = clock
+        self.failure_cooldown = failure_cooldown
         self._module_cache: dict[Path, Any] = {}
         self._module_cache_lock = Lock()
+        self._failure_until: datetime | None = None
+        self._failure_lock = Lock()
 
     @staticmethod
     def _load_module(path: Path):
@@ -420,6 +424,7 @@ class TdxQuantPythonSource:
             raise TdxProfessionalDataUnavailable(
                 "TDX Python professional module unavailable"
             )
+        self._raise_if_failure_cooling_down()
         try:
             module = self._load_cached_module(path)
         except TdxProfessionalDataUnavailable:
@@ -454,15 +459,19 @@ class TdxQuantPythonSource:
                 kwargs["year"] = int(year)
                 kwargs["mmdd"] = int(mmdd)
             payload = function(**kwargs)
-            return parse_tdx_professional_rows(
+            rows = parse_tdx_professional_rows(
                 payload,
                 method=method,
                 fetched_at=self.clock(),
                 source="tdx-python-professional",
             )
+            self._clear_failure_cooldown()
+            return rows
         except TdxProfessionalDataUnavailable:
+            self._remember_failure()
             raise
         except Exception as error:
+            self._remember_failure()
             raise TdxProfessionalDataUnavailable(
                 "TDX Python professional call unavailable"
             ) from error
@@ -480,6 +489,21 @@ class TdxQuantPythonSource:
             module = self.module_loader(path)
             self._module_cache[cache_key] = module
             return module
+
+    def _raise_if_failure_cooling_down(self) -> None:
+        with self._failure_lock:
+            if self._failure_until is not None and self.clock() < self._failure_until:
+                raise TdxProfessionalDataUnavailable(
+                    "TDX Python professional call unavailable"
+                )
+
+    def _remember_failure(self) -> None:
+        with self._failure_lock:
+            self._failure_until = self.clock() + self.failure_cooldown
+
+    def _clear_failure_cooldown(self) -> None:
+        with self._failure_lock:
+            self._failure_until = None
 
 
 def inspect_tdx_quant_python_roots(

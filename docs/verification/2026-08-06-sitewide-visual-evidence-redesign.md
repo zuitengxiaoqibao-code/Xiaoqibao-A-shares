@@ -430,6 +430,16 @@
 - 重新构建后的真实发布 EXE 串行 smoke：窗口/API/完整验证 `63/2000/14700ms`；信息总览 `593ms`，量化真实候选 7 只、覆盖 85.00%，五类专业探针均 `unavailable`。
 - 本轮 EXE SHA-256：`DA8C2486AA19F8EFEE4088FCFD1934F3639F4F688AB33086BB5F5D68004BABC1`；smoke 后无应用/探测残留进程，`127.0.0.1:17709` 未监听。
 
+## 2026-08-07 通达信专业失败冷却与发布复验
+
+- `TdxQuantPythonSource` 对同一初始化/调用失败增加 10 秒短时冷却；冷却只返回相同的 `unavailable`，不缓存专业数据，也不把失败升级为 `partial/ready`。
+- 新增 `test_python_professional_source_cools_down_repeated_unavailable_initialization`，确认连续两次只读查询只执行一次官方客户端初始化；专业源专项 `10 passed`，Ruff 通过。
+- API 全量 `1156 passed, 1 skipped`；前端上一轮全量 `475 passed`，Vite/TypeScript 生产构建和 PyInstaller 便携构建通过。
+- 真实发布冷盘 smoke：窗口/API/完整验证 `290/5577/18858ms`，信息总览 `4882ms`，专业五类探针 `1032ms`。
+- 真实发布热启动 smoke：窗口/API/完整验证 `58/1959/10359ms`，信息总览 `656ms`，专业五类探针 `1079ms`。
+- 两次均为信息总览 `ready`、量化 `partial`（7 只真实候选、市场风格覆盖 85.00%）、五类专业字段全部 `unavailable`；没有模拟值。
+- 最新 EXE SHA-256：`743434B752F0B13007E261B6B793AE47D872D788B7DA89EAD72953A7D81C6DA6`；smoke 后无应用/探测残留进程，`127.0.0.1:17709` 未监听，持久目录全部保留。
+
 ### 当前计划与目标
 
 - [ ] 通达信客户端完成专业插件初始化并恢复只读桥后，逐项实测 `Fn/GP/BK/SC/GO`，记录请求、响应形状、字段单位、来源和时间戳。

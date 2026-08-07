@@ -184,6 +184,38 @@ def test_python_professional_source_reuses_loaded_module_between_reads() -> None
     assert [call[0] for call in module.tq.calls].count("initialize") == 2
 
 
+def test_python_professional_source_cools_down_repeated_unavailable_initialization() -> None:
+    class FakeTq:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def initialize(self, path):
+            self.calls.append(("initialize", path))
+            raise OSError("client is not initialized")
+
+        def close(self):
+            self.calls.append(("close",))
+
+    class FakeModule:
+        def __init__(self) -> None:
+            self.tq = FakeTq()
+
+    module = FakeModule()
+    source = TdxQuantPythonSource(
+        ("D:/new_tdx64",), module_loader=lambda _path: module, clock=lambda: NOW
+    )
+
+    for _ in range(2):
+        with pytest.raises(TdxProfessionalDataUnavailable, match="call unavailable"):
+            source.fetch(
+                method="get_financial_data",
+                stock_codes=("600000.SH",),
+                fields=("Fn193",),
+            )
+
+    assert [call[0] for call in module.tq.calls].count("initialize") == 1
+
+
 def test_rpc_professional_source_falls_back_to_lazy_python_source() -> None:
     class MissingRpc:
         def available(self) -> bool:
