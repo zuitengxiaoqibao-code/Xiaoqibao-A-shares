@@ -315,3 +315,9 @@
 - [ ] 通达信专业只读桥恢复后，逐项实测 `Fn/GP/BK/SC/GO`，记录请求、响应形状、单位、来源和时间戳。
 - [ ] 仅将实测通过的专业字段绑定到业务菜单；空字段、错误包和单位不明继续保持 `unavailable`。
 - [ ] 继续积累真正冷盘与热启动样本，拆分 PyInstaller/Windows 冷读取成本与业务请求耗时；不得用热启动替代冷盘结论。
+
+## 2026-08-07 continuation: import-cost baseline
+
+- [x] 记录本轮发布 smoke 的 API 应用导入里程碑：日志样本为 `import_ms=1951/1974/974`，而生命周期初始化约 `546-594ms`；冷启动差异不能归因于业务初始化。
+- [x] 记录 CPython 解释器的模块导入基线：`python -X importtime -c "import qibao_api.main"` 约 `637ms`，主要成本集中在 FastAPI/Pydantic schema 与路由契约加载；不直接据此排除运行时依赖。
+- [ ] 下一轮仅针对已验证的重型导入做小范围懒加载实验，每次必须以 EXE 冷盘/热启动和接口回归验证，失败即回退。

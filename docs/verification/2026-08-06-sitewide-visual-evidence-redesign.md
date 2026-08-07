@@ -400,6 +400,12 @@
 - 通达信专业只读桥恢复后逐字段实测 `Fn/GP/BK/SC/GO` 并绑定业务菜单。
 - 继续累积冷盘/热启动样本，拆分 PyInstaller/Windows 冷读取成本与业务接口耗时。
 
+## 2026-08-07 冷启动导入成本基线
+
+- EXE 发布 smoke 日志记录到 `api-app-imported import_ms=1951/1974/974` 三组样本；随后生命周期里程碑约 `546-594ms`，说明冷启动主要波动发生在 PyInstaller/Windows 内读取与应用模块导入阶段。
+- CPython 基线 `python -X importtime -c "import qibao_api.main"` 约 `637ms`；较大的单项包括 FastAPI/Pydantic schema、公司研究/诊断契约和多路由模块。当前不据此盲目排除依赖。
+- 后续优化门槛：任何懒加载或打包调整都必须同时通过 API/前端回归、真实发布 smoke、隔离 smoke，并记录冷盘与热启动两组结果。
+
 ### 当前计划与目标
 
 - [ ] 通达信客户端完成专业插件初始化并恢复只读桥后，逐项实测 `Fn/GP/BK/SC/GO`，记录请求、响应形状、字段单位、来源和时间戳。
