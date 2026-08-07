@@ -387,6 +387,19 @@
 - 发布日志实际记录并被解析的里程碑包括 `api-app-imported`、`local-sources-ready`、`repositories-ready`、`bond-universe-ready`、`services-and-instrument-directory-ready`、`a-share-universe-ready`、`market-sentiment-ready` 和 `lifespan-ready`。
 - smoke 后应用/探测进程均已释放，`127.0.0.1:17709` 未监听，持久目录全部保留；本轮 EXE SHA-256：`80102A8140A9E794DF44D576288C2BC0624D5B7A14452B5F5671C6F40E76BD13`。
 
+## 2026-08-07 API import milestone revalidation
+
+- 桌面专项回归 `35 passed`；启动导入里程碑由 Uvicorn 字符串应用显式加载后写入日志，启动页可区分 API 模块导入与生命周期初始化。
+- 真实发布目录连续三次 smoke：窗口/API/完整验证分别为 `299/5584/19437ms`、`59/1956/11085ms`、`55/2004/11035ms`；信息总览均为 `ready`，量化均为 `partial`（真实候选 7 只、市场风格覆盖 85.00%）。
+- 隔离目录 smoke：窗口/API/完整验证 `122/2414/4492ms`；无真实样本时量化保持 `unavailable`，未生成模拟候选。
+- 三次真实发布与隔离 smoke 后均无应用/探测残留进程，`127.0.0.1:17709` 未监听，`config/data/news/cache/logs/models/exports/backups` 全部保留。
+- 本轮 EXE SHA-256：`EC47CDAFA176977C8D9CE2FBBA8FFF5F59DB763F8003A02DB4B8DCEEAAD08A8E`。
+
+### 本轮仍未完成
+
+- 通达信专业只读桥恢复后逐字段实测 `Fn/GP/BK/SC/GO` 并绑定业务菜单。
+- 继续累积冷盘/热启动样本，拆分 PyInstaller/Windows 冷读取成本与业务接口耗时。
+
 ### 当前计划与目标
 
 - [ ] 通达信客户端完成专业插件初始化并恢复只读桥后，逐项实测 `Fn/GP/BK/SC/GO`，记录请求、响应形状、字段单位、来源和时间戳。
