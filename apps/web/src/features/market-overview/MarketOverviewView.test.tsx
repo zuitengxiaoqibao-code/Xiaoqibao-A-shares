@@ -368,6 +368,38 @@ describe("MarketOverviewView", () => {
     expect(load).toHaveBeenCalledTimes(3);
   });
 
+  it("keeps the completed startup overlay hidden during a five-second background refresh", async () => {
+    localStorage.clear();
+    let resolveInitial: ((value: MarketOverviewResponse) => void) | undefined;
+    let resolveRefresh: ((value: MarketOverviewResponse) => void) | undefined;
+    const load = vi
+      .fn<() => Promise<MarketOverviewResponse>>()
+      .mockImplementationOnce(() => new Promise<MarketOverviewResponse>((resolve) => {
+        resolveInitial = resolve;
+      }))
+      .mockImplementationOnce(() => new Promise<MarketOverviewResponse>((resolve) => {
+        resolveRefresh = resolve;
+      }));
+
+    render(<MarketOverviewView load={load} />);
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(1));
+    await act(async () => vi.advanceTimersByTime(1000));
+    await act(async () => resolveInitial?.({ ...overview, status: "ready" }));
+    await act(async () => vi.advanceTimersByTime(1200));
+    await act(async () => vi.advanceTimersByTime(300));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "正在加载信息总览" })).not.toBeInTheDocument());
+    expect(screen.getByRole("region", { name: "A 股市场情绪与核心指数" })).toHaveTextContent("76");
+
+    await act(async () => vi.advanceTimersByTime(5000));
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("dialog", { name: "正在加载信息总览" })).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "A 股市场情绪与核心指数" })).toHaveTextContent("76");
+
+    await act(async () => resolveRefresh?.({ ...overview, status: "ready", sentiment: { ...overview.sentiment, score: "78" } }));
+    await waitFor(() => expect(screen.getByRole("region", { name: "A 股市场情绪与核心指数" })).toHaveTextContent("78"));
+    localStorage.clear();
+  });
+
   it("does not start another refresh while the current request is pending", async () => {
     let resolveFirst: ((value: MarketOverviewResponse) => void) | undefined;
     const load = vi.fn(() => new Promise<MarketOverviewResponse>((resolve) => {

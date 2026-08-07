@@ -90,6 +90,7 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, synthesizeS
   const [data, setData] = useState<MarketOverviewResponse | null>(initialCache?.value ?? null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [hasCompletedInitialLoad, setHasCompletedInitialLoad] = useState(false);
   const [cacheTimestamp, setCacheTimestamp] = useState<string | null>(initialCache?.cachedAt ?? null);
   const [usingCache, setUsingCache] = useState(() => Boolean(initialCache));
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -116,6 +117,9 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, synthesizeS
       const next = keepAShareInformation(await load(controller.signal));
       if (controller.signal.aborted) return;
       setData(next);
+      if (next.status !== "unavailable" && next.market_data.quality !== "unavailable") {
+        setHasCompletedInitialLoad(true);
+      }
       const stored = writeMarketOverviewCache(next);
       setCacheTimestamp((current) => stored.persisted ? stored.cachedAt : current);
       setUsingCache(false);
@@ -235,6 +239,7 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, synthesizeS
       loading={loading}
       liveReady={liveReady}
       snapshotReady={snapshotReady}
+      hasCompletedInitialLoad={hasCompletedInitialLoad}
       onRetry={() => void refresh()}
     />
     <TerminalPageHeader

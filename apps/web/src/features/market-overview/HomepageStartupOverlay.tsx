@@ -9,6 +9,7 @@ type Props = {
   loading: boolean;
   liveReady?: boolean;
   snapshotReady?: boolean;
+  hasCompletedInitialLoad?: boolean;
   onRetry: () => void;
 };
 
@@ -38,6 +39,7 @@ export function HomepageStartupOverlay({
   loading,
   liveReady = Boolean(data && !loading && !error),
   snapshotReady = liveReady,
+  hasCompletedInitialLoad = false,
   onRetry,
 }: Props) {
   const [visible, setVisible] = useState(true);
@@ -73,6 +75,10 @@ export function HomepageStartupOverlay({
   }, [data, failed, loading, snapshotReady]);
 
   useEffect(() => {
+    if (hasCompletedInitialLoad && loading) {
+      setVisible(false);
+      return;
+    }
     if (!data || loading) {
       setVisible(true);
       return;
@@ -80,7 +86,7 @@ export function HomepageStartupOverlay({
     if (progress < (snapshotReady ? 100 : 48)) return;
     const timer = window.setTimeout(() => setVisible(false), snapshotReady ? 240 : 800);
     return () => window.clearTimeout(timer);
-  }, [data, loading, progress, snapshotReady]);
+  }, [data, hasCompletedInitialLoad, loading, progress, snapshotReady]);
 
   if (!visible) return null;
 
