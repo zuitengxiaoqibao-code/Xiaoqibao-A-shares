@@ -377,12 +377,11 @@ def test_service_keeps_daily_candidate_scan_cached_while_strategy_refreshes() ->
 
 
 def test_service_can_defer_first_candidate_scan_without_blocking_request() -> None:
-    started = False
+    started = __import__("threading").Event()
     release = __import__("threading").Event()
 
     def load_board(_as_of, _limit):
-        nonlocal started
-        started = True
+        started.set()
         release.wait(timeout=2)
         return board()
 
@@ -395,7 +394,7 @@ def test_service_can_defer_first_candidate_scan_without_blocking_request() -> No
 
     pending = service.current(NOW)
 
-    assert started is True
+    assert started.wait(timeout=1)
     assert pending.candidate_scan_state == "pending"
     assert pending.candidates == ()
     assert "candidate_scan_pending" in pending.missing_data

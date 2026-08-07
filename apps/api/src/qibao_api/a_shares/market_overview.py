@@ -31,6 +31,7 @@ from qibao_api.contracts.market_overview import (
 HUNDRED = Decimal("100")
 TWO_PLACES = Decimal("0.01")
 CHINA_TZ = ZoneInfo("Asia/Shanghai")
+LIVE_MAX_AGE = timedelta(minutes=2)
 
 
 class MarketOverviewService:
@@ -421,7 +422,11 @@ class MarketOverviewService:
         observed_day = observed_local.date()
         phase = self._market_phase(local_now)
         if phase == "intraday" and observed_day == local_now.date():
-            return "live"
+            return (
+                "live"
+                if local_now - observed_local <= LIVE_MAX_AGE
+                else "stale"
+            )
         if phase == "postclose" and observed_day == local_now.date():
             return "final"
         if phase in {"premarket", "closed"} and observed_day == self._previous_trading_day(local_now.date()):

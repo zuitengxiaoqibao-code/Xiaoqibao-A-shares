@@ -334,3 +334,8 @@
 - [x] 便携 smoke 从单一 `Fn193` 探针扩展为五类逐字段探针：`get_financial_data/Fn193`、`get_gpjy_value/GP1`、`get_bkjy_value/BK5`、`get_scjy_value/SC1`、`get_gp_one_data/GO1`。
 - [x] 每类探针单独校验 `ready/partial/unavailable`，汇总只表示五类真实返回状态，不把缓存文件发现或单一字段成功冒充整体专业能力。
 - [x] 当前真实发布 smoke 五类均为 `unavailable`，原因保持为通达信专业 Python 接口未完成客户端/插件初始化；等待外部桥恢复后直接复用同一验收命令。
+
+## 2026-08-07 continuation: freshness age boundary
+
+- [x] 盘中 freshness 增加真实年龄边界：同日快照超过 2 分钟不再标记为 `live`，改为 `stale`；上一收盘和收盘最终语义保持独立。
+- [x] 新增回归覆盖同日旧快照；并修正候选后台扫描测试使用条件等待，避免线程尚未调度时的时序误报。

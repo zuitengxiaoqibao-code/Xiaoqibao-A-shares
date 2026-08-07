@@ -246,6 +246,18 @@ def test_overview_labels_same_day_snapshot_as_live_during_session() -> None:
     assert result.market_data.freshness == "live"
 
 
+def test_overview_marks_old_same_day_snapshot_stale_during_session() -> None:
+    current = NOW + timedelta(minutes=6)
+    result = service(
+        Source(),
+        clock=lambda: current,
+        local_market_source=LocalMarketSource(),
+    ).current(current)
+
+    assert result.market_data.phase == "intraday"
+    assert result.market_data.freshness == "stale"
+
+
 def test_overview_labels_same_day_snapshot_as_final_after_close() -> None:
     postclose = datetime(2026, 7, 29, 8, 30, tzinfo=timezone.utc)
     result = service(
