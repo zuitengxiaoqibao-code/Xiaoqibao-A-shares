@@ -183,7 +183,7 @@
 
 ### Task 8: 可复现发布与迁移/回滚治理（工程治理项二）
 
-**状态：实现完成，待最终发布验收**
+**状态：已完成**
 
 **Files:**
 - Modify: `scripts/build-portable.ps1`
@@ -199,17 +199,17 @@
 - 构建前备份持久目录；迁移失败自动恢复到上一个备份；回滚脚本必须先校验备份哈希再替换。
 - 发布质量脚本拒绝乱码、缺字段、脏源码、哈希不匹配、持久目录缺失和迁移版本倒退。
 
-- [ ] **Step 1: 写发布清单和迁移回滚失败测试**。
-- [ ] **Step 2: 实现备份、迁移前置检查、哈希校验和回滚命令**。
-- [ ] **Step 3: 将 smoke 输出接入质量清单并保留真实数据目录**。
-- [ ] **Step 4: 运行迁移演练、发布脚本测试和真实 EXE smoke**。
+- [x] **Step 1: 写发布清单和迁移回滚失败测试**。
+- [x] **Step 2: 实现备份、迁移前置检查、哈希校验和回滚命令**。
+- [x] **Step 3: 将 smoke 输出接入质量清单并保留真实数据目录**。
+- [x] **Step 4: 运行迁移演练、发布脚本测试和真实 EXE smoke**。
 
 ### Final Verification
 
-- [ ] API 全量 Pytest、Web 全量 Vitest、Ruff、TypeScript/Vite 构建通过。
-- [ ] 变更中文文件 UTF-8/mojibake 扫描通过，`git diff --check` 通过。
-- [ ] `scripts/build-portable.ps1` 成功并保留八个持久目录。
-- [ ] `scripts/run-portable-smoke.ps1 -UseReleaseData` 成功，窗口、API、首页和关键接口均可用。
-- [ ] `scripts/verify-release-quality.ps1` 成功，发布清单中的真实状态、哈希、迁移版本和编码均通过。
-- [ ] 通达信进程与监听状态前后保持不变，smoke 结束无本程序残留进程。
-- [ ] 更新 `D:\Users\90090\Documents\知识库\02-项目记忆\金融财经.md`，并从知识库根目录运行 Vault 校验。
+- [x] API 全量 Pytest、Web 全量 Vitest、Ruff、TypeScript/Vite 构建通过。
+- [x] 变更中文文件 UTF-8/mojibake 扫描通过，`git diff --check` 通过。
+- [x] `scripts/build-portable.ps1` 成功并保留八个持久目录。
+- [x] `scripts/run-portable-smoke.ps1 -UseReleaseData` 成功，窗口、API、首页和关键接口均可用。
+- [x] `scripts/verify-release-quality.ps1` 成功，发布清单中的真实状态、哈希、迁移版本和编码均通过。
+- [x] smoke 前后通达信均未运行；本轮未启动、关闭或控制通达信，smoke 结束无本程序残留进程。
+- [x] 更新 `D:\Users\90090\Documents\知识库\02-项目记忆\金融财经.md`，并从知识库根目录运行 Vault 校验。
