@@ -44,8 +44,11 @@ describe("OperationsView", () => {
     render(<OperationsView loadStatus={() => Promise.resolve(status)} setSchedulerPaused={() => Promise.resolve(status.scheduler)} createBackup={() => Promise.resolve(status.backups[0])} verifyBackup={verifyBackup} runManualJob={() => Promise.resolve({ report_id: "report-manual" })} />);
 
     expect(await screen.findByRole("heading", { name: "数据与运维中心" })).toBeInTheDocument();
-    expect(screen.getByText("runtime_error")).toBeInTheDocument();
-    expect(screen.getByText("累计尝试 3 次")).toBeInTheDocument();
+    const taskDetails = screen.getByText("任务运行脚本").closest("details");
+    expect(taskDetails).not.toHaveAttribute("open");
+    fireEvent.click(screen.getByText("任务运行脚本"));
+    expect(screen.getByText("运行错误")).toBeVisible();
+    expect(screen.getByText("累计尝试 3 次")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "执行恢复演练" }));
     expect(await screen.findByText("恢复演练通过")).toBeInTheDocument();
     expect(verifyBackup).toHaveBeenCalledWith("backup-20260714");
@@ -70,9 +73,12 @@ describe("OperationsView", () => {
     render(<OperationsView loadStatus={() => Promise.resolve(status)} setSchedulerPaused={() => Promise.resolve(status.scheduler)} createBackup={() => Promise.resolve(status.backups[0])} verifyBackup={() => Promise.reject(new Error("unused"))} runManualJob={() => Promise.resolve({ report_id: "report-manual" })} cleanupCache={cleanupCache} />);
 
     expect(await screen.findByRole("heading", { name: "本地目录与数据库" })).toBeInTheDocument();
-    expect(screen.getByText("data/market.duckdb")).toBeInTheDocument();
-    expect(screen.getByText("程序 3.00 MB · 持久数据 4.00 MB")).toBeInTheDocument();
-    expect(screen.getByText(/只允许清理 cache、logs/)).toBeInTheDocument();
+    const inventoryDetails = screen.getByRole("heading", { name: "本地目录与数据库" }).closest("details");
+    expect(inventoryDetails).not.toHaveAttribute("open");
+    fireEvent.click(screen.getByRole("heading", { name: "本地目录与数据库" }));
+    expect(screen.getByText("data/market.duckdb")).toBeVisible();
+    expect(screen.getByText("程序 3.00 MB · 持久数据 4.00 MB")).toBeVisible();
+    expect(screen.getByText(/只允许清理 cache、logs/)).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "清理72小时前缓存" }));
     expect(await screen.findByText("已清理 4 个缓存文件")).toBeInTheDocument();
     expect(cleanupCache).toHaveBeenCalledWith(72);
@@ -120,6 +126,29 @@ describe("OperationsView", () => {
     expect(screen.getAllByText((_, element) => element?.textContent?.includes("85%") ?? false).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("历史不足")).toBeInTheDocument();
     expect(screen.getByText("600001")).toBeInTheDocument();
+  });
+
+  it("translates repair task states and English load failures into Chinese", async () => {
+    const pausedJob = {
+      job_id: "job-paused",
+      mode: "backfill" as const,
+      target_date: "2026-08-14",
+      state: "paused" as const,
+      pause_requested: false,
+      total_count: 100,
+      ready_count: 40,
+      failed_count: 2,
+      skipped_count: 3,
+      pending_count: 55,
+      tdx_ready_count: 40,
+      baidu_ready_count: 0,
+      created_at: "2026-08-14T08:00:00Z",
+      updated_at: "2026-08-14T08:05:00Z",
+    };
+    render(<OperationsView loadStatus={() => Promise.resolve(status)} setSchedulerPaused={() => Promise.resolve(status.scheduler)} createBackup={() => Promise.resolve(status.backups[0])} verifyBackup={() => Promise.reject(new Error("unused"))} runManualJob={() => Promise.resolve({ report_id: "report-manual" })} loadHistoryRepairCenter={() => Promise.resolve({ coverage: { target_date: "2026-08-14", universe_count: 100, backfill_complete_count: 40, eligible_count: 40, target_date_count: 40, dominant_trade_date: "2026-08-14", dominant_date_count: 40, dominant_date_coverage_percent: 40, coverage_percent: 40, fragmented_latest_count: 60, missing_history_count: 60, quality: "partial", blockers: ["history_coverage_below_98_percent"] }, current_job: pausedJob, total_gap_count: 60, offset: 0, limit: 100, gaps: [] })} loadDiagnostics={() => Promise.reject(new Error("backend service unavailable"))} />);
+
+    expect(await screen.findByText("全量回填 · 已暂停")).toBeInTheDocument();
+    expect(screen.queryByText(/paused/i)).not.toBeInTheDocument();
   });
 
   it("shows repair-before-and-after audit details when available", async () => {
