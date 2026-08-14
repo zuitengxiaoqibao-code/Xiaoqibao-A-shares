@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory = $true)][string]$ReleaseRoot,
     [string]$ExpectedCommit = "",
     [switch]$AllowDirtySource

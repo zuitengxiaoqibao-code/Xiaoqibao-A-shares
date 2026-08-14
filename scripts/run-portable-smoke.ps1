@@ -1,4 +1,4 @@
-param(
+﻿param(
     [int]$Port = 18765,
     [switch]$KeepSmokeRoot,
     [switch]$UseReleaseData,
