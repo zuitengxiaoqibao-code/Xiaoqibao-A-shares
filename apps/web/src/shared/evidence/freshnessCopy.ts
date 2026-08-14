@@ -35,6 +35,7 @@ const BLOCKERS: Record<string, string> = {
   history_coverage_below_98_percent: "历史覆盖率低于 98% 就绪门槛",
   no_dominant_trade_date: "无法确认主导交易日",
   incomplete_daily_history: "历史覆盖不完整",
+  stale_daily_history: "日线历史落后请求日",
   no_factor_ready_history: "没有可计算因子的完整历史",
   candidate_scan_pending: "候选扫描仍在后台进行",
   trigger_evidence_pending: "盘中触发证据仍在更新",

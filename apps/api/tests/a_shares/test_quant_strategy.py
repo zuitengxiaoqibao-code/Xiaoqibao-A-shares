@@ -319,6 +319,27 @@ def test_strategy_exposes_full_candidate_funnel_and_trigger_result() -> None:
     assert counts == [5000, 4700, 4650, 4200, 1, 1, 1]
     assert result.candidate_funnel.exclusion_reasons["insufficient_history"] == 300
     assert result.candidate_funnel.completeness == "partial"
+    assert "incomplete_daily_history" in result.missing_data
+
+
+def test_strategy_marks_stale_daily_candidate_history_as_partial_evidence() -> None:
+    input_board = board().model_copy(update={
+        "funnel": CandidateFunnel(
+            history_ready_size=5000,
+            factor_ready_size=5000,
+            liquidity_ready_size=4200,
+            ranked_size=4200,
+            completeness="partial",
+            blockers=("stale_daily_history",),
+        )
+    })
+
+    result = build_quant_strategy_dashboard(
+        overview(), input_board, names={"600001": "样本股份"}
+    )
+
+    assert result.status == "partial"
+    assert "stale_daily_history" in result.missing_data
 
 
 def test_archived_trigger_source_uses_real_ticks_and_fund_flow() -> None:
@@ -393,6 +414,31 @@ def test_defensive_regime_returns_discipline_without_forced_stock_pick() -> None
     assert next(
         item for item in result.strategy_models if item.name == "空仓防守模型"
     ).selected is True
+
+
+def test_low_volume_regime_keeps_real_observation_candidates_without_alerting() -> None:
+    mixed = overview(regime="缩量混沌").model_copy(update={
+        "regime": overview().regime.model_copy(update={
+            "regime": "缩量混沌",
+            "market_coef": Decimal("0.1"),
+            "suitable_strategies": ("空仓防守模型",),
+            "avoid_strategies": ("追连板", "高位加速"),
+        })
+    })
+
+    result = build_quant_strategy_dashboard(
+        mixed, board(), names={"600001": "样本股份"}
+    )
+
+    assert len(result.candidates) == 1
+    candidate = result.candidates[0]
+    assert candidate.model == "空仓防守模型"
+    assert candidate.status == "pending_trigger"
+    assert candidate.trigger_confirmed is False
+    assert candidate.position == Decimal("0")
+    assert candidate.alert_gate.eligible is False
+    assert "defensive_regime" in candidate.missing_evidence
+    assert result.discipline.startswith("缩量混沌")
 
 
 def test_service_rejects_historical_candidates_mixed_with_current_regime() -> None:
@@ -543,7 +589,10 @@ def test_service_serves_disk_snapshot_before_first_overview_refresh(tmp_path) ->
     assert first.refresh_state == "pending"
     assert first.snapshot_source == "disk"
     assert first.candidates == stored.candidates
+    assert first.candidate_scan_state == "pending"
+    assert first.candidate_scan_phase == "loading_overview"
     assert "market_overview_pending" in first.missing_data
+    assert "candidate_scan_pending" in first.missing_data
     release.set()
     reader.close()
 

@@ -200,6 +200,7 @@ def test_coverage_reports_real_universe_eligibility_and_target_freshness(tmp_pat
     assert summary.backfill_complete_count == 1
     assert summary.eligible_count == 2
     assert summary.target_date_count == 2
+    assert summary.target_date_coverage_percent == 66.67
 
 
 def test_repair_center_classifies_real_history_gaps(tmp_path) -> None:

@@ -132,6 +132,14 @@ class FullMarketHistoryService:
             round(aggregate.dominant_date_count / aggregate.universe_count * 100, 2)
             if aggregate.universe_count else None
         )
+        target_date_count = (
+            aggregate.latest_available_trade_date_count
+            if aggregate.latest_available_trade_date == target_date else 0
+        )
+        target_date_coverage = (
+            round(target_date_count / aggregate.universe_count * 100, 2)
+            if aggregate.universe_count else None
+        )
         blockers: list[str] = []
         if not aggregate.universe_count:
             blockers.append("a_share_universe_unavailable")
@@ -151,8 +159,8 @@ class FullMarketHistoryService:
             universe_count=aggregate.universe_count,
             backfill_complete_count=aggregate.backfill_complete_count,
             eligible_count=aggregate.history_ready_count,
-            target_date_count=aggregate.latest_available_trade_date_count
-            if aggregate.latest_available_trade_date == target_date else 0,
+            target_date_count=target_date_count,
+            target_date_coverage_percent=target_date_coverage,
             dominant_trade_date=aggregate.dominant_trade_date,
             dominant_date_count=aggregate.dominant_date_count,
             dominant_date_coverage_percent=dominant_coverage,

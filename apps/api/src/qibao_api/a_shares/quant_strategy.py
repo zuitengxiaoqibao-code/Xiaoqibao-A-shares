@@ -92,6 +92,11 @@ TRIGGERS_BY_REGIME = {
         "1分钟和3分钟涨幅同时转正",
         "委比改善且大单净流出收窄",
     ),
+    "缩量混沌": (
+        "仅作观察，不追连板和高位加速",
+        "等待完整盘中触发证据",
+        "市场系数不高于0.2",
+    ),
 }
 
 INVALIDATIONS_BY_REGIME = {
@@ -99,6 +104,7 @@ INVALIDATIONS_BY_REGIME = {
     "指数权重进攻": ("回踩均价后放量跌破", "权重板块强度同步转弱"),
     "轮动震荡": ("开盘涨幅超过4%", "触发分低于80或盈亏比低于2.5"),
     "冰点修复": ("跌停打开后再次回封", "修复幅度与大单流入同时转弱"),
+    "缩量混沌": ("市场成交热度继续下行", "出现高位加速或追涨信号"),
 }
 
 
@@ -314,6 +320,8 @@ def _select_model(
     stock: OverviewFeatureStock | None,
     evidence: TriggerEvidence,
 ) -> str:
+    if regime in {"高位退潮", "缩量混沌"}:
+        return "空仓防守模型"
     if regime == "情绪主升":
         if (
             stock is not None
@@ -578,6 +586,7 @@ def build_quant_strategy_dashboard(
     regime = overview.regime.regime
     missing = tuple(dict.fromkeys((
         *overview.regime.missing_factors,
+        *board.funnel.blockers,
         *(("candidate_history",) if not board.short_term else ()),
         *((f"candidate_scan_{candidate_scan_state}",)
           if candidate_scan_state != "ready" else ()),
@@ -605,7 +614,7 @@ def build_quant_strategy_dashboard(
             warnings=overview.warnings,
             sources=overview.sources,
         )
-    if regime in {"高位退潮", "缩量混沌"}:
+    if regime == "高位退潮":
         return QuantStrategyDashboard(
             status="partial",
             as_of=overview.as_of,
@@ -1186,14 +1195,21 @@ class QuantStrategyService:
             )
         mark("snapshot_load")
         if overview_pending and persisted is not None:
+            pending_missing = tuple(dict.fromkeys((
+                *persisted.missing_data,
+                "market_overview_pending",
+                "candidate_scan_pending",
+            )))
             return finish(persisted.model_copy(update={
                 "refresh_state": "pending",
                 "snapshot_at": persisted.snapshot_at or persisted.generated_at,
                 "refresh_started_at": now,
+                "candidate_scan_state": "pending",
+                "candidate_scan_started_at": now,
+                "candidate_scan_phase": "loading_overview",
+                "candidate_scan_error": None,
                 "snapshot_source": "disk",
-                "missing_data": tuple(dict.fromkeys(
-                    (*persisted.missing_data, "market_overview_pending")
-                )),
+                "missing_data": pending_missing,
             }))
         cache_key = (selected_date, limit)
         cached = None

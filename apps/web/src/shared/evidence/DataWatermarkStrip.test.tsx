@@ -24,4 +24,15 @@ describe("DataWatermarkStrip", () => {
     expect(screen.getByText("后台刷新中")).toBeInTheDocument();
     expect(screen.getByText("资金流字段待补")).toBeInTheDocument();
   });
+
+  it("translates known data blockers into readable Chinese copy", () => {
+    render(<DataWatermarkStrip
+      status="partial"
+      tradeDate="2026-08-13"
+      limitations={["stale_daily_history"]}
+    />);
+
+    expect(screen.getByText("日线历史落后请求日")).toBeInTheDocument();
+    expect(screen.queryByText("stale_daily_history")).not.toBeInTheDocument();
+  });
 });

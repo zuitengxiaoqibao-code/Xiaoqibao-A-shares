@@ -322,6 +322,87 @@ class BarRepository:
             ).fetchall()
         return [row[0] for row in rows]
 
+    def latest_trade_date(self, as_of: date) -> date | None:
+        """Return the latest stored trading date at or before ``as_of``."""
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT max(trade_date) FROM daily_bars WHERE trade_date <= ?",
+                [as_of],
+            ).fetchone()
+        return row[0] if row and row[0] is not None else None
+
+    def dominant_trade_date(
+        self, as_of: date, *, minimum_bars: int = 60
+    ) -> date | None:
+        """Return the latest date shared by the largest eligible symbol set."""
+        if minimum_bars < 1:
+            raise ValueError("minimum_bars must be positive")
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                """
+                WITH eligible_symbols AS (
+                    SELECT symbol
+                    FROM daily_bars
+                    WHERE trade_date <= ?
+                    GROUP BY symbol
+                    HAVING count(DISTINCT trade_date) >= ?
+                ), date_counts AS (
+                    SELECT b.trade_date, count(DISTINCT b.symbol) AS symbol_count
+                    FROM daily_bars b
+                    JOIN eligible_symbols e ON e.symbol = b.symbol
+                    WHERE b.trade_date <= ?
+                    GROUP BY b.trade_date
+                )
+                SELECT trade_date
+                FROM date_counts
+                ORDER BY symbol_count DESC, trade_date DESC
+                LIMIT 1
+                """,
+                [as_of, minimum_bars, as_of],
+            ).fetchone()
+        return row[0] if row and row[0] is not None else None
+
+    def latest_common_trade_date(
+        self,
+        as_of: date,
+        *,
+        minimum_bars: int = 60,
+        minimum_coverage: float = 0.8,
+    ) -> date | None:
+        """Return the newest date covering the requested share of eligible symbols."""
+        if minimum_bars < 1:
+            raise ValueError("minimum_bars must be positive")
+        if not 0 < minimum_coverage <= 1:
+            raise ValueError("minimum_coverage must be between 0 and 1")
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                """
+                WITH eligible_symbols AS (
+                    SELECT symbol
+                    FROM daily_bars
+                    WHERE trade_date <= ?
+                    GROUP BY symbol
+                    HAVING count(DISTINCT trade_date) >= ?
+                ), date_counts AS (
+                    SELECT b.trade_date, count(DISTINCT b.symbol) AS symbol_count
+                    FROM daily_bars b
+                    JOIN eligible_symbols e ON e.symbol = b.symbol
+                    WHERE b.trade_date <= ?
+                    GROUP BY b.trade_date
+                ), eligible_count AS (
+                    SELECT count(*) AS value FROM eligible_symbols
+                )
+                SELECT d.trade_date
+                FROM date_counts d CROSS JOIN eligible_count e
+                WHERE e.value > 0
+                  AND CAST(d.symbol_count AS DOUBLE) / e.value >= ?
+                ORDER BY d.trade_date DESC
+                LIMIT 1
+                """,
+                [as_of, minimum_bars, as_of, minimum_coverage],
+            ).fetchone()
+        return row[0] if row and row[0] is not None else None
+
     def symbols_with_history(
         self, minimum_bars: int, as_of: date, *, cutoff: datetime | None = None,
     ) -> list[str]:

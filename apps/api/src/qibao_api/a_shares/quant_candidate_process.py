@@ -35,6 +35,27 @@ def scan_candidate_board_from_local_bars(
     made, and the caller validates the returned Pydantic board before use.
     """
     repository = BarRepository(Path(database_path), Path(parquet_dir))
+    requested_factor_as_of = factor_as_of
+    effective_factor_as_of = repository.latest_common_trade_date(
+        requested_factor_as_of, minimum_bars=60, minimum_coverage=0.8
+    ) or repository.dominant_trade_date(
+        requested_factor_as_of, minimum_bars=60
+    ) or repository.latest_trade_date(requested_factor_as_of)
+    if effective_factor_as_of is None:
+        return CandidateBoard(
+            as_of=requested_factor_as_of,
+            universe_size=0,
+            eligible_size=0,
+            funnel=CandidateFunnel(
+                completeness="unavailable",
+                blockers=("no_daily_history_before_requested_date",),
+            ),
+            latest_trade_date=None,
+            sources=(),
+            short_term=[],
+            swing=[],
+        )
+    factor_as_of = effective_factor_as_of
     symbols = repository.symbols_up_to(factor_as_of)
     histories = repository.latest_many(symbols, 60, factor_as_of)
     snapshots = []
@@ -110,10 +131,16 @@ def scan_candidate_board_from_local_bars(
     reason_counts: dict[str, int] = {}
     for item in combined_exclusions:
         reason_counts[item.reason_code] = reason_counts.get(item.reason_code, 0) + 1
-    completeness = "complete" if history_ready_size == len(symbols) else "partial"
-    blockers = (
-        () if completeness == "complete" else ("incomplete_daily_history",)
+    completeness = (
+        "partial"
+        if effective_factor_as_of < requested_factor_as_of
+        else "complete" if history_ready_size == len(symbols) else "partial"
     )
+    blockers = []
+    if effective_factor_as_of < requested_factor_as_of:
+        blockers.append("stale_daily_history")
+    if completeness != "complete":
+        blockers.append("incomplete_daily_history")
     return board.model_copy(update={
         "universe_size": len(symbols),
         "eligible_size": eligible_size,
@@ -124,7 +151,7 @@ def scan_candidate_board_from_local_bars(
             ranked_size=eligible_size,
             exclusion_reasons=reason_counts,
             completeness=completeness,
-            blockers=blockers,
+            blockers=tuple(blockers),
         ),
         "latest_trade_date": latest_trade_date,
         "sources": tuple(sorted({item.source for item in snapshots})),

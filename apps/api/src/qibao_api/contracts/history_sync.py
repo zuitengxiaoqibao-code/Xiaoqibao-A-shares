@@ -59,6 +59,7 @@ class HistoryCoverageSummary(BaseModel):
     backfill_complete_count: int = Field(ge=0)
     eligible_count: int = Field(ge=0)
     target_date_count: int = Field(ge=0)
+    target_date_coverage_percent: float | None = Field(default=None, ge=0, le=100)
     dominant_trade_date: date | None = None
     dominant_date_count: int = Field(default=0, ge=0)
     dominant_date_coverage_percent: float | None = Field(default=None, ge=0, le=100)

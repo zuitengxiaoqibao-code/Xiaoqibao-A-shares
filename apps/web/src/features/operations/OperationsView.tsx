@@ -167,7 +167,8 @@ export function OperationsView(props: Props) {
         <div className="history-watermark">
           <article className={history.coverage.quality}><span>数据状态</span><strong>{history.coverage.quality === "ready" ? "就绪" : history.coverage.quality === "partial" ? "待修复" : "不可用"}</strong><small>{history.coverage.blockers.length ? `${history.coverage.blockers.length} 个阻断项` : "无阻断项"}</small></article>
           <article><span>主导交易日</span><strong>{history.coverage.dominant_trade_date ?? "--"}</strong><small>覆盖 {history.coverage.dominant_date_coverage_percent ?? "--"}%</small></article>
-          <article><span>策略可用</span><strong>{history.coverage.eligible_count} / {history.coverage.universe_count}</strong><small>覆盖 {history.coverage.coverage_percent ?? "--"}%</small></article>
+           <article><span>策略可用</span><strong>{history.coverage.eligible_count} / {history.coverage.universe_count}</strong><small>历史覆盖 {history.coverage.coverage_percent ?? "--"}%</small></article>
+           <article><span>请求日有效</span><strong>{history.coverage.target_date_count} / {history.coverage.universe_count}</strong><small>覆盖 {history.coverage.target_date_coverage_percent ?? "--"}% · {history.coverage.target_date}</small></article>
           <article><span>待修复</span><strong>{history.total_gap_count}</strong><small>无历史 / 不足 / 日期落后</small></article>
         </div>
         {history.current_job && <div className="history-job-progress"><div><b>{history.current_job.mode === "backfill" ? "全量回填" : "增量修复"} · {history.current_job.state}</b><small>{history.current_job.ready_count + history.current_job.skipped_count} / {history.current_job.total_count} 已处理 · 失败 {history.current_job.failed_count}</small></div><progress max={Math.max(1, history.current_job.total_count)} value={history.current_job.ready_count + history.current_job.skipped_count}/></div>}

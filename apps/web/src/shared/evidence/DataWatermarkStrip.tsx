@@ -1,5 +1,5 @@
 import { Clock3, Database, RefreshCw, ShieldCheck } from "lucide-react";
-import { compactFreshnessLabel } from "./freshnessCopy";
+import { blockerLabel, compactFreshnessLabel } from "./freshnessCopy";
 
 
 type Props = {
@@ -30,6 +30,6 @@ export function DataWatermarkStrip({ status, tradeDate = null, observedAt = null
     <span>{sourceCount === null ? "来源数不可用" : `${sourceCount} 个来源`}</span>
     <span>{sampleCount === null ? "样本数不可用" : `${sampleCount} 条样本`}</span>
     <span><RefreshCw size={13} className={refreshState === "pending" ? "spin" : ""} />{refreshLabels[refreshState]}</span>
-    {limitations.slice(0, 3).map((item) => <em key={item}>{item}</em>)}
+    {limitations.slice(0, 3).map((item) => <em key={item}>{blockerLabel(item) === "数据完整性待检查" ? item : blockerLabel(item)}</em>)}
   </section>;
 }

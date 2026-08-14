@@ -66,6 +66,21 @@ def test_trade_dates_are_distinct_and_descending(tmp_path) -> None:
     assert repository.trade_dates(limit=10) == [date(2026, 7, 13)]
 
 
+def test_dominant_trade_date_ignores_sparse_symbols_with_insufficient_history(tmp_path) -> None:
+    repository = BarRepository(tmp_path / "market.duckdb", tmp_path / "parquet")
+    latest = date(2026, 7, 13)
+    repository.upsert(
+        make_history("600000", 60, start=latest - timedelta(days=59))
+        + make_history("000001", 60, start=latest - timedelta(days=59))
+        + [make_bar().model_copy(update={"symbol": "600002", "trade_date": latest + timedelta(days=1)})]
+    )
+
+    assert repository.dominant_trade_date(latest + timedelta(days=1), minimum_bars=60) == latest
+    assert repository.latest_common_trade_date(
+        latest + timedelta(days=1), minimum_bars=60, minimum_coverage=0.8
+    ) == latest
+
+
 def make_history(symbol: str, count: int, start: date = date(2026, 1, 1)) -> list[DailyBar]:
     bars = []
     for index in range(count):

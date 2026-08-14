@@ -64,6 +64,7 @@ export type HistoryCoverageSummary = {
   backfill_complete_count: number;
   eligible_count: number;
   target_date_count: number;
+  target_date_coverage_percent?: number | null;
   dominant_trade_date: string | null;
   dominant_date_count: number;
   dominant_date_coverage_percent: number | null;
