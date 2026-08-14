@@ -228,6 +228,31 @@ def _rr_score(entry: CandidateEntry) -> Decimal:
     return ZERO
 
 
+def _base_evidence_coverage(
+    overview: MarketOverviewResponse,
+    board: CandidateBoard,
+) -> Decimal:
+    """Return the verified pre-trigger coverage for one candidate.
+
+    The old implementation used a constant 70% floor, which made a sparse
+    market/factor snapshot look more complete than its source data.  Use the
+    real market-regime and factor watermarks instead; a missing watermark is
+    not silently treated as zero when a candidate board already carries a
+    factor snapshot, but it does lower coverage when an explicit value exists.
+    """
+    values = [overview.regime.coverage_percent]
+    factor_coverage = overview.regime_metrics.factor_coverage_percent
+    if factor_coverage > ZERO:
+        values.append(factor_coverage)
+    if board.universe_size > 0 and board.funnel.factor_ready_size > 0:
+        values.append(
+            Decimal(board.funnel.factor_ready_size)
+            / Decimal(board.universe_size)
+            * Decimal("100")
+        )
+    return _q(max(ZERO, min(values)))
+
+
 def _risk_penalty(entry: CandidateEntry) -> Decimal:
     snapshot = entry.factor_snapshot
     volatility_points = snapshot.volatility_20d * Decimal("100")
@@ -343,6 +368,8 @@ def _select_model(
 def _build_candidate(
     entry: CandidateEntry,
     *,
+    overview: MarketOverviewResponse,
+    board: CandidateBoard,
     name: str,
     regime: str,
     market_coef: Decimal,
@@ -371,7 +398,11 @@ def _build_candidate(
     if entry.factor_snapshot.drawdown_60d <= Decimal("-0.25"):
         risk_flags.append("近60日回撤较深")
     risk_flags.append("缺少明确止损/目标价，盈亏比分不计分")
-    evidence_coverage = _q((Decimal("70") + trigger_coverage * Decimal("0.3")))
+    base_coverage = _base_evidence_coverage(overview, board)
+    evidence_coverage = _q(
+        base_coverage * Decimal("0.6")
+        + trigger_coverage * Decimal("0.4")
+    )
     hard_risk = any(flag in {"高波动", "近60日回撤较深"} for flag in risk_flags)
     gate_checks = (
         AlertGateCheck(
@@ -639,6 +670,8 @@ def build_quant_strategy_dashboard(
     candidates = tuple(
         _build_candidate(
             entry,
+            overview=overview,
+            board=board,
             name=name_map.get(entry.symbol, entry.symbol),
             regime=regime,
             market_coef=overview.regime.market_coef,

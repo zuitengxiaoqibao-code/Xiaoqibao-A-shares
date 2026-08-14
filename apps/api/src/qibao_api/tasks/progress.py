@@ -75,7 +75,11 @@ class TaskProgressRegistry:
                 raise ValueError("terminal task cannot be updated")
             next_status = status or current.status
             next_total = total if total is not None else current.total
+            if current.total is not None and next_total is not None:
+                next_total = max(current.total, next_total)
             next_processed = processed if processed is not None else current.processed
+            if current.processed is not None and next_processed is not None:
+                next_processed = max(current.processed, next_processed)
             if next_total is not None:
                 next_processed = min(next_total, next_processed or 0)
                 next_percent = round(next_processed / next_total * 100, 2)
@@ -108,4 +112,3 @@ class TaskProgressRegistry:
         while len(self._finished) > self._max_finished:
             task_id = self._finished.popleft()
             self._tasks.pop(task_id, None)
-

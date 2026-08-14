@@ -149,6 +149,27 @@ async def test_company_research_scores_only_verified_dimensions() -> None:
 
 
 @pytest.mark.asyncio
+async def test_company_research_classifies_conclusions_by_evidence_strength() -> None:
+    result = await CompanyResearchService(
+        DiagnosisService(diagnosis()), FinancialSource(financial_history()),
+        ProfileSource(), clock=lambda: NOW,
+    ).get("600519", date(2026, 8, 3))
+
+    conclusions = {item.key: item for item in result.conclusions}
+    assert conclusions["business_model"].kind == "fact"
+    assert "主营高端白酒" in conclusions["business_model"].claim
+    assert conclusions["business_model"].evidence_ids
+    assert conclusions["business_model"].observed_at == NOW
+    assert conclusions["competitive_position"].kind == "unavailable"
+    assert conclusions["competitive_position"].evidence_ids == ()
+    assert conclusions["competitive_position"].limitations
+    assert all(
+        item.kind == "unavailable" or (item.evidence_ids and item.observed_at)
+        for item in result.conclusions
+    )
+
+
+@pytest.mark.asyncio
 async def test_company_research_field_evidence_covers_profile_tips_and_forward_valuation() -> None:
     result = await CompanyResearchService(
         DiagnosisService(diagnosis()), FinancialSource(financial_history()),

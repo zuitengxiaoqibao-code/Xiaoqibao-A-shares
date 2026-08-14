@@ -12,6 +12,12 @@ ResearchStatus = Literal["ready", "partial", "unavailable"]
 EvidenceStatus = Literal["ready", "clear", "triggered", "unavailable"]
 LatestTipCategory = Literal["公告与合同", "业绩预告", "资金与融资", "交易异动", "风险提醒", "其他"]
 LatestTipTone = Literal["positive", "neutral", "risk", "unknown"]
+ResearchConclusionKind = Literal["fact", "inference", "judgement", "unavailable"]
+ResearchSectionKey = Literal[
+    "business_model", "industry_space", "financial_trend", "profit_quality",
+    "competitive_position", "valuation_percentile", "future_catalysts",
+    "contrary_risks", "invalidation_conditions", "verification_checklist",
+]
 
 
 class FinancialPeriod(BaseModel):
@@ -236,17 +242,38 @@ class ResearchDecisionLedgerRow(BaseModel):
 class CompanyResearchSection(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    key: Literal[
-        "business_model", "industry_space", "financial_trend", "profit_quality",
-        "competitive_position", "valuation_percentile", "future_catalysts",
-        "contrary_risks", "invalidation_conditions", "verification_checklist",
-    ]
+    key: ResearchSectionKey
     label: str
     status: Literal["ready", "partial", "unavailable", "clear", "triggered"]
     summary: str
     facts: tuple[str, ...] = ()
     evidence_ids: tuple[str, ...] = ()
     limitation: str | None = None
+
+
+class ResearchConclusion(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    key: ResearchSectionKey
+    label: str = Field(min_length=1)
+    kind: ResearchConclusionKind
+    claim: str = Field(min_length=1)
+    evidence_ids: tuple[str, ...] = ()
+    source_count: int = Field(ge=0)
+    observed_at: datetime | None = None
+    limitations: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_evidence_boundary(self) -> "ResearchConclusion":
+        evidence_count = len(set(self.evidence_ids))
+        if self.source_count != evidence_count:
+            raise ValueError("source_count must equal distinct evidence count")
+        if self.kind == "unavailable":
+            if self.evidence_ids or self.observed_at is not None or not self.limitations:
+                raise ValueError("unavailable conclusion requires only an explicit limitation")
+        elif not self.evidence_ids or self.observed_at is None:
+            raise ValueError("research conclusion requires evidence and observation time")
+        return self
 
 
 class CompanyResearchVersionChange(BaseModel):
@@ -335,6 +362,7 @@ class CompanyResearchResponse(BaseModel):
     enrichment: ResearchEnrichmentEvidence = Field(default_factory=ResearchEnrichmentEvidence)
     decision_ledger: tuple[ResearchDecisionLedgerRow, ...] = ()
     research_sections: tuple[CompanyResearchSection, ...] = ()
+    conclusions: tuple[ResearchConclusion, ...] = ()
     research_version: CompanyResearchVersion | None = None
     evidence_ledger: tuple[EvidenceLedgerEntry, ...] = ()
     field_evidence: tuple[FieldEvidence, ...] = ()

@@ -19,6 +19,17 @@ def test_progress_omits_percent_without_a_real_total() -> None:
     assert running.percent is None
 
 
+def test_progress_never_moves_backward_when_a_late_stage_reports_old_counts() -> None:
+    registry = TaskProgressRegistry(clock=lambda: NOW)
+    task = registry.create("market-overview", total=100)
+    halfway = registry.update(task.task_id, status="running", processed=50)
+    late = registry.update(task.task_id, status="running", processed=12)
+
+    assert halfway.percent == 50.0
+    assert late.processed == 50
+    assert late.percent == 50.0
+
+
 def test_progress_uses_real_processed_total_and_clamps_to_total() -> None:
     registry = TaskProgressRegistry(clock=lambda: NOW)
     task = registry.create("candidate-scan", total=8)
@@ -52,4 +63,3 @@ def test_registry_evicts_oldest_finished_tasks_but_keeps_active_tasks() -> None:
     assert registry.get(active.task_id) is not None
     assert registry.get(first.task_id) is None
     assert registry.get(second.task_id) is not None
-

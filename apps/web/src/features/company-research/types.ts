@@ -167,6 +167,17 @@ export type CompanyResearchSection = {
   limitation: string | null;
 };
 
+export type ResearchConclusion = {
+  key: CompanyResearchSection["key"];
+  label: string;
+  kind: "fact" | "inference" | "judgement" | "unavailable";
+  claim: string;
+  evidence_ids: string[];
+  source_count: number;
+  observed_at: string | null;
+  limitations: string[];
+};
+
 export type CompanyResearchVersion = {
   snapshot_id: string;
   version_number: number;
@@ -218,6 +229,7 @@ export type CompanyResearchResponse = {
   enrichment?: ResearchEnrichmentEvidence;
   decision_ledger?: ResearchDecisionLedgerRow[];
   research_sections?: CompanyResearchSection[];
+  conclusions?: ResearchConclusion[];
   research_version?: CompanyResearchVersion | null;
   evidence_ledger?: EvidenceLedgerEntry[];
   field_evidence?: FieldEvidence[];

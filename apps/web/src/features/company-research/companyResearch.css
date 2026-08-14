@@ -128,6 +128,32 @@
 .research-gauge-label { color: var(--text-secondary); font: 600 13px var(--font-body); }
 .research-gauge-value { display: flex; align-items: baseline; gap: 5px; margin: 8px 0; color: var(--status-live); font: 700 27px var(--font-data); }
 .research-gauge-value small { color: var(--text-muted); font: 600 12px var(--font-body); }
+.research-conclusion-block { margin-top: 14px; border: 1px solid var(--line); background: var(--surface-panel); }
+.research-conclusion-block > header { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.research-conclusion-block > header span { color: var(--status-live); font: 13px var(--font-data); }
+.research-conclusion-block > header h2 { margin: 3px 0 0; color: var(--text); font-size: 17px; }
+.research-conclusion-block nav { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.research-conclusion-block nav span { padding: 4px 7px; border: 1px solid currentColor; font-size: 13px; }
+.research-conclusion-block nav span[data-kind="fact"] { color: var(--status-live); }
+.research-conclusion-block nav span[data-kind="inference"] { color: var(--status-warning); }
+.research-conclusion-block nav span[data-kind="judgement"] { color: var(--danger); }
+.research-conclusion-block nav span[data-kind="unavailable"] { color: var(--text-muted); }
+.research-conclusion-block > div, .research-conclusion-block details > div { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.research-conclusion-block article { min-width: 0; padding: 11px 12px; border-right: 1px solid var(--line); box-shadow: inset 0 3px 0 var(--status-live); }
+.research-conclusion-block article:last-child { border-right: 0; }
+.research-conclusion-block article[data-kind="inference"] { box-shadow: inset 0 3px 0 var(--status-warning); }
+.research-conclusion-block article[data-kind="judgement"] { box-shadow: inset 0 3px 0 var(--danger); }
+.research-conclusion-block article[data-kind="unavailable"] { box-shadow: inset 0 3px 0 var(--text-muted); }
+.research-conclusion-block article header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.research-conclusion-block article header b { color: var(--text); font-size: 14px; }
+.research-conclusion-block article header span { color: var(--text-soft); font-size: 13px; }
+.research-conclusion-block article p { margin: 8px 0; color: var(--text-soft); font-size: 13px; line-height: 1.55; }
+.research-conclusion-block article footer { display: grid; gap: 4px; color: var(--text-muted); font-size: 13px; }
+.research-conclusion-block article footer em { color: var(--status-warning); font-style: normal; }
+.research-conclusion-block details { border-top: 1px solid var(--line); }
+.research-conclusion-block summary { padding: 9px 12px; color: var(--status-live); font-size: 13px; cursor: pointer; }
+@media (max-width: 1180px) { .research-conclusion-block > div, .research-conclusion-block details > div { grid-template-columns: repeat(2, minmax(0, 1fr)); } .research-conclusion-block article:nth-child(2n) { border-right: 0; } }
+@media (max-width: 720px) { .research-conclusion-block > header { align-items: flex-start; flex-direction: column; } .research-conclusion-block nav { justify-content: flex-start; } .research-conclusion-block > div, .research-conclusion-block details > div { grid-template-columns: 1fr; } .research-conclusion-block article { border-right: 0; border-bottom: 1px solid var(--line); } }
 .research-meter { height: 7px; overflow: hidden; border-radius: 99px; background: var(--surface-emphasis); }.research-meter[data-state="unavailable"] { border: 1px dashed var(--text-tertiary); background: transparent; }.research-meter[data-state="unavailable"] > span { background: var(--text-tertiary); opacity: .25; }
 .research-meter > span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--status-live), var(--market-down)); }
 .research-visual-overview { min-width: 0; border: 1px solid var(--border-strong); border-left: 3px solid var(--status-warning); background: var(--surface-canvas); }

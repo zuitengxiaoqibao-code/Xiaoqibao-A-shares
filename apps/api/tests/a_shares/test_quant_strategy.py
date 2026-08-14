@@ -195,6 +195,28 @@ def test_strategy_formula_and_missing_trigger_gate_are_explicit() -> None:
     assert evidence["candidates.600001.strategy_score"].coverage_percent == candidate.evidence_coverage_percent
 
 
+def test_candidate_evidence_coverage_uses_real_market_and_factor_watermarks() -> None:
+    sparse = overview().model_copy(update={
+        "regime_metrics": overview().regime_metrics.model_copy(update={
+            "factor_coverage_percent": Decimal("40"),
+        }),
+        "regime": overview().regime.model_copy(update={
+            "coverage_percent": Decimal("50"),
+        }),
+    })
+    result = build_quant_strategy_dashboard(
+        sparse,
+        board(),
+        names={"600001": "样本股份"},
+    )
+
+    candidate = result.candidates[0]
+    assert candidate.evidence_coverage_percent == Decimal("32.00")
+    assert candidate.alert_gate.checks[-2].key == "evidence_coverage"
+    assert candidate.alert_gate.checks[-2].passed is False
+    assert "证据覆盖低于90%" in candidate.alert_gate.blockers
+
+
 def test_strategy_marks_old_market_snapshot_stale_without_changing_values() -> None:
     generated_at = NOW + timedelta(minutes=3)
 

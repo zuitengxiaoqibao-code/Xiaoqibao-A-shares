@@ -18,6 +18,7 @@ from qibao_api.contracts.company_research import (
     PeerCandidateEvidence,
     ResearchEnrichmentEvidence,
     ResearchDecisionLedgerRow,
+    ResearchConclusion,
     ValuationScenarioRange,
     ResearchReportEvidence,
     ResearchSourceEvidence,
@@ -182,22 +183,27 @@ def _research_sections(
         "核对未来催化公告原文和发生时间",
         *(f"补齐风险检查：{item.title}" for item in unavailable),
     )))
-    profile_ids = tuple(dict.fromkeys(
-        item.id for item in profile.latest_tip_items
-    ))
+    company_overview_ids = (
+        (_evidence_id(profile.source, "company_overview"),)
+        if profile.company_overview else ()
+    )
+    industry_analysis_ids = (
+        (_evidence_id(profile.source, "industry_analysis"),)
+        if profile.industry_analysis else ()
+    )
     return (
         CompanyResearchSection(
             key="business_model", label="商业模式",
             status="ready" if profile.company_overview else "unavailable",
             summary=profile.company_overview or "公司概况原文不可用，不能归纳商业模式。",
-            evidence_ids=profile_ids,
+            evidence_ids=company_overview_ids,
             limitation=None if profile.company_overview else "缺少通达信 F10 公司概况原文。",
         ),
         CompanyResearchSection(
             key="industry_space", label="行业空间",
             status="ready" if profile.industry_analysis else "unavailable",
             summary=profile.industry_analysis or "行业分析原文不可用，不能判断行业空间。",
-            evidence_ids=profile_ids,
+            evidence_ids=industry_analysis_ids,
             limitation=None if profile.industry_analysis else "缺少通达信 F10 行业分析原文。",
         ),
         CompanyResearchSection(
@@ -263,6 +269,51 @@ def _research_sections(
             limitation=f"仍有 {len(unavailable)} 项风险规则缺少字段。" if unavailable else None,
         ),
     )
+
+
+def _research_conclusions(
+    sections: tuple[CompanyResearchSection, ...],
+    observed_at: datetime,
+) -> tuple[ResearchConclusion, ...]:
+    kind_by_key = {
+        "business_model": "fact",
+        "industry_space": "fact",
+        "financial_trend": "fact",
+        "profit_quality": "fact",
+        "competitive_position": "inference",
+        "valuation_percentile": "inference",
+        "future_catalysts": "inference",
+        "contrary_risks": "judgement",
+        "invalidation_conditions": "judgement",
+        "verification_checklist": "judgement",
+    }
+    conclusions = []
+    for section in sections:
+        evidence_ids = tuple(dict.fromkeys(section.evidence_ids))
+        limitations = (section.limitation,) if section.limitation else ()
+        if not evidence_ids:
+            conclusions.append(ResearchConclusion(
+                key=section.key,
+                label=section.label,
+                kind="unavailable",
+                claim=section.summary,
+                evidence_ids=(),
+                source_count=0,
+                observed_at=None,
+                limitations=limitations or ("缺少可追溯证据编号，当前结论不可用。",),
+            ))
+            continue
+        conclusions.append(ResearchConclusion(
+            key=section.key,
+            label=section.label,
+            kind=kind_by_key[section.key],
+            claim=section.summary,
+            evidence_ids=evidence_ids,
+            source_count=len(evidence_ids),
+            observed_at=observed_at,
+            limitations=limitations,
+        ))
+    return tuple(conclusions)
 
 
 def _utc_now() -> datetime:
@@ -527,6 +578,7 @@ class CompanyResearchService:
         )
         reasons = (*history.reasons, *profile.reasons)
         status = "ready" if coverage >= Decimal("0.60") and not reasons else "partial"
+        generated_at = self.clock()
         evidence_ledger = (
             EvidenceLedgerEntry(
                 source=" / ".join(dict.fromkeys((
@@ -536,7 +588,7 @@ class CompanyResearchService:
                 operation="company_research",
                 status=status,
                 trade_date=selected_date,
-                observed_at=self.clock(),
+                observed_at=generated_at,
                 formula_version="company-research-evidence-v2",
                 sample_count=sum(1 for item in dimensions if item.status == "ready"),
                 total_count=len(dimensions),
@@ -544,12 +596,15 @@ class CompanyResearchService:
                 limitations=tuple(reasons),
             ),
         )
+        research_sections = _research_sections(
+            symbol, history, valuation, profile, enrichment, dimensions, counter_case,
+        )
         response = CompanyResearchResponse(
             status=status,
             symbol=symbol,
             name=str(market_metrics.get("name") or symbol),
             as_of=selected_date,
-            generated_at=self.clock(),
+            generated_at=generated_at,
             dimensions=dimensions,
             evidence_coverage=coverage,
             base_score=base_score,
@@ -561,12 +616,11 @@ class CompanyResearchService:
             profile=profile,
             enrichment=enrichment,
             decision_ledger=_decision_ledger(symbol, enrichment, valuation, profile, counter_case),
-            research_sections=_research_sections(
-                symbol, history, valuation, profile, enrichment, dimensions, counter_case,
-            ),
+            research_sections=research_sections,
+            conclusions=_research_conclusions(research_sections, generated_at),
             evidence_ledger=evidence_ledger,
             field_evidence=self._field_evidence(
-                selected_date=selected_date, generated_at=self.clock(),
+                selected_date=selected_date, generated_at=generated_at,
                 coverage=coverage, base_score=base_score,
                 risk_penalty=risk_penalty, final_score=final_score,
                 history=history, valuation=valuation, profile=profile,

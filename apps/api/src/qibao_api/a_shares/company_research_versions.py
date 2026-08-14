@@ -26,7 +26,10 @@ class CompanyResearchVersionIntegrityError(CompanyResearchVersionStoreError):
 
 
 def _semantic_payload(value: CompanyResearchResponse) -> dict:
-    payload = value.model_dump(mode="json", exclude={"generated_at", "research_version"})
+    payload = value.model_dump(
+        mode="json",
+        exclude={"generated_at", "research_version", "conclusions"},
+    )
 
     def strip_timestamps(item, *, in_evidence_ledger: bool = False):
         if isinstance(item, dict):
