@@ -28,6 +28,7 @@ import type {
   IntradayTick,
   KronosForecastResponse,
   QuantForecastLoader,
+  QuantCalibrationLoader,
   QuantStrategyLoader,
   QuantShadowAnalyticsLoader,
   QuantShadowLoader,
@@ -44,6 +45,7 @@ type Props = {
   loadQuantStrategy?: QuantStrategyLoader;
   loadQuantShadowDecisions?: QuantShadowLoader;
   loadQuantShadowAnalytics?: QuantShadowAnalyticsLoader;
+  loadQuantCalibration?: QuantCalibrationLoader;
   loadDecisionJournal?: DecisionJournalLoader;
   createDecisionJournal?: DecisionJournalCreator;
   loadTdxFormula?: TdxFormulaLoader;
@@ -155,7 +157,7 @@ function candidatesFrom(board: FirstLimitUpBoard | null): FirstLimitUpCandidate[
   });
 }
 
-export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, runBacktest, loadKronosForecast, loadQuantStrategy, loadQuantShadowDecisions, loadQuantShadowAnalytics, loadDecisionJournal, createDecisionJournal, loadTdxFormula, loadTimeline, selectedSymbol, searchInstruments, onSelectSymbol }: Props) {
+export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, runBacktest, loadKronosForecast, loadQuantStrategy, loadQuantShadowDecisions, loadQuantShadowAnalytics, loadQuantCalibration, loadDecisionJournal, createDecisionJournal, loadTdxFormula, loadTimeline, selectedSymbol, searchInstruments, onSelectSymbol }: Props) {
   const [selected, setSelected] = useState<string | null>(selectedSymbol ?? null);
   const [selectedIdentity, setSelectedIdentity] = useState<AShareInstrument | null>(null);
   const [backtest, setBacktest] = useState<BacktestResult | null>(null);
@@ -263,6 +265,16 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     intervalMs: 60_000,
     enabled: Boolean(loadQuantShadowAnalytics),
     errorMessage: "评分校准统计暂不可用",
+  });
+  const calibrationLoader = useCallback(
+    () => loadQuantCalibration ? loadQuantCalibration(5) : Promise.reject(new Error("quant calibration disabled")),
+    [loadQuantCalibration],
+  );
+  const calibrationResource = useQuantLiveResource({
+    loader: calibrationLoader,
+    intervalMs: 300_000,
+    enabled: Boolean(loadQuantCalibration),
+    errorMessage: "量化走样校准报告暂不可用",
   });
   const decisionJournalLoader = useCallback(
     () => loadDecisionJournal ? loadDecisionJournal(50) : Promise.resolve([]),
@@ -415,6 +427,7 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
       analytics={shadowAnalyticsResource.data}
       analyticsLoading={shadowAnalyticsResource.status === "loading" && !shadowAnalyticsResource.data}
       analyticsError={shadowAnalyticsResource.error}
+      calibration={calibrationResource.data}
       journalRecords={decisionJournalResource.data ?? []}
       journalSymbol={selected}
       journalLoading={decisionJournalResource.status === "loading" && !decisionJournalResource.data}

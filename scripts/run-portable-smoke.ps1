@@ -17,6 +17,26 @@ $ReleaseRoot = if ($ReleaseRootOverride) {
 }
 $Exe = Join-Path $ReleaseRoot "xiaoqibao.exe"
 $PersistentNames = @("config", "data", "news", "cache", "logs", "models", "exports", "backups")
+
+function Repair-Utf8Text([string]$Text) {
+    if ([string]::IsNullOrEmpty($Text)) { return $Text }
+    # A few Windows PowerShell versions decode UTF-8 response text as Latin-1
+    # while materializing Invoke-RestMethod objects. Repair only that clear
+    # signature; never rewrite ordinary Chinese or hide an unknown error.
+    if ($Text -notmatch '[ÃÂåæçèéïð]') { return $Text }
+    try {
+        $bytes = [Text.Encoding]::GetEncoding(28591).GetBytes($Text)
+        $fixed = [Text.Encoding]::UTF8.GetString($bytes)
+        if ($fixed -notmatch '�') { return $fixed }
+    } catch { }
+    return $Text
+}
+
+function Assert-NoManifestMojibake([string]$Text) {
+    if ($Text -match '�|[ÃÂåæçèéïð][^\r\n]{0,2}[\u0080-\u00bf]') {
+        throw "Release manifest contains invalid UTF-8 diagnostic text"
+    }
+}
 if ($UseReleaseData) {
     $SmokeRoot = $ReleaseRoot
     if (-not (Test-Path -LiteralPath $SmokeRoot)) {
@@ -330,7 +350,7 @@ try {
             table = $Probe.TableList
             status = $Professional.status
             detail = if ($Professional.detail) {
-                $Professional.detail
+                Repair-Utf8Text ([string]$Professional.detail)
             } else {
                 "rows=$($Professional.rows.Count)"
             }
@@ -392,8 +412,11 @@ try {
                 }
                 source_health = [ordered]@{
                     status = if ($SourceHealthStatus -eq "degraded") { "partial" } else { $SourceHealthStatus }
-                    source_count = @($SourceHealth.sources).Count
-                    ready_count = @($SourceHealth.sources | Where-Object { $_.status -eq "ready" }).Count
+                    source_count = $SourceHealth.source_count
+                    probed_count = $SourceHealth.probed_count
+                    ready_count = $SourceHealth.ready_count
+                    degraded_count = $SourceHealth.degraded_count
+                    unavailable_count = $SourceHealth.unavailable_count
                     observed_at = $SourceHealth.observed_at
                 }
                 quant_strategy = [ordered]@{
@@ -444,7 +467,9 @@ try {
             } else {
                 $ReleaseManifest | Add-Member -MemberType NoteProperty -Name quality_gates -Value $QualityGateSummary
             }
-            [IO.File]::WriteAllText($ReleaseManifestPath, ($ReleaseManifest | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
+            $ManifestJson = $ReleaseManifest | ConvertTo-Json -Depth 10
+            Assert-NoManifestMojibake $ManifestJson
+            [IO.File]::WriteAllText($ReleaseManifestPath, $ManifestJson, [Text.UTF8Encoding]::new($false))
         } catch {
             Write-Warning "Release manifest quality gate summary could not be updated."
         }

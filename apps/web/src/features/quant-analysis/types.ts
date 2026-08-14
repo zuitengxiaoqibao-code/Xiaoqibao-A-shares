@@ -262,6 +262,24 @@ export type QuantShadowAnalytics = {
 
 export type QuantShadowAnalyticsLoader = (horizon?: 1 | 3 | 5 | 10 | 20) => Promise<QuantShadowAnalytics>;
 
+export type QuantCalibrationReport = {
+  status: "ready" | "partial" | "unavailable";
+  horizon: number;
+  formula_versions?: string[];
+  total_sample_count: number;
+  mature_sample_count: number;
+  splits: Array<{ name: "train" | "validation" | "test"; start_date: string | null; end_date: string | null; sample_count: number; hit_rate_percent: string | null; average_return_percent: string | null }>;
+  integrity: { future_function_check: "passed" | "failed" | "unavailable"; survivorship_check: "passed" | "failed" | "unavailable"; duplicate_decision_check: "passed" | "failed"; limitations: string[] };
+  gross_hit_rate_percent?: string | null;
+  gross_average_return_percent?: string | null;
+  fee_bps?: string | null;
+  slippage_bps?: string | null;
+  generated_at: string;
+  limitations: string[];
+};
+
+export type QuantCalibrationLoader = (horizon?: 1 | 3 | 5 | 10 | 20) => Promise<QuantCalibrationReport>;
+
 export type DecisionJournalAction = "observe" | "no_trade" | "buy" | "sell";
 
 export type DecisionJournalEntry = {

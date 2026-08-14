@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { loadKronosForecast, loadQuantStrategy, loadTdxFormula } from "./api";
+import { loadKronosForecast, loadQuantCalibration, loadQuantStrategy, loadTdxFormula } from "./api";
 
 describe("loadKronosForecast", () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -43,6 +43,16 @@ describe("loadQuantStrategy", () => {
       "/api/v1/a-shares/quant-strategy?limit=8",
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
+  });
+});
+
+describe("loadQuantCalibration", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("reads the append-only calibration report without translating unavailable values", async () => {
+    const payload = { status: "partial", horizon: 5, total_sample_count: 4, mature_sample_count: 4, splits: [], integrity: { future_function_check: "passed", survivorship_check: "unavailable", duplicate_decision_check: "passed", limitations: ["样本不足"] }, generated_at: "2026-08-14T08:00:00Z", limitations: ["样本不足"] };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(payload), { status: 200 })));
+    await expect(loadQuantCalibration(5)).resolves.toEqual(payload);
   });
 });
 

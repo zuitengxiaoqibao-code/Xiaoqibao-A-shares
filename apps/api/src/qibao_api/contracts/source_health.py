@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 
 SourceAttemptStatus = Literal["ready", "error", "empty"]
@@ -51,3 +51,29 @@ class SourceHealthResponse(BaseModel):
     generated_at: AwareDatetime
     window_size: int = Field(ge=1)
     sources: tuple[SourceHealthItem, ...]
+    # `source_count` is retained for old clients; the explicit fields prevent
+    # a probe count from being mistaken for configured or production-ready data.
+    source_count: int | None = Field(default=None, ge=0)
+    probed_count: int | None = Field(default=None, ge=0)
+    ready_count: int | None = Field(default=None, ge=0)
+    degraded_count: int | None = Field(default=None, ge=0)
+    unavailable_count: int | None = Field(default=None, ge=0)
+    observed_at: AwareDatetime | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_probe_counts(cls, values):
+        if not isinstance(values, dict):
+            return values
+        sources = values.get("sources") or ()
+        def status_of(item):
+            return item.get("status") if isinstance(item, dict) else item.status
+        probed = len(sources)
+        values = dict(values)
+        values.setdefault("source_count", probed)
+        values.setdefault("probed_count", probed)
+        values.setdefault("ready_count", sum(status_of(item) == "ready" for item in sources))
+        values.setdefault("degraded_count", sum(status_of(item) == "degraded" for item in sources))
+        values.setdefault("unavailable_count", sum(status_of(item) == "unavailable" for item in sources))
+        values.setdefault("observed_at", values.get("generated_at"))
+        return values

@@ -186,10 +186,14 @@ from qibao_api.tasks.progress import TaskProgressRegistry
 from qibao_api.bootstrap.lazy_service import AsyncLazyService
 from qibao_api.a_shares.company_research_tasks import CompanyResearchTaskService
 from qibao_api.operations.performance_store import PerformanceStore
+from qibao_api.operations.observability import ObservabilityStore
 from qibao_api.operations.shared_snapshots import SharedSnapshotRegistry
+from qibao_api.storage.replay_snapshot_store import ReplaySnapshotStore
 from qibao_api.shangshu.scheduler import DailyBriefingScheduler
 from qibao_api.gongbu.backup_service import BackupService
 from qibao_api.routes.operations import router as operations_router
+from qibao_api.routes.watchlist_risk import router as watchlist_risk_router
+from qibao_api.a_shares.watchlist_risk import WatchlistRiskService
 from qibao_api.routes.decisions import router as decisions_router
 from qibao_api.shangshu.decision_repository import DecisionRepository
 from qibao_api.shangshu.decision_runtime import (
@@ -276,6 +280,7 @@ async def _sector_fund_flow_sampling_loop(
 async def _source_health_snapshot_loop(
     repository,
     *,
+    observability=None,
     sleep=asyncio.sleep,
     interval_seconds: float = 30,
 ) -> None:
@@ -286,6 +291,12 @@ async def _source_health_snapshot_loop(
         except asyncio.CancelledError:
             raise
         except Exception:
+            if observability is not None:
+                observability.record(
+                    "source-health-snapshot",
+                    status="error",
+                    error_code="snapshot_refresh_failed",
+                )
             logger.info(
                 "source health snapshot refresh unavailable; keeping cache",
                 exc_info=True,
@@ -433,10 +444,16 @@ async def lifespan(application: FastAPI):
         settings.data_dir / "shared-snapshots.sqlite3"
     )
     application.state.shared_snapshot_registry = shared_snapshot_registry
+    replay_snapshot_store = ReplaySnapshotStore(
+        settings.data_dir / "replay-snapshots.sqlite3"
+    )
+    application.state.replay_snapshot_store = replay_snapshot_store
     application.state.performance_store = PerformanceStore(
         settings.data_dir / "performance.sqlite3",
         shared_snapshot_registry=shared_snapshot_registry,
     )
+    observability_store = ObservabilityStore(settings.data_dir / "observability.sqlite3")
+    application.state.observability_store = observability_store
     ai_settings_repository = AISettingsRepository(settings.data_dir)
     application.state.ai_settings_repository = ai_settings_repository
     effective_ai_settings = EffectiveAISettingsResolver(
@@ -572,7 +589,9 @@ async def lifespan(application: FastAPI):
         settings.data_dir / "operations.sqlite3"
     )
     source_health_snapshot_task = asyncio.create_task(
-        _source_health_snapshot_loop(operations_repository),
+        _source_health_snapshot_loop(
+            operations_repository, observability=observability_store
+        ),
         name="source-health-snapshot",
     )
     tdx_auto_import_task = None
@@ -974,6 +993,9 @@ async def lifespan(application: FastAPI):
             local_market_review_source = None
             try:
                 application.state.a_share_instrument_directory = a_share_instrument_directory
+                application.state.watchlist_risk_service = WatchlistRiskService(
+                    a_share_instrument_directory, bar_repository
+                )
                 application.state.a_share_universe_source = FallbackAShareUniverseSource(
                     EastmoneyAShareUniverseSource(client=client),
                     CninfoAShareUniverseSource(client=client),
@@ -1361,6 +1383,8 @@ async def lifespan(application: FastAPI):
                 compliance.close()
                 audit_repository.close()
                 operations_repository.close()
+                replay_snapshot_store.close()
+                observability_store.close()
                 candidate_sentiment_repository.close()
                 a_share_research_repository.close()
                 if market_sentiment_repository is not None:
@@ -1428,6 +1452,7 @@ app.include_router(market_sentiment_router)
 app.include_router(market_overview_router)
 app.include_router(quant_strategy_router)
 app.include_router(portfolio_risk_router)
+app.include_router(watchlist_risk_router)
 app.include_router(first_limit_up_router)
 app.include_router(tdx_local_router)
 app.include_router(speech_router)

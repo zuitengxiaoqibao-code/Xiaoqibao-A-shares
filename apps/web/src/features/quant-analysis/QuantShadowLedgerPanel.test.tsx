@@ -90,4 +90,14 @@ describe("QuantShadowLedgerPanel", () => {
     })));
     expect(screen.getByText("只记录人工决策，不连接交易下单")).toBeInTheDocument();
   });
+
+  it("shows calibration integrity separately from shadow outcome statistics", () => {
+    render(<QuantShadowLedgerPanel loading={false} error="" records={[]} calibration={{
+      status: "partial", horizon: 5, total_sample_count: 4, mature_sample_count: 4, splits: [],
+      integrity: { future_function_check: "passed", survivorship_check: "unavailable", duplicate_decision_check: "passed", limitations: ["样本不足"] },
+      generated_at: "2026-08-14T08:00:00Z", limitations: ["样本不足"],
+    }} />);
+    expect(screen.getByRole("region", { name: "量化走样校准报告" })).toHaveTextContent("未来函数检查通过");
+    expect(screen.getByRole("region", { name: "量化走样校准报告" })).toHaveTextContent("生存者偏差检查不可用");
+  });
 });

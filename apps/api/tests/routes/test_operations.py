@@ -208,6 +208,10 @@ def test_operations_diagnostics_is_safe_and_actionable(tmp_path) -> None:
     assert body["backup_count"] == 1
     assert body["tdx_auto_import"]["state"] == "unchanged"
     assert body["source_health"]["ready"] == 0
+    assert body["quality_matrix"]["items"][0]["domain"] == "source_probe:history"
+    assert body["quality_matrix"]["items"][0]["coverage_percent"] == 50.0
+    assert body["quality_matrix"]["items"][0]["valid_count"] == 1
+    assert body["quality_matrix"]["items"][0]["total_count"] == 2
     assert "api_key" not in response.text.lower()
     assert "token" not in response.text.lower()
 

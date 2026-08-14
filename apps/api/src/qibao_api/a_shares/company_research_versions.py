@@ -38,6 +38,7 @@ def _semantic_payload(value: CompanyResearchResponse) -> dict:
                 for key, child in item.items()
                 if key not in {"observed_at", "generated_at", "fetched_at", "normalized_at"}
                 and not (in_evidence_ledger and key in {"total_count", "coverage_percent"})
+                and key not in {"change_type", "evidence_ids"}
             }
         if isinstance(item, list):
             return [strip_timestamps(child, in_evidence_ledger=in_evidence_ledger) for child in item]
@@ -71,9 +72,22 @@ def _changes(
         before_text = None if before is None else f"{before.status} · {before.summary}"
         after_text = f"{item.status} · {item.summary}"
         if before_text != after_text or (before is not None and before.facts != item.facts):
+            if before is None:
+                change_type = "new"
+            elif before.status != item.status:
+                rank = {"unavailable": 0, "partial": 1, "clear": 2, "triggered": 2, "ready": 3}
+                change_type = "strengthened" if rank.get(item.status, 0) > rank.get(before.status, 0) else "weakened"
+            elif len(item.facts) > len(before.facts):
+                change_type = "strengthened"
+            elif len(item.facts) < len(before.facts):
+                change_type = "weakened"
+            else:
+                change_type = "updated"
             changes.append(CompanyResearchVersionChange(
                 category="conclusion", label=item.label,
                 before=before_text, after=after_text,
+                change_type=change_type,
+                evidence_ids=tuple(dict.fromkeys(item.evidence_ids)),
             ))
     data_fields = (
         ("研究截止日", previous.as_of, current.as_of),
@@ -88,6 +102,7 @@ def _changes(
             changes.append(CompanyResearchVersionChange(
                 category="data", label=label,
                 before=_display(before), after=_display(after),
+                change_type="updated",
             ))
     previous_sources = {(item.source, item.label, item.status) for item in previous.sources}
     current_sources = {(item.source, item.label, item.status) for item in current.sources}
@@ -96,6 +111,7 @@ def _changes(
             category="source", label="来源集合",
             before="；".join(" / ".join(item) for item in sorted(previous_sources)) or "无",
             after="；".join(" / ".join(item) for item in sorted(current_sources)) or "无",
+            change_type="updated",
         ))
     return tuple(changes)
 

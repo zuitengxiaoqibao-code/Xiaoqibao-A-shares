@@ -1,4 +1,5 @@
 import type { CompanyResearchResponse } from "./types";
+import type { CompanyResearchComparison } from "./api";
 
 
 function number(value: string | null | undefined): number | null {
@@ -11,8 +12,20 @@ function dimension(value: CompanyResearchResponse, key: string, metric: string):
   return number(value.dimensions.find((item) => item.key === key)?.metrics[metric]);
 }
 
-export function ResearchComparisonMatrix({ peers }: { peers: CompanyResearchResponse[] }) {
-  if (peers.length < 2) return null;
+export function ResearchComparisonMatrix({ peers, comparison }: { peers: CompanyResearchResponse[]; comparison?: CompanyResearchComparison | null }) {
+  const compared = comparison?.companies ?? [];
+  if (comparison ? compared.length < 2 : peers.length < 2) return null;
+  if (comparison) return <section className="research-card research-comparison-matrix" aria-label="同行横向比较">
+    <div className="research-card-header"><h2>同行横向证据矩阵</h2><span className={`research-status ${comparison.status}`}>{comparison.status === "ready" ? "证据完整" : comparison.status === "partial" ? "部分证据" : "不可用"}</span></div>
+    <div className="research-comparison-matrix-grid">
+      <div className="research-comparison-corner">公司</div><b>研究分</b><b>证据覆盖</b><b>营收同比</b><b>净利润同比</b><b>PE(TTM)</b><b>PB</b>
+      {compared.map((peer) => <div className="research-comparison-row" key={peer.symbol}>
+        <strong>{peer.name}<small>{peer.symbol}</small></strong>
+        {[peer.final_score, peer.evidence_coverage_percent, peer.latest_revenue_yoy_percent, peer.latest_net_profit_yoy_percent, peer.pe_ttm, peer.pb].map((value, index) => <span data-state={value === null ? "unavailable" : "ready"} key={index}><small>{["研究分", "证据覆盖", "营收同比", "净利润同比", "PE(TTM)", "PB"][index]}</small><b>{value === null ? "--" : `${Number(value).toFixed(2)}${index === 1 || index === 2 || index === 3 ? "%" : ""}`}</b><i><em style={{ width: `${value === null ? 0 : Math.min(100, Math.abs(Number(value)))}%` }} /></i></span>)}
+      </div>)}
+    </div>
+    {comparison.limitations.length > 0 && <p className="financial-note">限制：{comparison.limitations.join("；")}</p>}
+  </section>;
   const metrics = [
     { label: "研究分", read: (item: CompanyResearchResponse) => number(item.final_score), format: (value: number) => value.toFixed(1) },
     { label: "证据覆盖", read: (item: CompanyResearchResponse) => number(item.evidence_coverage) === null ? null : number(item.evidence_coverage)! * 100, format: (value: number) => `${value.toFixed(0)}%` },

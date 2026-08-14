@@ -1,4 +1,4 @@
-import type { PortfolioPositionInput, PortfolioRiskAnalyzer, PortfolioRiskResponse } from "./types";
+import type { PortfolioPositionInput, PortfolioRiskAnalyzer, PortfolioRiskResponse, WatchlistRiskLoader } from "./types";
 
 
 async function responseJson(response: Response): Promise<PortfolioRiskResponse> {
@@ -33,4 +33,10 @@ export const analyzePortfolioRisk: PortfolioRiskAnalyzer = async (request) => {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(request),
   }));
+};
+
+export const loadWatchlistRisk: WatchlistRiskLoader = async (symbols, asOf) => {
+  const response = await fetch("/api/v1/a-shares/watchlist-risk", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ symbols, ...(asOf ? { as_of: asOf } : {}) }) });
+  if (!response.ok) throw new Error(`观察篮子风险请求失败 (${response.status})`);
+  return response.json();
 };

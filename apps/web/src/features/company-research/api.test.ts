@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { loadCompanyResearch } from "./api";
+import { loadCompanyResearch, loadCompanyResearchComparison } from "./api";
 
 describe("company research api", () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -45,5 +45,16 @@ describe("company research api", () => {
 
     expect(updates).toContain(50);
     expect(updates.at(-1)).toBe(100);
+  });
+
+  it("posts a bounded set of verified symbols for comparison", async () => {
+    const payload = { status: "partial", as_of: "2026-08-14", generated_at: "2026-08-14T08:00:00Z", companies: [], sources: [], limitations: [] };
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.method).toBe("POST");
+      expect(init?.body).toContain("600519");
+      return new Response(JSON.stringify(payload), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(loadCompanyResearchComparison(["600519", "000001"])).resolves.toEqual(payload);
   });
 });

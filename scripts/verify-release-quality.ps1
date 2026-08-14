@@ -18,6 +18,10 @@ if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) {
 }
 
 $Manifest = [IO.File]::ReadAllText($ManifestPath, [Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+$ManifestText = [IO.File]::ReadAllText($ManifestPath, [Text.UTF8Encoding]::new($false))
+if ($ManifestText -match '�|[ÃÂåæçèéïð][^\r\n]{0,2}[\u0080-\u00bf]') {
+    throw "Release manifest contains invalid UTF-8 diagnostic text"
+}
 if ([string]::IsNullOrWhiteSpace([string]$Manifest.commit)) {
     throw "Release manifest does not contain a commit"
 }
@@ -26,6 +30,25 @@ if ($ExpectedCommit -and $Manifest.commit -ne $ExpectedCommit) {
 }
 if (-not $AllowDirtySource -and $Manifest.source_state -ne "clean") {
     throw "Release was not built from a clean source tree: $($Manifest.source_state)"
+}
+if ($null -eq $Manifest.migration_version -or [int]$Manifest.migration_version -lt 1) {
+    throw "Release manifest contains an invalid migration version"
+}
+foreach ($Database in @($Manifest.database_files)) {
+    $DatabasePath = Join-Path $ResolvedRoot ([string]$Database.path).Replace('/', '\')
+    $ResolvedDatabase = [IO.Path]::GetFullPath($DatabasePath)
+    if (-not $ResolvedDatabase.StartsWith($ResolvedRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Release database path escapes the release root"
+    }
+    if (-not (Test-Path -LiteralPath $ResolvedDatabase -PathType Leaf)) {
+        throw "Release database listed in manifest is missing: $($Database.path)"
+    }
+    if ((Get-Item -LiteralPath $ResolvedDatabase).Length -ne [long]$Database.bytes) {
+        throw "Release database size differs from manifest: $($Database.path)"
+    }
+    if ((Get-FileHash -LiteralPath $ResolvedDatabase -Algorithm SHA256).Hash -ne [string]$Database.sha256) {
+        throw "Release database SHA-256 differs from manifest: $($Database.path)"
+    }
 }
 
 $ManifestDirs = @($Manifest.persistent_dirs | ForEach-Object { [string]$_ })
@@ -56,6 +79,18 @@ foreach ($Name in @("overview", "quant_strategy", "company_research", "tdx_profe
     }
     if ([string]$Domain.status -notin $AllowedDomainStates) {
         throw "Release manifest contains invalid domain status: $Name=$($Domain.status)"
+    }
+}
+
+$SourceHealth = $Manifest.quality_gates.domain_status.source_health
+if ($null -ne $SourceHealth) {
+    foreach ($Name in @("probed_count", "ready_count", "degraded_count", "unavailable_count")) {
+        if ($null -eq $SourceHealth.PSObject.Properties[$Name]) {
+            throw "Release manifest source health omits explicit count: $Name"
+        }
+    }
+    if ([int]$SourceHealth.ready_count + [int]$SourceHealth.degraded_count + [int]$SourceHealth.unavailable_count -ne [int]$SourceHealth.probed_count) {
+        throw "Release manifest source health counts are inconsistent"
     }
 }
 

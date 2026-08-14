@@ -1,7 +1,7 @@
 import { type FormEvent, useState } from "react";
 import { Archive, Clock3, NotebookPen, ShieldCheck, TrendingDown } from "lucide-react";
 
-import type { DecisionJournalAction, DecisionJournalCreate, DecisionJournalEntry, QuantShadowAnalytics, QuantShadowDecisionRecord } from "./types";
+import type { DecisionJournalAction, DecisionJournalCreate, DecisionJournalEntry, QuantCalibrationReport, QuantShadowAnalytics, QuantShadowDecisionRecord } from "./types";
 
 type Props = {
   records: QuantShadowDecisionRecord[];
@@ -10,6 +10,7 @@ type Props = {
   analytics?: QuantShadowAnalytics | null;
   analyticsLoading?: boolean;
   analyticsError?: string;
+  calibration?: QuantCalibrationReport | null;
   journalRecords?: DecisionJournalEntry[];
   journalSymbol?: string | null;
   journalLoading?: boolean;
@@ -56,7 +57,7 @@ const journalActionLabels: Record<DecisionJournalAction, string> = {
   sell: "人工卖出记录",
 };
 
-export function QuantShadowLedgerPanel({ records, loading, error, analytics = null, analyticsLoading = false, analyticsError = "", journalRecords = [], journalSymbol = null, journalLoading = false, journalError = "", onJournalCreate }: Props) {
+export function QuantShadowLedgerPanel({ records, loading, error, analytics = null, analyticsLoading = false, analyticsError = "", calibration = null, journalRecords = [], journalSymbol = null, journalLoading = false, journalError = "", onJournalCreate }: Props) {
   const [journalAction, setJournalAction] = useState<DecisionJournalAction>("observe");
   const [journalNote, setJournalNote] = useState("");
   const [journalPrice, setJournalPrice] = useState("");
@@ -146,6 +147,16 @@ export function QuantShadowLedgerPanel({ records, loading, error, analytics = nu
           {[...analytics.drift.reasons, ...analytics.limitations].map((item) => <span key={item}>{item}</span>)}
         </div>}
       </>}
+    </section>}
+    {calibration && <section className="quant-shadow-analytics" aria-label="量化走样校准报告">
+      <header><div><TrendingDown size={16} /><h3>量化走样校准报告</h3></div><small>{calibration.horizon} 日 · {calibration.status === "ready" ? "证据完整" : calibration.status === "partial" ? "部分证据" : "不可用"}</small></header>
+      <div className="quant-shadow-kpis">
+        <div><span>总样本</span><strong>{calibration.total_sample_count} 条</strong><small>成熟 {calibration.mature_sample_count} 条</small></div>
+        <div><span>未来函数检查</span><strong>{calibration.integrity.future_function_check === "passed" ? "通过" : calibration.integrity.future_function_check === "failed" ? "失败" : "不可用"}</strong></div>
+        <div><span>生存者偏差检查</span><strong>{calibration.integrity.survivorship_check === "passed" ? "通过" : calibration.integrity.survivorship_check === "failed" ? "失败" : "不可用"}</strong></div>
+        <div><span>重复决策检查</span><strong>{calibration.integrity.duplicate_decision_check === "passed" ? "通过" : "失败"}</strong></div>
+      </div>
+      {(calibration.limitations.length > 0 || calibration.integrity.limitations.length > 0) && <div className="quant-shadow-findings">{[...calibration.limitations, ...calibration.integrity.limitations].map((item, index) => <span key={`${item}-${index}`}>{item}</span>)}</div>}
     </section>}
     {loading && !records.length && <div className="quant-shadow-empty" role="status"><Clock3 size={18} /><b>正在读取冻结决策</b></div>}
     {error && <div className="quant-shadow-empty error" role="alert"><b>{error}</b><p>保留上一次真实账本，不用空响应覆盖。</p></div>}

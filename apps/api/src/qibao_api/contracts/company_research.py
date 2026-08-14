@@ -283,6 +283,8 @@ class CompanyResearchVersionChange(BaseModel):
     label: str
     before: str | None = None
     after: str | None = None
+    change_type: Literal["strengthened", "weakened", "unchanged", "new", "resolved", "updated"] = "updated"
+    evidence_ids: tuple[str, ...] = ()
 
 
 class CompanyResearchVersion(BaseModel):

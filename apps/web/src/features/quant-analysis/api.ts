@@ -1,4 +1,4 @@
-import type { DecisionJournalCreate, DecisionJournalEntry, IntradayTick, KronosForecastResponse, QuantShadowAnalytics, QuantShadowDecisionRecord, QuantStrategyDashboard, TdxFormulaResponse } from "./types";
+import type { DecisionJournalCreate, DecisionJournalEntry, IntradayTick, KronosForecastResponse, QuantCalibrationReport, QuantShadowAnalytics, QuantShadowDecisionRecord, QuantStrategyDashboard, TdxFormulaResponse } from "./types";
 import { coalescedFetch } from "../../shared/coalescedFetch";
 import { requestLedger } from "../../shared/performance/requestLedger";
 
@@ -56,6 +56,12 @@ export async function loadQuantShadowAnalytics(horizon: 1 | 3 | 5 | 10 | 20 = 5)
   const response = await coalescedFetch(`/api/v1/a-shares/quant-strategy/shadow/analytics?horizon=${horizon}`);
   if (!response.ok) throw new Error(`策略校准统计请求失败 (${response.status})`);
   return response.json() as Promise<QuantShadowAnalytics>;
+}
+
+export async function loadQuantCalibration(horizon: 1 | 3 | 5 | 10 | 20 = 5): Promise<QuantCalibrationReport> {
+  const response = await coalescedFetch(`/api/v1/a-shares/quant-strategy/shadow/calibration?horizon=${horizon}`);
+  if (!response.ok) throw new Error(`量化校准报告请求失败 (${response.status})`);
+  return response.json() as Promise<QuantCalibrationReport>;
 }
 
 export async function loadDecisionJournal(limit = 50): Promise<DecisionJournalEntry[]> {

@@ -1,7 +1,7 @@
-import { AlertTriangle, ArchiveRestore, BarChart3, CheckCircle2, Clock3, Database, DatabaseBackup, Download, FolderOpen, Pause, Play, RotateCcw, ServerCog, Trash2 } from "lucide-react";
+import { Activity as ActivityIcon, AlertTriangle, ArchiveRestore, BarChart3, CheckCircle2, Clock3, Database, DatabaseBackup, Download, FolderOpen, Pause, Play, RotateCcw, ServerCog, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import type { BackupRecord, BackupVerification, CacheCleanupResult, CleanupPreview, OperationsDiagnostics, OperationsStatus, PerformanceSummary } from "./types";
+import type { BackupRecord, BackupVerification, CacheCleanupResult, CleanupPreview, ObservabilitySnapshot, OperationsDiagnostics, OperationsStatus, PerformanceSummary } from "./types";
 import type { HistoryRepairAudit, HistoryRepairCenter, HistorySyncController, HistorySyncStarter, TdxImportController, TdxImportJob, TdxImportScanner, TdxImportStarter, TdxImportLoader, TdxImportScan } from "../data-settings/types";
 import { readCoalescedFetchStats } from "../../shared/coalescedFetch";
 import { blockerLabel } from "../../shared/evidence/freshnessCopy";
@@ -18,6 +18,7 @@ type Props = {
   cleanupStorage?: (olderThanHours: number) => Promise<CacheCleanupResult>;
   loadPerformance?: () => Promise<PerformanceSummary>;
   loadDiagnostics?: () => Promise<OperationsDiagnostics>;
+  loadObservability?: () => Promise<ObservabilitySnapshot>;
   loadHistoryRepairCenter?: () => Promise<HistoryRepairCenter>;
   loadHistoryRepairAudits?: () => Promise<HistoryRepairAudit[]>;
   startHistoryBackfill?: HistorySyncStarter;
@@ -93,6 +94,7 @@ export function OperationsView(props: Props) {
   const [tdxBusy, setTdxBusy] = useState(false);
   const [tdxError, setTdxError] = useState("");
   const [diagnostics, setDiagnostics] = useState<OperationsDiagnostics | null>(null);
+  const [observability, setObservability] = useState<ObservabilitySnapshot | null>(null);
   const requestStats = readCoalescedFetchStats();
 
   async function reload() { setError(""); try { setStatus(await props.loadStatus()); } catch (reason) { setError(operationError(reason, "运维状态")); } }
@@ -115,6 +117,7 @@ export function OperationsView(props: Props) {
   }, [props.loadStatus]);
   useEffect(() => { if (props.loadPerformance) void props.loadPerformance().then(setPerformance).catch(() => undefined); }, [props.loadPerformance]);
   useEffect(() => { if (props.loadDiagnostics) void props.loadDiagnostics().then(setDiagnostics).catch(() => undefined); }, [props.loadDiagnostics]);
+  useEffect(() => { if (props.loadObservability) void props.loadObservability().then(setObservability).catch(() => undefined); }, [props.loadObservability]);
   useEffect(() => {
     if (!props.loadTdxImport) return;
     let active = true;
@@ -185,6 +188,7 @@ export function OperationsView(props: Props) {
       {status.tdx_auto_import.state === "error" && <small>{status.tdx_auto_import.error ?? "未返回具体原因"}</small>}
     </section>}
     {diagnostics && <details className="inventory-console operations-diagnostics"><summary><ServerCog size={16}/>运行诊断摘要 <small>默认折叠</small></summary><div className="directory-inventory"><article><Database size={17}/><div><b>数据源健康</b><small>就绪 {diagnostics.source_health.ready} · 降级 {diagnostics.source_health.degraded} · 不可用 {diagnostics.source_health.unavailable}</small></div></article><article><DatabaseBackup size={17}/><div><b>本地备份</b><small>{diagnostics.backup_count} 份 · 持久数据 {bytes(diagnostics.persistent_bytes)} · 可重建缓存 {bytes(diagnostics.rebuildable_bytes)}</small></div></article><article><ServerCog size={17}/><div><b>自动导入</b><small>{autoImportStateLabel[diagnostics.tdx_auto_import.state] ?? localizedState(diagnostics.tdx_auto_import.state)} · 监测文件 {diagnostics.tdx_auto_import.file_count}</small></div></article><article><AlertTriangle size={17}/><div><b>来源冲突</b><small>{diagnostics.source_conflicts?.state === "ready" ? `${diagnostics.source_conflicts.conflict_count} 个字段冲突，点击展开核验` : "冲突摘要暂不可用"}</small></div></article></div>{diagnostics.source_conflicts?.state === "ready" && diagnostics.source_conflicts.conflict_count > 0 && <div className="source-conflict-list">{diagnostics.source_conflicts.conflicts.slice(0, 12).map((conflict) => <article key={`${conflict.symbol}:${conflict.field}:${conflict.as_of}`}><div><b>{conflict.symbol} · {conflict.field}</b><small>{conflict.as_of} · 采用 {conflict.selected_source} · {conflict.selection_reason}</small></div><div className="source-conflict-candidates">{conflict.candidates.map((candidate) => <span key={`${candidate.source}:${candidate.value}`} title={candidate.evidence_link}>{candidate.source}: {candidate.value}</span>)}</div></article>)}</div>}<button className="diagnostics-export" onClick={exportDiagnostics}><Download size={14}/>导出诊断摘要</button></details>}
+    {observability && <details className="inventory-console operations-diagnostics"><summary><ActivityIcon />可观测性事件与告警 <small>默认折叠</small></summary><div className="directory-inventory"><article><AlertTriangle size={17}/><div><b>活动告警</b><small>{observability.alerts.length} 条 · 最近窗口 {observability.window_size} 条事件</small></div></article><article><BarChart3 size={17}/><div><b>最近事件</b><small>{observability.events.length} 条 · 生成于 {new Date(observability.generated_at).toLocaleString("zh-CN")}</small></div></article></div>{observability.alerts.length > 0 && <div className="source-conflict-list">{observability.alerts.slice(0, 8).map((alert) => <article key={`${alert.code}:${alert.event_type}:${alert.detail}`}><div><b>{alert.code === "repeated_failure" ? "连续失败" : alert.code === "coverage_low" ? "覆盖率偏低" : "接口延迟偏高"}</b><small>{alert.event_type} · {alert.detail}</small></div></article>)}</div>}</details>}
     {(props.loadTdxImport || props.scanTdxImport || props.startTdxImport) && <section className="history-repair-console tdx-import-console">
       <header><div><h2><Database size={17}/>本地通达信日线导入</h2><small>读取 vipdoc / 日线压缩包 · 本地数据优先 · 不控制通达信进程</small></div><div><button onClick={() => void scanTdx()} disabled={tdxBusy || !props.scanTdxImport}><RotateCcw size={14}/>扫描本地数据</button><button onClick={() => void startTdx()} disabled={tdxBusy || !props.startTdxImport}>导入本地增量</button>{tdxImport?.state === "running" && <button onClick={() => void controlTdx("pause")} disabled={tdxBusy || !props.pauseTdxImport}><Pause size={14}/>暂停</button>}{tdxImport?.state === "paused" && <button onClick={() => void controlTdx("resume")} disabled={tdxBusy || !props.resumeTdxImport}><Play size={14}/>继续</button>}</div></header>
       {tdxScan && <p className="history-repair-loading" role="status">发现 {tdxScan.day_files} 个日线文件 · 可读取 {tdxScan.readable_files} 个 · 最新 {tdxScan.latest_trade_date ?? "--"}</p>}

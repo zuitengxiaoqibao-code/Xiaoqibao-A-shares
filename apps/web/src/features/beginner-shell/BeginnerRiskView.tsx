@@ -5,13 +5,17 @@ import { PortfolioRiskPanel } from "../portfolio-risk/PortfolioRiskPanel";
 import type { PortfolioPositionRemover, PortfolioPositionSaver, PortfolioRiskAnalyzer, PortfolioRiskLoader } from "../portfolio-risk/types";
 import { friendlyError } from "../../shared/friendlyError";
 import { DataWatermarkStrip } from "../../shared/evidence/DataWatermarkStrip";
+import { WatchlistRiskPanel } from "../portfolio-risk/WatchlistRiskPanel";
+import type { WatchlistRiskLoader } from "../portfolio-risk/types";
 
-export function BeginnerRiskView({ load, analyzePortfolio, loadPortfolio, savePortfolioPosition, removePortfolioPosition }: {
+export function BeginnerRiskView({ load, analyzePortfolio, loadPortfolio, savePortfolioPosition, removePortfolioPosition, selectedSymbol, loadWatchlistRisk }: {
   load?: () => Promise<RiskStatus>;
   analyzePortfolio?: PortfolioRiskAnalyzer;
   loadPortfolio?: PortfolioRiskLoader;
   savePortfolioPosition?: PortfolioPositionSaver;
   removePortfolioPosition?: PortfolioPositionRemover;
+  selectedSymbol?: string | null;
+  loadWatchlistRisk?: WatchlistRiskLoader;
 }) {
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [message, setMessage] = useState("");
@@ -43,6 +47,7 @@ export function BeginnerRiskView({ load, analyzePortfolio, loadPortfolio, savePo
       savePosition={savePortfolioPosition}
       removePosition={removePortfolioPosition}
     />}
+    {selectedSymbol && loadWatchlistRisk && <WatchlistRiskPanel symbols={[selectedSymbol]} load={loadWatchlistRisk} />}
   </main>;
 }
 

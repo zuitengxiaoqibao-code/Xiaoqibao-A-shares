@@ -131,8 +131,16 @@ def get_performance_store(request: Request):
     return request.app.state.performance_store
 
 
+def get_observability_store(request: Request):
+    return request.app.state.observability_store
+
+
 def get_shared_snapshot_registry(request: Request):
     return getattr(request.app.state, "shared_snapshot_registry", None)
+
+
+def get_replay_snapshot_store(request: Request):
+    return request.app.state.replay_snapshot_store
 
 
 def get_a_share_diagnosis_service(request: Request):
@@ -153,6 +161,10 @@ def get_company_research_task_service(request: Request):
 
 def get_company_research_ai_task_service(request: Request):
     return request.app.state.company_research_ai_task_service
+
+
+def get_company_research_version_repository(request: Request):
+    return request.app.state.company_research_version_repository
 
 
 def get_a_share_preparation_service(request: Request):
@@ -209,6 +221,10 @@ def get_portfolio_risk_service(request: Request):
 
 def get_portfolio_risk_store(request: Request):
     return request.app.state.portfolio_risk_store
+
+
+def get_watchlist_risk_service(request: Request):
+    return request.app.state.watchlist_risk_service
 
 
 def get_candidate_sentiment_service(request: Request):

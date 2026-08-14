@@ -196,7 +196,17 @@ if ($SourceState -notin @("clean", "dirty", "unknown")) {
     $SourceState = if ((& git -C $Root status --porcelain 2>$null)) { "dirty" } else { "clean" }
 }
 $LockHash = (Get-FileHash -LiteralPath (Join-Path $Root "pnpm-lock.yaml") -Algorithm SHA256).Hash
-$MigrationVersion = 1
+$MigrationVersion = [int](& $Python -c "from qibao_desktop.data_migration import CURRENT_MIGRATION_VERSION; print(CURRENT_MIGRATION_VERSION)")
+if ($LASTEXITCODE -ne 0) { throw "Migration version could not be resolved" }
+$DatabaseFiles = @(Get-ChildItem -LiteralPath (Join-Path $BuiltRelease "data") -Recurse -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.Extension -in @(".sqlite3", ".duckdb", ".db") } |
+    ForEach-Object {
+        [ordered]@{
+            path = $_.FullName.Substring($BuiltRelease.Length).TrimStart('\').Replace('\', '/')
+            bytes = $_.Length
+            sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
+        }
+    })
 $ExeHash = $null
 $ExePath = Join-Path $BuiltRelease "xiaoqibao.exe"
 if (Test-Path -LiteralPath $ExePath) {
@@ -210,6 +220,7 @@ $ReleaseManifest = [ordered]@{
     working_tree_dirty = if ($SourceState -eq "dirty") { $true } elseif ($SourceState -eq "clean") { $false } else { $null }
     dependency_lock_hash = $LockHash
     migration_version = $MigrationVersion
+    database_files = $DatabaseFiles
     persistent_dirs = $PersistentNames
     exe_sha256 = $ExeHash
     total_bytes = $Bytes

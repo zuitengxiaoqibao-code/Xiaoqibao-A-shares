@@ -19,7 +19,7 @@ import { CompanyResearchSections } from "./CompanyResearchSections";
 import { ResearchVersionChanges } from "./ResearchVersionChanges";
 import { CompanyResearchAIInsight } from "./CompanyResearchAIInsight";
 import { ResearchConclusionBlock } from "./ResearchConclusionBlock";
-import { loadCompanyResearchAI } from "./api";
+import { loadCompanyResearchAI, type CompanyResearchComparison } from "./api";
 import "./companyResearch.css";
 
 type Props = {
@@ -28,6 +28,7 @@ type Props = {
   selectedSymbol?: string | null;
   onSelectSymbol?: (symbol: string) => void;
   onOpenAShare?: (symbol: string) => void;
+  compare?: (symbols: string[], asOf?: string) => Promise<CompanyResearchComparison>;
 };
 
 type ResearchEntry = {
@@ -101,10 +102,6 @@ function FinancialTable({ periods }: { periods: FinancialPeriod[] }) {
   </div>;
 }
 
-function PeerComparison({ peers }: { peers: CompanyResearchResponse[] }) {
-  return <ResearchComparisonMatrix peers={peers} />;
-}
-
 const researchStages = [
   ["identity", "标的"], ["diagnosis", "行情诊断"], ["financials", "财务"],
   ["profile", "F10"], ["events", "事件催化"], ["analysis", "综合分析"],
@@ -119,7 +116,7 @@ function ResearchStageStrip({ progress }: { progress?: LoadProgress | null }) {
   </section>;
 }
 
-function ResearchDashboard({ value, peers, onOpenAShare, onAddPeer }: { value: CompanyResearchResponse; peers: CompanyResearchResponse[]; onOpenAShare?: (symbol: string) => void; onAddPeer?: (symbol: string, name: string) => void }) {
+function ResearchDashboard({ value, peers, comparison, onOpenAShare, onAddPeer }: { value: CompanyResearchResponse; peers: CompanyResearchResponse[]; comparison?: CompanyResearchComparison | null; onOpenAShare?: (symbol: string) => void; onAddPeer?: (symbol: string, name: string) => void }) {
   const score = numeric(value.final_score);
   const coverage = numeric(value.evidence_coverage);
   const risk = numeric(value.risk_penalty);
@@ -173,7 +170,7 @@ function ResearchDashboard({ value, peers, onOpenAShare, onAddPeer }: { value: C
     {value.research_version && <CompanyResearchAIInsight result={aiResult} loading={aiLoading} error={aiError} />}
     <ResearchVisualSummary value={value} />
     <ResearchEnrichmentPanel value={value.enrichment} currentSymbol={value.symbol} onAddPeer={onAddPeer} />
-    <PeerComparison peers={peers} />
+    <ResearchComparisonMatrix peers={peers} comparison={comparison} />
     <div className="research-grid">
       <section className="research-card" aria-label="九维公司研究矩阵">
         <div className="research-card-header"><h2>九维研究矩阵</h2><span className="research-status partial">只对可核验数值评分</span></div>
@@ -244,11 +241,12 @@ function ResearchDashboard({ value, peers, onOpenAShare, onAddPeer }: { value: C
   </div>;
 }
 
-export function CompanyResearchView({ load, search, selectedSymbol, onSelectSymbol, onOpenAShare }: Props) {
+export function CompanyResearchView({ load, search, selectedSymbol, onSelectSymbol, onOpenAShare, compare }: Props) {
   const [query, setQuery] = useState("");
   const [suggestions, setSuggestions] = useState<InstrumentSearchResponse["items"]>([]);
   const [entries, setEntries] = useState<ResearchEntry[]>([]);
   const [activeSymbol, setActiveSymbol] = useState<string | null>(null);
+  const [comparison, setComparison] = useState<CompanyResearchComparison | null>(null);
   const [searching, setSearching] = useState(false);
   const controllers = useRef(new Map<string, AbortController>());
   const initialized = useRef(false);
@@ -338,6 +336,14 @@ export function CompanyResearchView({ load, search, selectedSymbol, onSelectSymb
     };
   }, [activeSymbol]);
 
+  useEffect(() => {
+    const symbols = entries.filter((item) => item.value).map((item) => item.symbol);
+    if (!compare || symbols.length < 2) { setComparison(null); return undefined; }
+    let active = true;
+    void compare(symbols).then((value) => { if (active) setComparison(value); }).catch(() => { if (active) setComparison(null); });
+    return () => { active = false; };
+  }, [compare, entries]);
+
   useEffect(() => () => { controllers.current.forEach((controller) => controller.abort()); }, []);
 
   async function submit(event: FormEvent) {
@@ -384,6 +390,6 @@ export function CompanyResearchView({ load, search, selectedSymbol, onSelectSymb
     {active?.refreshing && <ResearchStageStrip progress={active.progress} />}
     {active?.state === "loading" && <section className="research-empty" aria-busy="true"><LoaderCircle size={24} /><h2>正在建立 {active.symbol} 研究账本</h2><p>财务、估值与 F10 分源加载中；缺失项不会用推测值填补。</p></section>}
     {active?.state === "error" && <section className="research-error" role="alert"><ShieldAlert size={22} /><h2>{active.symbol} 研究数据不可用</h2><p>{active.error}</p></section>}
-    {active?.state === "ready" && active.value && <ResearchDashboard value={active.value} peers={entries.flatMap((entry) => entry.value ? [entry.value] : [])} onOpenAShare={onOpenAShare} onAddPeer={(symbol, name) => void addCompany(symbol, name)} />}
+    {active?.state === "ready" && active.value && <ResearchDashboard value={active.value} peers={entries.flatMap((entry) => entry.value ? [entry.value] : [])} comparison={comparison} onOpenAShare={onOpenAShare} onAddPeer={(symbol, name) => void addCompany(symbol, name)} />}
   </main>;
 }

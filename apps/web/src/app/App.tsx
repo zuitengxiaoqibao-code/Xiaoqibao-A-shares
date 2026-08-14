@@ -9,7 +9,7 @@ import { runBacktest } from "../features/backtest/api";
 import { complianceAction, loadAudit, loadCompliance, loadRisk } from "../features/governance/api";
 import { diagnoseBondBatch, loadBondCandidates, loadBondDashboard, loadBondDiagnosis, loadCachedBondDiagnosis } from "../features/convertible-bonds/api";
 import { createNewsCorrection, loadNewsIntelligence, syncHotspots, syncNews } from "../features/news-intelligence/api";
-import { cleanupCache, cleanupStorage, createBackup, loadOperationsDiagnostics, loadOperationsStatus, loadPerformanceSummary, previewStorageCleanup, runManualJob, setSchedulerPaused, verifyBackup } from "../features/operations/api";
+import { cleanupCache, cleanupStorage, createBackup, loadObservability, loadOperationsDiagnostics, loadOperationsStatus, loadPerformanceSummary, previewStorageCleanup, runManualJob, setSchedulerPaused, verifyBackup } from "../features/operations/api";
 import { loadAShareCandidateScores, loadAShareCandidates, loadAShareDiagnosis } from "../features/a-shares/api";
 import { loadCurrentDecision, loadDecisionDate } from "../features/decision-workbench/api";
 import { SelectedInstrumentProvider } from "../features/instrument-selection/SelectedInstrumentProvider";
@@ -43,7 +43,7 @@ import {
   refreshCandidateSentiments,
 } from "../features/candidate-sentiment/api";
 import { loadFirstLimitUp, refreshFirstLimitUp } from "../features/first-limit-up/api";
-import { createDecisionJournal, loadDecisionJournal, loadKronosForecast, loadQuantShadowAnalytics, loadQuantShadowDecisions, loadQuantStrategy, loadQuantTicks, loadTdxFormula } from "../features/quant-analysis/api";
+import { createDecisionJournal, loadDecisionJournal, loadKronosForecast, loadQuantCalibration, loadQuantShadowAnalytics, loadQuantShadowDecisions, loadQuantStrategy, loadQuantTicks, loadTdxFormula } from "../features/quant-analysis/api";
 import { loadMarketIntervalReview, loadMarketOverview } from "../features/market-overview/api";
 import { loadStockTimeline } from "../features/stock-timeline/api";
 import { loadBreakingNewsAlerts } from "../features/news-alerts/api";
@@ -53,8 +53,8 @@ import {
   saveSpeechSettings,
   synthesizeSpeech,
 } from "../features/speech/api";
-import { loadCompanyResearch } from "../features/company-research/api";
-import { analyzePortfolioRisk, loadPortfolioRisk, removePortfolioPosition, savePortfolioPosition } from "../features/portfolio-risk/api";
+import { loadCompanyResearch, loadCompanyResearchComparison } from "../features/company-research/api";
+import { analyzePortfolioRisk, loadPortfolioRisk, loadWatchlistRisk, removePortfolioPosition, savePortfolioPosition } from "../features/portfolio-risk/api";
 
 export function App() {
   useEffect(() => { void loadAShareInstrumentDirectory().catch(() => undefined); }, []);
@@ -64,17 +64,19 @@ export function App() {
     runBacktest={runBacktest}
     loadRisk={loadRisk} loadCompliance={loadCompliance} loadAudit={loadAudit} complianceAction={complianceAction}
     analyzePortfolioRisk={analyzePortfolioRisk}
+    loadWatchlistRisk={loadWatchlistRisk}
     loadPortfolioRisk={loadPortfolioRisk}
     savePortfolioPosition={savePortfolioPosition}
     removePortfolioPosition={removePortfolioPosition}
     loadBondDashboard={loadBondDashboard} loadBondDiagnosis={loadBondDiagnosis} loadCachedBondDiagnosis={loadCachedBondDiagnosis} loadBondCandidates={loadBondCandidates} diagnoseBondBatch={diagnoseBondBatch}
     loadNewsIntelligence={loadNewsIntelligence} syncNews={syncNews} syncHotspots={syncHotspots} createNewsCorrection={createNewsCorrection}
-    loadOperationsStatus={loadOperationsStatus} loadOperationsDiagnostics={loadOperationsDiagnostics} setSchedulerPaused={setSchedulerPaused} createBackup={createBackup} verifyBackup={verifyBackup} runManualJob={runManualJob} cleanupCache={cleanupCache} previewStorageCleanup={previewStorageCleanup} cleanupStorage={cleanupStorage} loadPerformanceSummary={loadPerformanceSummary}
+    loadOperationsStatus={loadOperationsStatus} loadOperationsDiagnostics={loadOperationsDiagnostics} loadObservability={loadObservability} setSchedulerPaused={setSchedulerPaused} createBackup={createBackup} verifyBackup={verifyBackup} runManualJob={runManualJob} cleanupCache={cleanupCache} previewStorageCleanup={previewStorageCleanup} cleanupStorage={cleanupStorage} loadPerformanceSummary={loadPerformanceSummary}
     loadAShareCandidates={loadAShareCandidates} loadAShareCandidateScores={loadAShareCandidateScores} loadAShareDiagnosis={loadAShareDiagnosis}
     searchAShareInstruments={searchAShareInstruments}
     loadStockCockpit={loadStockCockpit}
     loadStockCockpitAI={loadStockCockpitAI}
     loadCompanyResearch={loadCompanyResearch}
+    compareCompanyResearch={loadCompanyResearchComparison}
     loadStockTimeline={loadStockTimeline}
     prepareStockData={prepareStockData}
     loadAISettings={loadAISettings} saveAISettings={saveAISettings} deleteAISettings={deleteAISettings}
@@ -91,6 +93,7 @@ export function App() {
     loadQuantStrategy={loadQuantStrategy}
     loadQuantShadowDecisions={loadQuantShadowDecisions}
     loadQuantShadowAnalytics={loadQuantShadowAnalytics}
+    loadQuantCalibration={loadQuantCalibration}
     loadDecisionJournal={loadDecisionJournal}
     createDecisionJournal={createDecisionJournal}
     loadTdxFormula={loadTdxFormula}

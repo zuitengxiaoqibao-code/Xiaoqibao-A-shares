@@ -4,6 +4,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from qibao_api.contracts.quant_shadow import QuantShadowAnalytics, ShadowDecisionRecord
+from qibao_api.contracts.quant_calibration import QuantCalibrationReport
+from qibao_api.a_shares.quant_calibration import build_calibration_report
 from qibao_api.contracts.decision_journal import DecisionJournalCreate, DecisionJournalEntry
 from qibao_api.contracts.quant_strategy import QuantStrategyDashboard
 from qibao_api.dependencies import get_decision_journal, get_quant_shadow_ledger, get_quant_strategy_service, get_server_time
@@ -50,6 +52,17 @@ def shadow_analytics(
     if horizon not in (1, 3, 5, 10, 20):
         raise HTTPException(status_code=422, detail="评估周期只支持 1、3、5、10、20 个交易日")
     return ledger.analytics(horizon=horizon)
+
+
+@router.get("/shadow/calibration", response_model=QuantCalibrationReport)
+def shadow_calibration(
+    ledger: Annotated[object, Depends(get_quant_shadow_ledger)],
+    now: Annotated[datetime, Depends(get_server_time)],
+    horizon: Annotated[int, Query()] = 5,
+) -> QuantCalibrationReport:
+    if horizon not in (1, 3, 5, 10, 20):
+        raise HTTPException(status_code=422, detail="校准周期只支持 1、3、5、10、20 个交易日")
+    return build_calibration_report(ledger, horizon=horizon, generated_at=now)
 
 
 @router.get("/journal", response_model=list[DecisionJournalEntry])

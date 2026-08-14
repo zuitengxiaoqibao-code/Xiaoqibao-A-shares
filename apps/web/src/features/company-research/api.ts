@@ -54,3 +54,38 @@ export async function loadCompanyResearchAI(snapshotId: string, signal?: AbortSi
   }
   return snapshot;
 }
+
+export type CompanyResearchComparison = {
+  status: "ready" | "partial" | "unavailable";
+  as_of: string;
+  generated_at: string;
+  companies: Array<{
+    symbol: string;
+    name: string;
+    status: "ready" | "partial" | "unavailable";
+    evidence_coverage_percent: string;
+    final_score: string | null;
+    business_model: string | null;
+    industry_space: string | null;
+    latest_revenue_yoy_percent: string | null;
+    latest_net_profit_yoy_percent: string | null;
+    latest_operating_cash_flow: string | null;
+    pe_ttm: string | null;
+    pb: string | null;
+    catalysts: string[];
+    risks: string[];
+    limitations: string[];
+  }>;
+  sources: string[];
+  limitations: string[];
+};
+
+export async function loadCompanyResearchComparison(symbols: string[], asOf?: string): Promise<CompanyResearchComparison> {
+  const response = await requestLedger.run(`company-research-compare:${[...symbols].sort().join(",")}:${asOf ?? "latest"}`, async () => fetch("/api/v1/a-shares/company-research/compare", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ symbols: [...new Set(symbols)].slice(0, 5), ...(asOf ? { as_of: asOf } : {}) }),
+  }), { domain: "company-research" });
+  if (!response.ok) throw new Error(`公司研究比较请求失败 (${response.status})`);
+  return response.json() as Promise<CompanyResearchComparison>;
+}

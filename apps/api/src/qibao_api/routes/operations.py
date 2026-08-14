@@ -4,8 +4,15 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from qibao_api.contracts.briefing import BriefingPhase
+from qibao_api.contracts.data_quality_matrix import DataQualityItem, DataQualityMatrix
 from qibao_api.contracts.source_health import SourceHealthResponse
 from qibao_api.contracts.task_progress import TaskProgress
+from qibao_api.contracts.replay_snapshot import (
+    ReplayCaptureRequest,
+    ReplayInputReference,
+    ReplaySnapshot,
+    ReplaySnapshotList,
+)
 from qibao_api.dependencies import (
     get_backup_service,
     get_operations_read_model,
@@ -14,6 +21,9 @@ from qibao_api.dependencies import (
     get_scheduler,
     get_task_progress_registry,
     get_performance_store,
+    get_observability_store,
+    get_replay_snapshot_store,
+    get_shared_snapshot_registry,
 )
 from qibao_api.gongbu.backup_service import BackupRecord, BackupVerification
 from qibao_api.operations.freshness import DEFAULT_FRESHNESS_POLICIES
@@ -66,8 +76,35 @@ def diagnostics_summary(
         if audit_repository is not None and hasattr(audit_repository, "source_conflict_summary")
         else {"state": "unavailable", "conflict_count": 0, "conflicts": []}
     )
+    generated_at = datetime.now(timezone.utc)
+    quality_items = []
+    for item in sources:
+        status = item.get("status", "unavailable")
+        observed_at = item.get("last_success_at") or item.get("last_failure_at")
+        attempts = int(item.get("attempts") or 0)
+        successes = int(item.get("successes") or 0)
+        error_code = item.get("last_error_code")
+        limitations = () if status == "ready" else (
+            f"最近探针状态：{error_code or status}",
+        )
+        quality_items.append(DataQualityItem(
+            domain=f"source_probe:{item.get('operation', 'unknown')}",
+            status="partial" if status == "degraded" else status,
+            source=str(item.get("source") or "unknown"),
+            trade_date=item.get("latest_trade_date"),
+            observed_at=observed_at,
+            valid_count=successes,
+            total_count=attempts,
+            coverage_percent=round(successes / attempts * 100, 2) if attempts else 0,
+            cache_state="not_applicable",
+            limitations=limitations,
+        ))
+    quality_matrix = DataQualityMatrix(
+        generated_at=generated_at,
+        items=tuple(quality_items),
+    )
     return {
-        "generated_at": datetime.now(timezone.utc),
+        "generated_at": generated_at,
         "scheduler_paused": bool(scheduler.status().get("paused", False)),
         "backup_count": len(backups.backups()),
         "persistent_bytes": inventory.get("release", {}).get("persistent_bytes", 0),
@@ -79,6 +116,7 @@ def diagnostics_summary(
         },
         "tdx_auto_import": tdx_auto_import.status(),
         "source_conflicts": source_conflicts,
+        "quality_matrix": quality_matrix.model_dump(mode="json"),
     }
 
 
@@ -135,6 +173,14 @@ def performance_summary(
     }
 
 
+@router.get("/observability")
+def observability_summary(
+    store: Annotated[object, Depends(get_observability_store)],
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+):
+    return store.snapshot(limit)
+
+
 @router.get("/freshness-policies")
 def freshness_policies():
     return {
@@ -165,6 +211,58 @@ def source_health(
         generated_at=datetime.now(timezone.utc),
         window_size=window_size,
         sources=tuple(repository.source_health(window_size)),
+    )
+
+
+@router.get("/replay-snapshots", response_model=ReplaySnapshotList)
+def replay_snapshots(
+    store: Annotated[object, Depends(get_replay_snapshot_store)],
+    trading_date: date | None = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> ReplaySnapshotList:
+    return ReplaySnapshotList(
+        generated_at=datetime.now(timezone.utc),
+        trading_date=trading_date,
+        snapshots=store.list(trading_date=trading_date, limit=limit),
+    )
+
+
+@router.post("/replay-snapshots/capture", response_model=ReplaySnapshot)
+def capture_replay_snapshot(
+    request: ReplayCaptureRequest,
+    store: Annotated[object, Depends(get_replay_snapshot_store)],
+    registry: Annotated[object, Depends(get_shared_snapshot_registry)],
+    repository: Annotated[object, Depends(get_operations_repository)],
+) -> ReplaySnapshot:
+    now = datetime.now(timezone.utc)
+    selected_date = request.trading_date or now.astimezone().date()
+    if selected_date > now.astimezone().date():
+        raise HTTPException(status_code=422, detail="不能为未来日期生成重放快照")
+    summary = registry.summary() if registry is not None else []
+    inputs = tuple(
+        ReplayInputReference(
+            domain=item["kind"],
+            reference=f"shared-snapshot:{item['kind']}:{item['snapshot_version']}",
+            content_hash=item.get("content_hash"),
+            source=item.get("source") or "unavailable",
+            observed_at=item.get("observed_at"),
+            status=(
+                "unavailable" if item.get("snapshot_version", 0) == 0
+                else "stale" if item.get("freshness") == "stale"
+                else "ready"
+            ),
+        )
+        for item in summary
+    )
+    source_health = repository.source_health_snapshot() or {
+        "sources": repository.source_health(20),
+    }
+    return store.append(
+        trading_date=selected_date,
+        captured_at=now,
+        inputs=inputs,
+        source_health=source_health,
+        strategy_version=request.strategy_version,
     )
 
 

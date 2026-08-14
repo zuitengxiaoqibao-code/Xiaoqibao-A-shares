@@ -59,6 +59,7 @@ def test_company_research_versions_are_append_only_and_compare_real_changes(tmp_
     assert changed.research_version.version_number == 2
     assert changed.research_version.previous_snapshot_id == first.research_version.snapshot_id
     assert any(item.category == "conclusion" and item.label == "商业模式" for item in changed.research_version.changes)
+    assert any(item.change_type in {"strengthened", "weakened", "updated"} for item in changed.research_version.changes)
     assert any(item.category == "data" and item.label == "最终评分" for item in changed.research_version.changes)
     assert repository.history("600519", limit=10)[0].research_version.version_number == 2
     assert repository.verify_all() == 2

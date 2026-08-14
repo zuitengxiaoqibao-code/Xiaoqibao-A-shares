@@ -1,4 +1,5 @@
 from datetime import date, datetime
+import asyncio
 from decimal import DecimalException
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
@@ -26,6 +27,8 @@ from qibao_api.contracts.candidate_sentiment import CandidateSentimentBatch
 from qibao_api.contracts.company_research import CompanyResearchResponse
 from qibao_api.contracts.company_research_task import CompanyResearchTaskSnapshot
 from qibao_api.contracts.company_research_ai_task import CompanyResearchAITaskSnapshot
+from qibao_api.contracts.research_compare import ResearchCompareRequest, ResearchCompareResponse
+from qibao_api.a_shares.research_compare import build_research_comparison
 from qibao_api.contracts.research import ResearchCard
 from qibao_api.contracts.stock_timeline import StockTimelineResponse
 from qibao_api.dependencies import (
@@ -39,6 +42,7 @@ from qibao_api.dependencies import (
     get_company_research_service,
     get_company_research_task_service,
     get_company_research_ai_task_service,
+    get_company_research_version_repository,
     get_compliance_repository,
     get_poll_state_repository,
     get_pipeline,
@@ -476,6 +480,35 @@ async def company_research(
         ) from error
 
 
+@router.post("/company-research/compare", response_model=ResearchCompareResponse)
+async def compare_company_research(
+    request: ResearchCompareRequest,
+    service: Annotated[object, Depends(get_company_research_service)],
+    server_time: Annotated[datetime, Depends(get_server_time)],
+) -> ResearchCompareResponse:
+    selected_date = _research_date(request.as_of)
+    results = await asyncio.gather(
+        *(service.get(symbol, selected_date) for symbol in request.symbols),
+        return_exceptions=True,
+    )
+    values = [item for item in results if isinstance(item, CompanyResearchResponse)]
+    if not values:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "research_compare_unavailable", "message": "比较标的的真实公司研究数据均不可用"},
+        )
+    response = build_research_comparison(
+        values, as_of=selected_date, generated_at=server_time
+    )
+    failures = len(results) - len(values)
+    if failures:
+        response = response.model_copy(update={
+            "status": "partial",
+            "limitations": (*response.limitations, f"{failures} 个比较标的数据加载失败"),
+        })
+    return response
+
+
 @router.post("/{symbol}/company-research/tasks", response_model=CompanyResearchTaskSnapshot)
 async def start_company_research_task(
     symbol: Annotated[AShareCode, Path()],
@@ -483,6 +516,18 @@ async def start_company_research_task(
     as_of: date | None = None,
 ) -> CompanyResearchTaskSnapshot:
     return service.start(symbol, _research_date(as_of))
+
+
+@router.get("/{symbol}/company-research/versions", response_model=list[CompanyResearchResponse])
+async def company_research_versions(
+    symbol: Annotated[AShareCode, Path()],
+    repository: Annotated[object, Depends(get_company_research_version_repository)],
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+) -> list[CompanyResearchResponse]:
+    try:
+        return list(repository.history(symbol, limit=limit))
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail="公司研究版本查询参数无效") from error
 
 
 @router.get("/company-research/tasks/{task_id}", response_model=CompanyResearchTaskSnapshot)
