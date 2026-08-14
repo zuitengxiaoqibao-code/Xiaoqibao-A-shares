@@ -19,7 +19,7 @@ if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) {
 
 $Manifest = [IO.File]::ReadAllText($ManifestPath, [Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
 $ManifestText = [IO.File]::ReadAllText($ManifestPath, [Text.UTF8Encoding]::new($false))
-if ($ManifestText -match '�|[ÃÂåæçèéïð][^\r\n]{0,2}[\u0080-\u00bf]') {
+if ($ManifestText -match '\uFFFD|[\u00C3\u00C2\u00E5\u00E6\u00E7\u00E8\u00E9\u00EF\u00F0][^\r\n]{0,2}[\u0080-\u00BF]') {
     throw "Release manifest contains invalid UTF-8 diagnostic text"
 }
 if ([string]::IsNullOrWhiteSpace([string]$Manifest.commit)) {

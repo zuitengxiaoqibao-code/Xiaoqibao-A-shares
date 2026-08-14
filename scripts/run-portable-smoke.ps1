@@ -23,7 +23,7 @@ function Repair-Utf8Text([string]$Text) {
     # A few Windows PowerShell versions decode UTF-8 response text as Latin-1
     # while materializing Invoke-RestMethod objects. Repair only that clear
     # signature; never rewrite ordinary Chinese or hide an unknown error.
-    if ($Text -notmatch '[ÃÂåæçèéïð]') { return $Text }
+    if ($Text -notmatch '[\u00C3\u00C2\u00E5\u00E6\u00E7\u00E8\u00E9\u00EF\u00F0]') { return $Text }
     try {
         $bytes = [Text.Encoding]::GetEncoding(28591).GetBytes($Text)
         $fixed = [Text.Encoding]::UTF8.GetString($bytes)
@@ -33,7 +33,7 @@ function Repair-Utf8Text([string]$Text) {
 }
 
 function Assert-NoManifestMojibake([string]$Text) {
-    if ($Text -match '�|[ÃÂåæçèéïð][^\r\n]{0,2}[\u0080-\u00bf]') {
+    if ($Text -match '\uFFFD|[\u00C3\u00C2\u00E5\u00E6\u00E7\u00E8\u00E9\u00EF\u00F0][^\r\n]{0,2}[\u0080-\u00BF]') {
         throw "Release manifest contains invalid UTF-8 diagnostic text"
     }
 }
