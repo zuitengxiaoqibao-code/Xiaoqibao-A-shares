@@ -1,8 +1,9 @@
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from qibao_api.a_shares.company_research_versions import CompanyResearchVersionRepository
+from qibao_api.a_shares.company_research_versions import CompanyResearchVersionRepository, _encoded_semantics
 from qibao_api.contracts.company_research import CompanyResearchSection
+from qibao_api.contracts.evidence_ledger import EvidenceLedgerEntry
 from tests.routes.test_company_research import sample_response
 
 
@@ -91,3 +92,24 @@ def test_company_research_version_registers_new_and_reused_financial_snapshot(tm
     assert calls[1][1]["reused"] is True
     assert calls[0][1]["coverage_percent"] == 15.0
     repository.close()
+
+
+def test_company_research_semantics_ignore_new_provenance_watermark_fields() -> None:
+    legacy = sample_response().model_copy(update={
+        "evidence_ledger": (EvidenceLedgerEntry(
+            source="legacy-source",
+            operation="company_research",
+            status="partial",
+            observed_at=datetime(2026, 8, 3, tzinfo=timezone.utc),
+            sample_count=1,
+            limitations=("历史记录",),
+        ),),
+    })
+    enriched = legacy.model_copy(update={
+        "evidence_ledger": (legacy.evidence_ledger[0].model_copy(update={
+            "total_count": 10,
+            "coverage_percent": 10.0,
+        }),),
+    })
+
+    assert _encoded_semantics(legacy) == _encoded_semantics(enriched)

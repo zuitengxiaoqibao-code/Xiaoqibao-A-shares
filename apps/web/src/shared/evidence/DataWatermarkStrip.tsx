@@ -9,6 +9,8 @@ type Props = {
   generatedAt?: string | null;
   sourceCount?: number | null;
   sampleCount?: number | null;
+  totalCount?: number | null;
+  coveragePercent?: number | null;
   refreshState?: "ready" | "pending" | "failed" | "paused";
   limitations?: string[];
 };
@@ -21,7 +23,7 @@ function time(value: string | null | undefined): string {
   return Number.isFinite(parsed.getTime()) ? parsed.toLocaleString("zh-CN", { hour12: false }) : "--";
 }
 
-export function DataWatermarkStrip({ status, tradeDate = null, observedAt = null, generatedAt = null, sourceCount = null, sampleCount = null, refreshState = "ready", limitations = [] }: Props) {
+export function DataWatermarkStrip({ status, tradeDate = null, observedAt = null, generatedAt = null, sourceCount = null, sampleCount = null, totalCount = null, coveragePercent = null, refreshState = "ready", limitations = [] }: Props) {
   return <section className="data-watermark-strip" data-status={status} aria-label="数据证据水印">
     <span><ShieldCheck size={14} /><b>{compactFreshnessLabel(status)}</b></span>
     <span><Database size={14} />交易日 <b>{tradeDate ?? "--"}</b></span>
@@ -29,6 +31,7 @@ export function DataWatermarkStrip({ status, tradeDate = null, observedAt = null
     <span>生成 <b>{time(generatedAt)}</b></span>
     <span>{sourceCount === null ? "来源数不可用" : `${sourceCount} 个来源`}</span>
     <span>{sampleCount === null ? "样本数不可用" : `${sampleCount} 条样本`}</span>
+    {coveragePercent !== null && Number.isFinite(coveragePercent) && <span><b>{coveragePercent.toFixed(coveragePercent % 1 === 0 ? 0 : 1)}% 覆盖</b>{totalCount === null ? "" : ` · ${totalCount} 总样本`}</span>}
     <span><RefreshCw size={13} className={refreshState === "pending" ? "spin" : ""} />{refreshLabels[refreshState]}</span>
     {limitations.slice(0, 3).map((item) => <em key={item}>{blockerLabel(item) === "数据完整性待检查" ? item : blockerLabel(item)}</em>)}
   </section>;

@@ -263,6 +263,8 @@ def build_market_review(
         observed_at=observed_at,
         formula_version="a-share-market-review-v2",
         sample_count=ready_count if ready_count > 0 else None,
+        total_count=stock_universe_count if stock_universe_count > 0 else None,
+        coverage_percent=float(coverage) if coverage is not None else None,
         limitations=tuple(dict.fromkeys((*warnings, *watermark.blockers))),
     )
     return MarketReviewSnapshot(

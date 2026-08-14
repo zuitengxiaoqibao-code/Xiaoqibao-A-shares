@@ -355,6 +355,8 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
       generatedAt={strategyDashboard.generated_at}
       sourceCount={strategyDashboard.sources.length}
       sampleCount={strategyDashboard.candidate_funnel?.stages.find((item) => item.key === "universe")?.count ?? null}
+      totalCount={strategyDashboard.evidence_ledger?.[0]?.total_count ?? null}
+      coveragePercent={strategyDashboard.evidence_ledger?.[0]?.coverage_percent ?? null}
       refreshState={strategyDashboard.refresh_state ?? "ready"}
       limitations={[...strategyDashboard.missing_data, ...strategyDashboard.warnings]}
     />}

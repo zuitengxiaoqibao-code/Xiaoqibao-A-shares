@@ -13,6 +13,8 @@ describe("DataWatermarkStrip", () => {
       generatedAt="2026-08-11T15:00:05+08:00"
       sourceCount={3}
       sampleCount={120}
+      totalCount={125}
+      coveragePercent={96}
       refreshState="pending"
       limitations={["资金流字段待补"]}
     />);
@@ -21,6 +23,7 @@ describe("DataWatermarkStrip", () => {
     expect(screen.getByText("2026-08-11")).toBeInTheDocument();
     expect(screen.getByText("3 个来源")).toBeInTheDocument();
     expect(screen.getByText("120 条样本")).toBeInTheDocument();
+    expect(screen.getByText("96% 覆盖")).toBeInTheDocument();
     expect(screen.getByText("后台刷新中")).toBeInTheDocument();
     expect(screen.getByText("资金流字段待补")).toBeInTheDocument();
   });

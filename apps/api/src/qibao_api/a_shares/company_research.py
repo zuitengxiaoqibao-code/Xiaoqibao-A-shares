@@ -538,7 +538,9 @@ class CompanyResearchService:
                 trade_date=selected_date,
                 observed_at=self.clock(),
                 formula_version="company-research-evidence-v2",
-                sample_count=len(history.periods) if history.periods else None,
+                sample_count=sum(1 for item in dimensions if item.status == "ready"),
+                total_count=len(dimensions),
+                coverage_percent=float(coverage * Decimal("100")),
                 limitations=tuple(reasons),
             ),
         )

@@ -19,6 +19,8 @@ class EvidenceLedgerEntry(BaseModel):
     observed_at: AwareDatetime | None = None
     formula_version: str | None = None
     sample_count: int | None = Field(default=None, ge=0)
+    total_count: int | None = Field(default=None, ge=0)
+    coverage_percent: float | None = Field(default=None, ge=0, le=100)
     limitations: tuple[str, ...] = ()
 
     @model_validator(mode="after")
@@ -29,6 +31,10 @@ class EvidenceLedgerEntry(BaseModel):
             raise ValueError("unavailable evidence requires explicit limitations")
         if self.sample_count is not None and self.sample_count == 0 and self.status == "ready":
             raise ValueError("ready evidence cannot claim zero samples")
+        if self.sample_count is not None and self.total_count is not None and self.sample_count > self.total_count:
+            raise ValueError("sample_count cannot exceed total_count")
+        if self.coverage_percent is not None and self.total_count == 0 and self.coverage_percent > 0:
+            raise ValueError("coverage_percent must be zero when total_count is zero")
         return self
 
 

@@ -156,6 +156,8 @@ function ResearchDashboard({ value, peers, onOpenAShare, onAddPeer }: { value: C
       generatedAt={value.generated_at}
       sourceCount={value.sources.filter((item) => item.status !== "unavailable").length}
       sampleCount={value.financial_history.periods.length}
+      totalCount={value.evidence_ledger?.[0]?.total_count ?? null}
+      coveragePercent={value.evidence_ledger?.[0]?.coverage_percent ?? null}
       refreshState="ready"
       limitations={value.reasons}
     />

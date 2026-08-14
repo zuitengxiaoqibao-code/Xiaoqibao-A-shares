@@ -789,6 +789,11 @@ def _strategy_evidence_ledger(
         observed_at=overview.observed_at,
         formula_version="a-share-short-strategy-v2.0",
         sample_count=board.universe_size if board.universe_size > 0 else None,
+        total_count=board.universe_size if board.universe_size > 0 else None,
+        coverage_percent=(
+            float(board.funnel.factor_ready_size / board.universe_size * 100)
+            if board.universe_size > 0 else None
+        ),
         limitations=limitations,
     ),)
 
