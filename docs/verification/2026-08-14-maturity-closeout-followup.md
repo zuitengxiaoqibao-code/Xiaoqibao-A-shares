@@ -10,7 +10,7 @@
 
 ## 验证结果
 
-源码提交：`a13b1810f01c59c5c4dc881075b8cb0b0092355a`
+源码提交、EXE SHA-256 与 `source_state` 以便携目录内的 `release-manifest.json` 为准。
 
 - API：`1366 passed, 1 skipped, 5 warnings`
 - Web：`110 test files / 648 passed`
@@ -21,9 +21,9 @@
 
 真实发布数据 smoke：
 
-- 窗口可见：`87ms`
-- API 就绪：`2379ms`
-- 完整验证：`10619ms`
+- 窗口可见：约 `91ms`
+- API 就绪：约 `2371ms`
+- 完整验证：约 `13969ms`
 - 信息总览：`ready`，覆盖率 `98.52%`
 - 量化策略：`partial`，真实候选 `12` 只，因子覆盖 `85.00%`
 - 公司研究：`partial`，标的 `600519`，证据覆盖 `0.65`，反方检查 `10` 项
@@ -33,7 +33,7 @@
 便携 EXE：
 
 - 路径：`dist/XiaoQiBao-Portable/xiaoqibao.exe`
-- SHA-256：`E8429A763B429100198C4DA293E602A957816D93D40DA9FF5F56C9793F293D92`
+- SHA-256：以 `release-manifest.json` 的 `exe_sha256` 为准
 - 发布清单：`source_state=clean`，提交与源码一致
 - `config/data/news/cache/logs/models/exports/backups` 八个持久目录保留
 
