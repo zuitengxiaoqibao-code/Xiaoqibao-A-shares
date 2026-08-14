@@ -1,8 +1,14 @@
+import hashlib
+import json
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from qibao_api.a_shares.company_research_versions import CompanyResearchVersionRepository, _encoded_semantics
-from qibao_api.contracts.company_research import CompanyResearchSection, ResearchConclusion
+from qibao_api.contracts.company_research import (
+    CompanyResearchSection,
+    CompanyResearchVersion,
+    ResearchConclusion,
+)
 from qibao_api.contracts.evidence_ledger import EvidenceLedgerEntry
 from tests.routes.test_company_research import sample_response
 
@@ -131,3 +137,73 @@ def test_company_research_semantics_ignore_derived_conclusion_presentation() -> 
     })
 
     assert _encoded_semantics(legacy) == _encoded_semantics(enriched)
+
+
+def test_company_research_versions_accept_legacy_provenance_semantics(tmp_path) -> None:
+    repository = CompanyResearchVersionRepository(tmp_path / "company-research-versions.sqlite3")
+    value = sample_response().model_copy(update={
+        "as_of": date(2026, 8, 14),
+        "generated_at": datetime(2026, 8, 14, 7, 36, tzinfo=timezone.utc),
+        "research_sections": sections("主营高端白酒"),
+    })
+
+    payload = value.model_dump(
+        mode="json",
+        exclude={"generated_at", "research_version", "conclusions"},
+    )
+
+    def strip_legacy_timestamps(item, *, in_evidence_ledger: bool = False):
+        if isinstance(item, dict):
+            return {
+                key: strip_legacy_timestamps(
+                    child,
+                    in_evidence_ledger=in_evidence_ledger or key == "evidence_ledger",
+                )
+                for key, child in item.items()
+                if key not in {"observed_at", "generated_at", "fetched_at", "normalized_at"}
+                and not (in_evidence_ledger and key in {"total_count", "coverage_percent"})
+            }
+        if isinstance(item, list):
+            return [
+                strip_legacy_timestamps(child, in_evidence_ledger=in_evidence_ledger)
+                for child in item
+            ]
+        return item
+
+    legacy_semantics = json.dumps(
+        strip_legacy_timestamps(payload),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    legacy_hash = hashlib.sha256(legacy_semantics.encode("utf-8")).hexdigest()
+    assert legacy_hash != hashlib.sha256(_encoded_semantics(value).encode("utf-8")).hexdigest()
+
+    snapshot_id = "company-research-600519-legacy"
+    version = CompanyResearchVersion(
+        snapshot_id=snapshot_id,
+        version_number=1,
+        content_hash=legacy_hash,
+        generated_at=value.generated_at,
+    )
+    stored = value.model_copy(update={"research_version": version})
+    encoded = stored.model_dump_json()
+    canonical_hash = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+    with repository.connection:
+        repository.connection.execute(
+            """INSERT INTO company_research_versions(
+            snapshot_id,symbol,version_number,content_hash,canonical_hash,payload,generated_at
+            ) VALUES(?,?,?,?,?,?,?)""",
+            (
+                snapshot_id,
+                value.symbol,
+                1,
+                legacy_hash,
+                canonical_hash,
+                encoded,
+                value.generated_at.isoformat(),
+            ),
+        )
+
+    assert repository.latest("600519") == stored
+    repository.close()

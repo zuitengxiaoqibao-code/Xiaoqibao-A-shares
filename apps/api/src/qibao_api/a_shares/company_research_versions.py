@@ -25,7 +25,11 @@ class CompanyResearchVersionIntegrityError(CompanyResearchVersionStoreError):
     pass
 
 
-def _semantic_payload(value: CompanyResearchResponse) -> dict:
+def _semantic_payload(
+    value: CompanyResearchResponse,
+    *,
+    retain_legacy_provenance: bool = False,
+) -> dict:
     payload = value.model_dump(
         mode="json",
         exclude={"generated_at", "research_version", "conclusions"},
@@ -38,7 +42,7 @@ def _semantic_payload(value: CompanyResearchResponse) -> dict:
                 for key, child in item.items()
                 if key not in {"observed_at", "generated_at", "fetched_at", "normalized_at"}
                 and not (in_evidence_ledger and key in {"total_count", "coverage_percent"})
-                and key not in {"change_type", "evidence_ids"}
+                and (retain_legacy_provenance or key not in {"change_type", "evidence_ids"})
             }
         if isinstance(item, list):
             return [strip_timestamps(child, in_evidence_ledger=in_evidence_ledger) for child in item]
@@ -47,9 +51,19 @@ def _semantic_payload(value: CompanyResearchResponse) -> dict:
     return strip_timestamps(payload)
 
 
-def _encoded_semantics(value: CompanyResearchResponse) -> str:
+def _encoded_semantics(
+    value: CompanyResearchResponse,
+    *,
+    retain_legacy_provenance: bool = False,
+) -> str:
     return json.dumps(
-        _semantic_payload(value), ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        _semantic_payload(
+            value,
+            retain_legacy_provenance=retain_legacy_provenance,
+        ),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
     )
 
 
@@ -258,7 +272,13 @@ class CompanyResearchVersionRepository:
         if version is None or version.snapshot_id != row["snapshot_id"] or version.content_hash != row["content_hash"]:
             raise CompanyResearchVersionIntegrityError("company research version identity differs")
         semantic_hash = hashlib.sha256(_encoded_semantics(value).encode("utf-8")).hexdigest()
-        if not hmac.compare_digest(semantic_hash, version.content_hash):
+        legacy_semantic_hash = hashlib.sha256(
+            _encoded_semantics(value, retain_legacy_provenance=True).encode("utf-8")
+        ).hexdigest()
+        if not any(
+            hmac.compare_digest(candidate, version.content_hash)
+            for candidate in (semantic_hash, legacy_semantic_hash)
+        ):
             raise CompanyResearchVersionIntegrityError("company research semantic content differs")
         return value
 
