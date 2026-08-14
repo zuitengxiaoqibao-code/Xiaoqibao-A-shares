@@ -17,6 +17,7 @@ $ReleaseRoot = if ($ReleaseRootOverride) {
 }
 $Exe = Join-Path $ReleaseRoot "xiaoqibao.exe"
 $PersistentNames = @("config", "data", "news", "cache", "logs", "models", "exports", "backups")
+. "$PSScriptRoot\release-manifest.ps1"
 
 function Repair-Utf8Text([string]$Text) {
     if ([string]::IsNullOrEmpty($Text)) { return $Text }
@@ -528,6 +529,7 @@ try {
             Write-Host ("Portable smoke root retained: {0}" -f $SmokeRoot)
         }
     } else {
+        Update-ReleaseManifestRuntimeEvidence -ReleaseRoot $SmokeRoot
         Write-Host ("Release data mode: persistent data retained at {0}" -f $SmokeRoot)
     }
 }

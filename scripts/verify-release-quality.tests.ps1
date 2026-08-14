@@ -10,7 +10,9 @@ Describe "verify-release-quality" {
         $manifest = [ordered]@{
             commit = "abc123"
             source_state = "clean"
+            migration_version = 1
             exe_sha256 = $hash
+            database_files = @()
             persistent_dirs = @("config", "data", "news", "cache", "logs", "models", "exports", "backups")
             quality_gates = [ordered]@{
                 state = "pass"
