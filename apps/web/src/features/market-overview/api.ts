@@ -1,7 +1,8 @@
 import type { MarketIntervalReviewLoader, MarketIntervalReviewSnapshot, MarketOverviewLoader, MarketOverviewResponse } from "./types";
 import { coalescedFetch } from "../../shared/coalescedFetch";
+import { requestLedger } from "../../shared/performance/requestLedger";
 
-export const loadMarketOverview: MarketOverviewLoader = async (signal) => {
+export const loadMarketOverview: MarketOverviewLoader = (signal) => requestLedger.run("overview:latest", async () => {
   let response: Response;
   try {
     response = await coalescedFetch("/api/v1/a-shares/market-overview", { signal });
@@ -19,7 +20,7 @@ export const loadMarketOverview: MarketOverviewLoader = async (signal) => {
     );
   }
   return response.json() as Promise<MarketOverviewResponse>;
-};
+}, { domain: "overview" });
 
 export const loadMarketIntervalReview: MarketIntervalReviewLoader = async (startDate, endDate, signal) => {
   let response: Response;

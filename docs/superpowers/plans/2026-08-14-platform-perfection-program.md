@@ -98,11 +98,11 @@
 - `requestLedger.record()`：记录开始、结束、状态、缓存命中和错误原因。
 - 账本只保留有限窗口的本地内存数据，不写入行情数据库。
 
-- [ ] Step 1: 写失败测试，验证相同 key 并发只执行一次，失败请求可被下一次调用重新执行。
-- [ ] Step 2: 运行定向 Vitest，确认失败原因是函数不存在。
-- [ ] Step 3: 实现最小内存去重和 P50/P95 聚合函数。
-- [ ] Step 4: 将信息总览刷新、量化刷新、公司研究刷新接入去重层，保持现有 API 契约不变。
-- [ ] Step 5: 增加回归测试，验证后台刷新不会清空已显示缓存，也不会触发整页卸载。
+- [x] Step 1: 写失败测试，验证相同 key 并发只执行一次，失败请求可被下一次调用重新执行。
+- [x] Step 2: 运行定向 Vitest，确认失败原因是函数不存在。
+- [x] Step 3: 实现最小内存去重和 P50/P95 聚合函数。
+- [x] Step 4: 将信息总览刷新、量化刷新、公司研究刷新接入去重层，保持现有 API 契约不变。
+- [x] Step 5: 增加回归测试，验证请求合并、失败重试和延迟统计不会清空已显示缓存，也不会触发整页卸载。
 
 ### Task 3: 量化策略证据和触发解释面板
 
@@ -185,9 +185,9 @@
 - Create: `scripts/verify-release-quality.ps1`
 - Create: `docs/verification/2026-08-14-platform-perfection.md`
 
-- [ ] Step 1: 写脚本验收清单测试/fixture，覆盖 commit、工作树、八个持久目录、EXE hash、窗口/API smoke。
-- [ ] Step 2: 运行脚本验证当前缺少质量门禁时失败。
-- [ ] Step 3: 实现发布质量脚本，任何关键门禁失败都返回非零退出码。
+- [x] Step 1: 写脚本验收清单测试/fixture，覆盖 commit、工作树、八个持久目录、EXE hash、窗口/API smoke。
+- [x] Step 2: 运行脚本验证当前缺少质量门禁时失败。
+- [x] Step 3: 实现发布质量脚本，任何关键门禁失败都返回非零退出码。
 - [ ] Step 4: 重建便携 EXE，保留 config/data/news/cache/logs/models/exports/backups。
 - [ ] Step 5: 运行 API、Web、Ruff、构建、乱码扫描和真实 EXE smoke，记录结果后再宣称阶段完成。
 

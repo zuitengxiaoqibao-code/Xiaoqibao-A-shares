@@ -1,5 +1,6 @@
 import type { DecisionJournalCreate, DecisionJournalEntry, IntradayTick, KronosForecastResponse, QuantShadowAnalytics, QuantShadowDecisionRecord, QuantStrategyDashboard, TdxFormulaResponse } from "./types";
 import { coalescedFetch } from "../../shared/coalescedFetch";
+import { requestLedger } from "../../shared/performance/requestLedger";
 
 export async function loadQuantTicks(
   symbol: string,
@@ -34,13 +35,15 @@ export async function loadKronosForecast(
 }
 
 export async function loadQuantStrategy(limit = 12): Promise<QuantStrategyDashboard> {
-  const response = await coalescedFetch(
-    `/api/v1/a-shares/quant-strategy?limit=${encodeURIComponent(String(limit))}`,
-  );
-  if (!response.ok) {
-    throw new Error(`短线策略请求失败 (${response.status})`);
-  }
-  return response.json() as Promise<QuantStrategyDashboard>;
+  return requestLedger.run(`quant-strategy:${limit}`, async () => {
+    const response = await coalescedFetch(
+      `/api/v1/a-shares/quant-strategy?limit=${encodeURIComponent(String(limit))}`,
+    );
+    if (!response.ok) {
+      throw new Error(`短线策略请求失败 (${response.status})`);
+    }
+    return response.json() as Promise<QuantStrategyDashboard>;
+  }, { domain: "quant-strategy" });
 }
 
 export async function loadQuantShadowDecisions(limit = 50): Promise<QuantShadowDecisionRecord[]> {

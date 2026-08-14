@@ -131,6 +131,8 @@ describe("ShortTermStrategyWorkbench", () => {
     const evidence = screen.getByRole("region", { name: "量化证据摘要" });
     expect(evidence).toHaveTextContent("全市场样本");
     expect(within(evidence).getByText("5,000")).toBeInTheDocument();
+    expect(within(evidence).getByText("市场覆盖")).toBeInTheDocument();
+    expect(within(evidence).getByText("因子覆盖")).toBeInTheDocument();
     expect(within(evidence).getByText("85%")).toBeInTheDocument();
     const alertGate = within(candidate).getByLabelText("严格提醒门槛");
     expect(alertGate).toHaveTextContent("盘中触发确认尚未确认");

@@ -162,7 +162,11 @@ function QuantEvidenceSummary({ dashboard }: { dashboard: QuantStrategyDashboard
   const factorReady = stageCount(dashboard, "factor_ready");
   const finalCandidates = stageCount(dashboard, "final_candidates");
   const excluded = universe !== null && finalCandidates !== null ? Math.max(0, universe - finalCandidates) : null;
-  const coverage = number(dashboard.regime.coverage_percent);
+  const marketCoverage = number(dashboard.regime.coverage_percent);
+  const factorCoverage = number(String(
+    dashboard.evidence_ledger?.[0]?.coverage_percent ?? dashboard.metrics.factor_coverage_percent,
+  ));
+  const coverageText = (value: number | null) => value === null ? "--" : `${value.toFixed(value % 1 === 0 ? 0 : 1)}%`;
   return <section className="strategy-evidence-summary" role="region" aria-label="量化证据摘要">
     <header><div><Database size={14} /><b>量化证据摘要</b></div><small>{dashboard.as_of} · 只统计真实返回样本</small></header>
     <div>
@@ -170,7 +174,8 @@ function QuantEvidenceSummary({ dashboard }: { dashboard: QuantStrategyDashboard
       <article><span>因子有效样本</span><strong>{factorReady === null ? "--" : factorReady.toLocaleString("zh-CN")}</strong><small>历史与字段可计算</small></article>
       <article><span>最终候选</span><strong>{finalCandidates === null ? "--" : finalCandidates.toLocaleString("zh-CN")}</strong><small>达到当前筛选口径</small></article>
       <article><span>筛选淘汰</span><strong>{excluded === null ? "--" : excluded.toLocaleString("zh-CN")}</strong><small>不代表亏损预测</small></article>
-      <article><span>证据覆盖</span><strong>{coverage === null ? "--" : `${coverage.toFixed(0)}%`}</strong><small>{dashboard.status === "ready" ? "可用于当前结论" : "部分字段仍待补齐"}</small></article>
+      <article><span>市场覆盖</span><strong>{coverageText(marketCoverage)}</strong><small>市场风格与横截面口径</small></article>
+      <article><span>因子覆盖</span><strong>{coverageText(factorCoverage)}</strong><small>{dashboard.status === "ready" ? "可用于当前结论" : "可计算因子样本"}</small></article>
     </div>
   </section>;
 }
