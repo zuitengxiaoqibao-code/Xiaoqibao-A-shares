@@ -47,7 +47,8 @@
 
 ### 持续计划与完成门槛
 
-- [ ] 通达信客户端完成登录并启动 TdxQuant/只读服务、桥接恢复后，逐项实测 `Fn/GP/BK/SC/GO`，每个字段保存请求、响应形状、来源和时间戳证据。
+- [x] 在当前桥接可达窗口逐项实测 `Fn/GP/BK/SC/GO`，保存请求、响应形状、来源和时间戳；`GO` 有可解析标量但单位未知，`BK9` 为未绑定的嵌套日期记录，`Fn/GP/SC` 为空。
+- [ ] 通达信专业字段语义和单位明确后，再把经过实测的字段绑定到财务、交易、板块、市场和量化专题；任何字段为空、错误包或单位不明时继续显示 `unavailable`，不生成代理值。
 - [ ] 仅将经过实测的专业字段绑定到财务、交易、板块、市场和量化专题；任何字段为空、错误包或单位不明时继续显示 `unavailable`，不生成代理值。
 - [x] 用冷盘与热启动各至少三次 EXE smoke 记录窗口首帧、API 就绪和完整验证时间；当前证据已记录，Windows 冷盘扫描波动仍作为持续观察项。
 - [ ] 真实专业字段恢复后，对依赖这些字段的菜单执行来源切换回归，确保缓存、实时、部分可用和不可用状态不会互相覆盖。
@@ -372,3 +373,69 @@
 
 - [ ] 继续累积真正冷盘与热启动 EXE 样本，拆分 PyInstaller/Windows 安全扫描和首次业务序列化成本；当前 API/信息总览已进入约 2 秒/1 秒级，但冷盘仍存在环境波动。
 - [ ] 通达信专业桥恢复后，逐字段记录 `Fn/GP/BK/SC/GO` 的请求、响应形状、单位、来源和时间戳，再绑定业务菜单。
+
+## 2026-08-07 量化顶部响应式布局回归修复
+
+- [x] 根因确认：顶部 `.quant-hero` 原先使用 `minmax(660px, .86fr)`，在宽屏把标的卡推到视口最右侧；在高 DPI 窄窗口下还可能产生横向裁切。
+- [x] 顶部改为紧凑上限列 `minmax(0, 780px) minmax(0, 560px)`，限制 hero 最大宽度为 `1400px` 并从左侧开始布局；不再让空白随视口无限扩张。
+- [x] 量化页面增加 inline-size 容器断点，选择卡在真实可用宽度不足时自动收拢为单列；状态说明和规则快照保持在卡片内部，不再覆盖或挤压。
+- [x] 前端布局专项与量化页面回归：`32 passed`；前端全量：`73` 个测试文件、`480 passed`；API 全量：`1164 passed, 1 skipped`；Vite/TypeScript 构建通过。
+- [x] 正式便携 EXE smoke：窗口 `93ms`、API `2333ms`、完整验证 `27793ms`；信息总览 `ready`，量化 `partial`（真实候选 `8` 只、覆盖 `85.00%`），通达信专业字段继续保持 `unavailable`；烟测后本程序退出且未占用 `127.0.0.1:17709`。
+- [x] 正式 EXE：`dist/XiaoQiBao-Portable/xiaoqibao.exe`，SHA-256 `6EB941FEC66F3F183E4F4832C6299EABEF075EF2725EEC160A082ECBBCE36F5E`。
+
+## 2026-08-07 continuation: compact hero refinement
+
+- [x] 根据正式 EXE 截图复核，继续收窄顶部首列与 hero 总宽：`minmax(0, 640px) minmax(0, 520px)`、`max-width: 1184px`，消除标题与标的卡之间的无意义留白。
+- [x] 2305px 宽屏实测 hero 为 `1184px`、选择卡 `520px`；671px 窄屏实测 hero 自动单列、无横向溢出。
+- [x] 正式 EXE 已覆盖并 smoke 通过：窗口 `294ms`、API `5601ms`、完整验证 `21460ms`；信息总览 `ready`，量化 `partial`（真实候选 `8` 只、覆盖 `85.00%`）。
+- [x] 本轮 smoke 后本程序进程已释放；通达信 `TdxW/tdxcef` 进程保持原样，`127.0.0.1:17709` 未被本程序占用。
+- [x] 最终正式 EXE SHA-256：`20FE2D8553D5EE8E9B43EF23CB9CCB846E33DAC7B361886757833975E5C1844D`。
+
+## 2026-08-07 continuation: maximized hero regression repair
+
+- [x] 修复最大化窗口的顶部大面积空白：移除 `.quant-hero` 的固定 `1184px` 上限，改为全宽双列，分析标的卡右对齐。
+- [x] 修复普通桌面被错误切成单列的问题：容器断点从 `1400px` 调整为 `1100px`；窗口媒体断点保持 `1400px`，避免窄屏横向溢出。
+- [x] 通过普通桌面/最大化 DOM 宽度验证、前端/API 全量回归、Vite 构建、便携 EXE smoke 和资源释放检查。
+
+## 2026-08-07 continuation: semantic status contract
+
+- [x] 专业字段行与响应增加结构/语义双层状态；`semantic_unmapped` 与 `detected_only` 明确表示仅验证返回形状，尚未验证业务含义和单位。
+- [x] 设置页展示专业语义未映射提示；不可用、桥接未启用和非专业能力不被混写为已验证专业字段。
+- [x] 在最大化窗口修复、前端/API 全量回归和正式 EXE smoke 后更新交付证据。
+
+## 2026-08-07 首屏非阻塞与统一导航增量
+
+- [x] 为量化策略的市场总览、候选扫描和触发证据建立独立后台任务；首响应只返回真实已知数据，等待/失败原因进入 `missing_data`。
+- [x] 量化与公司研究改为同步应用内加载，避免动态 chunk 长时间占据整页路由回退。
+- [x] 删除新手/专家模式开关，完整一级菜单始终可见并保持现有路由不变。
+- [x] 完成 API/前端全量测试、生产构建、便携 EXE smoke 和通达信进程保护检查。
+## 2026-08-07 continuation: first evidence-visual wiring
+
+- [x] Add `FundFlowZeroAxis` and wire it into the phase context used by 今日研判. Only verified inflow/outflow values become bars; unavailable evidence stays as an unavailable state.
+- [x] Add `SectorHeatmapPanel` and wire it into 信息总览 before the sector tables. Tiles are clickable and preserve the red-up/green-down rule.
+- [x] Add `ValuationComparisonChart` to company research. It uses current PE/PB and peer medians only, with explicit historical-series boundary.
+- [x] Frontend full suite: `487 passed` across `76` test files. API: `1166 passed, 1 skipped`. Vite/TypeScript build passed.
+- [x] Portable rebuild and smoke: EXE SHA-256 `D0CAF67A9F2F2B8E9DF0D5339EC2402105AB74C65CD2F209488D0B8DD6CD869D`; independent-port smoke passed with `104/2498/4662ms` for window/API/full verification.
+
+### Next visual migration targets
+
+- [x] Upgrade the limit-up workspace with an ecology comparison rail: sealed, broken-limit and limit-down counts are rendered as real proportion bars with the red-up/green-down legend; zero or missing counts remain visible as their true state.
+- [x] Upgrade breakout workspaces with a verified volume-strength meter using the actual sample mean and maximum volume multiple; no current snapshot is substituted for historical rows.
+- [x] Upgrade the dragon-tiger workspace with a buy/sell comparison rail based only on public buy and sell amounts, preserving unavailable state when those fields are missing.
+- [ ] Replace remaining generic sector/topic CSS blocks in specialist workspaces with semantic chart compositions, preserving each menu's evidence boundary.
+- [ ] Add a real monthly return heatmap only after a verified monthly return series is exposed by the API; keep the panel unavailable until then.
+- [ ] Add historical PE/PB time series after the backend exposes a timestamped, source-labelled valuation history; never derive it from current PE/PB.
+
+## 2026-08-07 空白区域与历史日期口径修正
+
+- [x] 将板块资金审计、资金动图口径和个股实时档案改为整行，避免旧版半行布局在桌面端留下大块空白；个股证据链与状态提醒保持并列。
+- [x] 将全局最大历史日期改为主导交易日：按每只股票最后一根真实日线计数，选择覆盖最多的日期；少量更晚记录仅作为零散最新记录提示。
+- [x] 扩展复盘契约与前端说明，显示主导日期、零散日期、零散股票数、主导覆盖率及日期碎片警告。
+- [x] 当通达信目录未选中时仍使用本地 `market.duckdb` 历史库，避免已有真实数据被错误判定为不可用。
+
+## 2026-08-07 板块强度四象限可读性修复
+
+- [x] 根因确认：当前板块强度数据来自真实新闻/题材关联样本，多个板块的 `rising_count / (rising_count + falling_count)` 均为 100%，横轴没有足够区分度，点位集中在右侧不是数据丢失。
+- [x] 不对真实点位做人为抖动；当有效板块少于 3 个或样本上涨占比跨度小于 8 个百分点时，自动降级为按强度排序条，保留涨幅、强度、涨停扩散、样本上涨占比和有效样本数。
+- [x] 四象限横轴改名为“样本上涨占比”，避免将小样本题材关联误称为完整市场广度；有足够横轴差异时仍展示原四象限。
+- [x] 前端专项回归 `26 passed`，API 全量 `1166 passed, 1 skipped`，Vite/TypeScript 生产构建通过；便携 EXE 已重建并完成独立端口 smoke。

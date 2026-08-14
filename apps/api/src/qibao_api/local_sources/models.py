@@ -9,11 +9,12 @@ class LocalSourceSettings(BaseModel):
 
     auto_discovery: bool = True
     tdx_install_paths: tuple[Path, ...] = ()
+    tdx_archive_paths: tuple[Path, ...] = ()
     ths_install_paths: tuple[Path, ...] = ()
     tdx_rpc_enabled: bool = False
     tdx_rpc_url: str | None = None
 
-    @field_validator("tdx_install_paths", "ths_install_paths", mode="before")
+    @field_validator("tdx_install_paths", "tdx_archive_paths", "ths_install_paths", mode="before")
     @classmethod
     def validate_local_paths(cls, value) -> tuple[Path, ...]:
         if value is None:

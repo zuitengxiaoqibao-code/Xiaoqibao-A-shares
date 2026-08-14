@@ -21,6 +21,7 @@ import { useBreakingNewsAlerts } from "../news-alerts/useBreakingNewsAlerts";
 import { DailyRefreshStatus } from "../../shared/DailyRefreshStatus";
 import { readDailySnapshot, writeDailySnapshot, type DailySnapshotHit } from "../../shared/dailySnapshotCache";
 import type { LoadProgress, LoadProgressCallback } from "../../shared/fetchJsonWithProgress";
+import { FieldEvidenceDetails } from "../../shared/evidence/FieldEvidenceDetails";
 
 type Loader = (symbol: string, asOf?: string, signal?: AbortSignal, onProgress?: LoadProgressCallback) => Promise<StockCockpitSnapshot>;
 type Preparer = (symbol: string, signal?: AbortSignal) => Promise<import("./types").StockPreparation>;
@@ -427,6 +428,7 @@ export function StockDecisionCockpit({ load, loadAI, prepare, loadTimeline, load
     <DailyRefreshStatus label="个股观察" cachedAt={cachedAt} loading={loading} completion={preparationIncomplete ? "partial" : "live"} progress={loadProgress} error={data ? error : null} updatedAt={updatedAt} />
     {error && <div className="cockpit-error" role="alert"><AlertTriangle size={16} /><span>{error}</span>{stale && <b>当前内容已陈旧</b>}</div>}
     <PreparationStatus data={data} preparing={preparing} />
+    {!!data.field_evidence?.length && <FieldEvidenceDetails entries={data.field_evidence} />}
     {loadAlerts && <BreakingNewsStrip {...alertState} />}
     {loadTimeline && <StockEventKline
       symbol={data.symbol}

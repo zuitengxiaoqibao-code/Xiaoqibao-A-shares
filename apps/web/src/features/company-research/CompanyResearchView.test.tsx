@@ -22,12 +22,17 @@ const research: CompanyResearchResponse = {
   status: "partial", symbol: "600519", name: "贵州茅台", as_of: "2026-08-01",
   generated_at: "2026-08-03T10:00:00+08:00", dimensions, evidence_coverage: "0.65",
   base_score: "74", risk_penalty: "3", final_score: "71",
+  field_evidence: [{
+    field_path: "final_score", value: "71", source: "sina-finance / tencent", source_field: null,
+    status: "derived", trade_date: "2026-08-01", observed_at: "2026-08-03T10:00:00+08:00",
+    coverage_percent: "65", derived: true, formula: "base_score - risk_penalty", evidence_ids: [], limitations: [],
+  }],
   financial_history: {
     status: "ready", source: "sina-finance", observed_at: "2026-08-01T15:00:00+08:00", reasons: [],
     revenue_cagr_3y: "0.15", net_profit_cagr_3y: "0.18", latest_period: null, periods: [],
     annual_periods: [{ period: "2025-12-31", revenue: "120000000000", revenue_yoy: "0.12", operating_cost: "100", net_profit: "60000000000", net_profit_yoy: "0.15", operating_cash_flow: "65000000000", total_assets: "200000000000", total_liabilities: "40000000000", total_equity: "160000000000", gross_margin: "0.91", cash_to_profit: "1.08", debt_ratio: "0.20" }],
   },
-  valuation: { status: "ready", pe_ttm: "25", pb: "8", market_cap_yi: "19000", peer_pe_median: null, peer_pb_median: null, observation_range_status: "unavailable", observation_range_reason: "缺少历史估值序列，不计算价格区间。", source: "tencent", observed_at: "2026-08-01T15:00:00+08:00" },
+  valuation: { status: "ready", pe_ttm: "25", pb: "8", market_cap_yi: "19000", peer_pe_median: null, peer_pb_median: null, forward_eps_median: null, forward_eps_sample_count: 0, forward_pe: null, forward_pe_status: "unavailable", forward_pe_reason: "没有可用预测。", observation_range_status: "unavailable", observation_range_reason: "缺少历史估值序列，不计算价格区间。", source: "tencent", observed_at: "2026-08-01T15:00:00+08:00" },
   counter_case: Array.from({ length: 10 }, (_, index) => ({ key: `risk-${index}`, title: `反方检查${index + 1}`, status: index === 0 ? "triggered" : "clear", detail: "按真实财务字段核验。", threshold: "公开规则", penalty: index === 0 ? "3" : "0", evidence_ids: [] })),
   profile: { status: "ready", company_overview: "公司概况原文", industry_analysis: "行业分析原文", latest_tips: "最新提示原文", source: "mootdx-f10", observed_at: "2026-08-01T15:00:00+08:00", reasons: [] },
   sources: [{ source: "sina-finance", label: "多年财报三表", status: "ready", observed_at: "2026-08-01T15:00:00+08:00", detail: "按报告期归一化。" }],
@@ -43,6 +48,12 @@ const refreshedResearch: CompanyResearchResponse = {
 
 const evidenceResearch = {
   ...research,
+  enrichment: {
+    status: "ready", observed_at: "2026-08-03T10:00:00+08:00",
+    stock_reports: [], industry_reports: [], peer_candidates: [],
+    unlocks: [{ free_date: "2026-09-01", stock_type: "首发限售", shares: "100000000", ratio_percent: "6.5" }],
+    margin: [], holders: [], sources: ["eastmoney-datacenter"], reasons: [],
+  },
   profile: {
     ...research.profile,
     latest_tip_items: [
@@ -70,7 +81,31 @@ describe("CompanyResearchView", () => {
     expect(gauges).toHaveTextContent("证据覆盖度");
     expect(gauges).toHaveTextContent("风险压力");
     expect(screen.getByRole("region", { name: "九维公司研究矩阵" }).querySelectorAll(".dimension-row")).toHaveLength(9);
-    expect(screen.getByRole("region", { name: "反方审查" }).querySelectorAll(".counter-item")).toHaveLength(10);
+    expect(screen.getByRole("region", { name: "逻辑失效条件" }).querySelectorAll(".counter-item")).toHaveLength(10);
+    expect(screen.getByRole("group", { name: "关键字段证据" })).toHaveTextContent("1 项推算");
+  });
+
+  it("shows forward valuation confidence and never turns thin EPS samples into a forward PE", async () => {
+    const thinConsensus = {
+      ...research,
+      valuation: {
+        ...research.valuation,
+        forward_eps_median: "2.25", forward_eps_sample_count: 2,
+        forward_pe: null, forward_pe_status: "low_confidence" as const,
+        forward_pe_reason: "仅有 2 家不同机构预测，少于 3 家，不计算前向 PE。",
+      },
+    };
+    render(<CompanyResearchView
+      selectedSymbol="600519"
+      load={vi.fn(async () => thinConsensus)}
+      search={vi.fn(async () => ({ query: "", items: [], server_time: "", source_status: "ready" as const }))}
+    />);
+
+    const valuation = await screen.findByRole("region", { name: "估值观察" });
+    expect(valuation).toHaveTextContent("明年 EPS 中位2.25");
+    expect(valuation).toHaveTextContent("前向 PE--");
+    expect(valuation).toHaveTextContent("低可信");
+    expect(valuation).toHaveTextContent("少于 3 家");
   });
 
   it("renders a dense financial visual overview with real-period labels", async () => {
@@ -86,7 +121,8 @@ describe("CompanyResearchView", () => {
     expect(overview).toHaveTextContent("多年财务趋势");
     expect(overview).toHaveTextContent("综合能力剖面");
     expect(overview).toHaveTextContent("2025-12-31");
-    expect(overview.querySelectorAll(".research-visual-card")).toHaveLength(5);
+    expect(overview.querySelectorAll(".research-visual-card")).toHaveLength(6);
+    expect(screen.getByRole("img", { name: "当前估值与同行中位双轴图" })).toBeInTheDocument();
     expect(overview.querySelectorAll(".research-capital-donut")).toHaveLength(2);
     expect(overview.querySelector(".research-trend-combo")).toBeTruthy();
   });
@@ -294,13 +330,17 @@ describe("CompanyResearchView", () => {
 
     const evidence = await screen.findByRole("region", { name: "催化与最新提示" });
     expect(evidence).toHaveTextContent("重点结论");
-    expect(evidence).toHaveTextContent("重点风险：风险提醒");
-    expect(evidence).toHaveTextContent("签署战略合作协议");
+    expect(evidence).toHaveTextContent("重点风险：高比例限售股解禁");
     expect(evidence).toHaveTextContent("预计净利润同比下降");
+    expect(evidence).toHaveTextContent("高比例限售股解禁");
+    expect(evidence).toHaveTextContent("发生了什么");
+    expect(evidence).toHaveTextContent("影响判断");
+    expect(evidence).toHaveTextContent("后续观察");
     expect(evidence.querySelectorAll(".evidence-event")).toHaveLength(3);
     expect(screen.queryByRole("button", { name: "风险提醒" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "查看其他 2 项" }));
-    expect(evidence.querySelectorAll(".evidence-event")).toHaveLength(5);
+    fireEvent.click(screen.getByRole("button", { name: "查看其他 3 项" }));
+    expect(evidence.querySelectorAll(".evidence-event")).toHaveLength(6);
+    expect(evidence).toHaveTextContent("签署战略合作协议");
     fireEvent.click(screen.getAllByText("查看原始证据")[1]);
     expect(evidence).toHaveTextContent("●业绩预告：2026-07-15 预计净利润同比下降");
   });

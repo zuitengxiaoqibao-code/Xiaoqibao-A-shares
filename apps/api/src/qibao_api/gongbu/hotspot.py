@@ -14,6 +14,7 @@ from qibao_api.contracts.news import (
     NewsArticle,
     NormalizedNewsEvent,
 )
+from qibao_api.contracts.evidence_ledger import EvidenceLedgerEntry
 from qibao_api.gongbu.news_collection import deduplicate_articles
 
 
@@ -293,4 +294,13 @@ def _event_from_observation(
         citations=(citation,),
         association_confidence=Decimal("1"),
         review_state="verified",
+        evidence_ledger=(EvidenceLedgerEntry(
+            source=article.publisher,
+            operation="hotspot_linking",
+            status="ready",
+            trade_date=observation.trading_date,
+            observed_at=article.fetched_at,
+            formula_version="news-association-v2",
+            sample_count=1,
+        ),),
     )

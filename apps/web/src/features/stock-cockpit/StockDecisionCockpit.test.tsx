@@ -74,6 +74,15 @@ function snapshot(overrides: Partial<StockCockpitSnapshot> = {}): StockCockpitSn
     ] },
     candidate_membership: ["short_term"],
     assessment: { assessment_id: "assessment-1", symbol: "600000", action: "observe", conclusion: "行情与趋势可用，保持观察。", confidence: "0.75", supporting_evidence: item.supporting_evidence, contrary_evidence: [], risks: ["市场波动"], invalidation_conditions: ["趋势改变"], generated_at: "2026-07-15T10:30:00+08:00" },
+    field_evidence: [{
+      field_path: "market.latest_price", value: "10.25", source: "tencent", source_field: "price",
+      status: "live", trade_date: "2026-07-15", observed_at: observedAt, coverage_percent: "100.00",
+      derived: false, formula: null, evidence_ids: ["market-evidence"], limitations: [],
+    }, {
+      field_path: "assessment.confidence", value: "0.75", source: "stock-assessor", source_field: null,
+      status: "derived", trade_date: "2026-07-15", observed_at: observedAt, coverage_percent: "100.00",
+      derived: true, formula: "deterministic-stock-assessor-v1", evidence_ids: ["market-evidence"], limitations: [],
+    }],
     ai_status: "unconfigured", ai_explanation: null, current_advice: [item], sections,
     phases: { premarket: { advice: [], change_stream: [] }, intraday: { advice: [item], change_stream: [] }, postclose: { advice: [], change_stream: [] } },
     ...overrides,
@@ -114,6 +123,13 @@ const alertResponse: BreakingNewsAlertResponse = {
 };
 
 describe("StockDecisionCockpit", () => {
+  it("shows an expandable field-level truthfulness summary", async () => {
+    renderCockpit(() => Promise.resolve(snapshot()));
+
+    expect(await screen.findByRole("group", { name: "关键字段证据" })).toBeInTheDocument();
+    expect(screen.getByText("1 项实时")).toBeInTheDocument();
+    expect(screen.getByText("1 项推算")).toBeInTheDocument();
+  });
   beforeEach(() => localStorage.clear());
 
   it("shows today's complete cache while the newest snapshot loads and then replaces it", async () => {

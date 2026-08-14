@@ -12,8 +12,9 @@ export type BacktestRequest = {
   initial_cash?: number;
   commission_rate?: number;
   slippage_rate?: number;
+  stamp_duty_rate?: number;
 };
-export type BacktestTrade = { side: "buy" | "sell"; signal_date: string; trade_date: string; price: string; shares: number; gross_amount: string; fees: string };
+export type BacktestTrade = { side: "buy" | "sell"; signal_date: string; trade_date: string; price: string; shares: number; gross_amount: string; fees: string; stamp_duty?: string };
 export type BacktestEquityPoint = { trade_date: string; equity: string; cash?: string; shares?: number; market_value?: string };
 export type BacktestResult = {
   symbol: string;
@@ -23,18 +24,40 @@ export type BacktestResult = {
   total_return: string;
   max_drawdown: string;
   total_cost: string;
+  request_snapshot?: BacktestRequest | null;
   metrics: {
     annualized_return: string;
     annualized_volatility: string;
     sharpe_ratio: string | null;
     calmar_ratio: string | null;
-    win_rate: string;
+    win_rate: string | null;
     profit_loss_ratio: string | null;
     turnover_rate: string;
     closed_trade_count: number;
+    expected_value?: string | null;
+    max_consecutive_losses?: number;
   };
   segments: Array<{ name: "train" | "validation" | "out_of_sample"; start_date: string; end_date: string; bar_count: number; starting_equity: string; ending_equity: string; total_return: string; max_drawdown: string }>;
-  market_regimes: Array<{ name: "bull" | "bear" | "sideways"; bar_count: number; total_return: string }>;
+  rolling_windows?: Array<{ name: "early" | "middle" | "recent"; start_date: string; end_date: string; bar_count: number; starting_equity: string; ending_equity: string; total_return: string; max_drawdown: string; evaluation_status: "available" | "gated" }>;
+  market_regimes: Array<{ name: "bull" | "bear" | "sideways"; bar_count: number; total_return: string; closed_trade_count?: number; win_rate?: string | null; expected_value?: string | null; profit_loss_ratio?: string | null; max_consecutive_losses?: number }>;
+  signal_decay?: Array<{ horizon: 1 | 3 | 5 | 10 | 20; sample_count: number; average_return: string | null; hit_rate: string | null }>;
+  evidence?: {
+    sample_status: "insufficient" | "descriptive" | "segmented";
+    minimum_closed_trades: number;
+    closed_trade_count: number;
+    source_bar_count: number;
+    lookahead_check: "passed" | "not_run";
+    segment_status: "unavailable" | "partial" | "ready";
+    parameter_policy?: "frozen_before_validation";
+    out_of_sample_tuning?: "prohibited";
+    parameter_snapshot_hash?: string;
+    survivorship_bias_check?: "unresolved";
+    suspension_handling?: "zero_volume_untradable";
+    limit_handling?: "opening_limit_untradable";
+    cost_policy?: "commission_slippage_stamp_duty";
+    conclusion_metrics_available?: boolean;
+    gated_metrics?: string[];
+  };
   trades: BacktestTrade[];
   equity_curve: BacktestEquityPoint[];
   warnings: string[];

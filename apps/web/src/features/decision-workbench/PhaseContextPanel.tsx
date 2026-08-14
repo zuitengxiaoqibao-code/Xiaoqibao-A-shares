@@ -2,6 +2,7 @@ import { ChevronDown, ChevronUp, ExternalLink, Newspaper, ShieldAlert } from "lu
 import { useState } from "react";
 
 import type { PhaseContext, PhaseNewsEvent } from "./types";
+import { FundFlowZeroAxis } from "../../shared/visualization/FundFlowZeroAxis";
 
 const marketStateNames: Record<NonNullable<PhaseContext["market_state"]>, string> = {
   strong: "偏强",
@@ -100,6 +101,7 @@ export function PhaseContextPanel({ context }: { context?: PhaseContext }) {
         <div><span>行业归因</span><b>{overview.industries.length ? overview.industries.join(" · ") : "暂无"}</b></div>
         <div><span>候选资金流</span><b>{flow?.available ? `流入 ${flow.inflow} · 流出 ${flow.outflow}` : "暂无可用快照"}</b></div>
       </div>
+      {flow && <FundFlowZeroAxis inflow={flow.inflow} outflow={flow.outflow} available={flow.available} source="阶段候选资金流" observedAt={context.window_end} />}
       {(pendingTopics.length > 0 || pendingIndustries.length > 0) && <div className="market-overview-pending">
         <div><span>待核验热点</span><b>{pendingTopics.length ? pendingTopics.join(" · ") : "暂无"}</b></div>
         <div><span>待核验行业</span><b>{pendingIndustries.length ? pendingIndustries.join(" · ") : "暂无"}</b></div>

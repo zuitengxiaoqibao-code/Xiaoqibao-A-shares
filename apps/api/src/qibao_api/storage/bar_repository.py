@@ -16,6 +16,27 @@ class BarCoverage:
     latest_trade_date: date | None
 
 
+@dataclass(frozen=True)
+class BarCoverageAggregate:
+    """One read-only market-wide coverage calculation for a target date."""
+
+    universe_count: int
+    dominant_trade_date: date | None
+    dominant_date_count: int
+    latest_available_trade_date: date | None
+    latest_available_trade_date_count: int
+    history_ready_count: int
+    backfill_complete_count: int
+
+    @property
+    def fragmented_latest_count(self) -> int:
+        return max(0, self.universe_count - self.dominant_date_count)
+
+    @property
+    def missing_history_count(self) -> int:
+        return max(0, self.universe_count - self.history_ready_count)
+
+
 class BarRepository:
     def __init__(self, database_path: Path, parquet_dir: Path) -> None:
         self.database_path = database_path
@@ -143,6 +164,33 @@ class BarRepository:
             self.upsert(missing)
         return len(missing)
 
+    def append_preferred(self, bars: list[DailyBar], preferred_sources: tuple[str, ...]) -> tuple[int, int, int]:
+        """Append missing rows and supersede weaker source revisions when needed."""
+        if not bars:
+            return 0, 0, 0
+        grouped = {(validate_a_share_code(bar.symbol), bar.trade_date): bar for bar in bars}
+        imported = replaced = skipped = 0
+        with self._lock, self._connect() as connection:
+            for (symbol, trade_date), bar in grouped.items():
+                existing = connection.execute(
+                    "SELECT source FROM daily_bars WHERE symbol=? AND trade_date=? ORDER BY ingested_at DESC LIMIT 1",
+                    (symbol, trade_date),
+                ).fetchone()
+                if existing is None:
+                    imported += 1
+                elif existing[0] in preferred_sources:
+                    skipped += 1
+                    continue
+                else:
+                    replaced += 1
+                connection.execute(
+                    """INSERT INTO daily_bars (symbol,trade_date,open,high,low,close,volume,amount,source)
+                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (symbol, bar.trade_date, bar.open, bar.high, bar.low, bar.close,
+                     bar.volume, bar.amount, bar.source),
+                )
+        return imported, replaced, skipped
+
     def coverage(
         self, symbols: Sequence[str], target_date: date
     ) -> dict[str, BarCoverage]:
@@ -171,6 +219,74 @@ class BarRepository:
             for row in rows
         })
         return result
+
+    def coverage_aggregate(
+        self,
+        symbols: Sequence[str],
+        target_date: date,
+        *,
+        minimum_bars: int = 250,
+        backfill_bars: int = 300,
+    ) -> BarCoverageAggregate:
+        """Return de-duplicated latest-date and history watermarks in one query."""
+        if minimum_bars < 1:
+            raise ValueError("minimum_bars must be positive")
+        if backfill_bars < minimum_bars:
+            raise ValueError("backfill_bars must not be below minimum_bars")
+        validated = list(dict.fromkeys(
+            validate_a_share_code(symbol) for symbol in symbols
+        ))
+        if not validated:
+            return BarCoverageAggregate(0, None, 0, None, 0, 0, 0)
+        placeholders = ", ".join("?" for _ in validated)
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                WITH latest_by_date AS (
+                    SELECT symbol, trade_date,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY symbol, trade_date
+                               ORDER BY ingested_at DESC, observation_id DESC
+                           ) AS revision_rank
+                    FROM daily_bars
+                    WHERE symbol IN ({placeholders}) AND trade_date <= ?
+                ), deduped AS (
+                    SELECT symbol, trade_date
+                    FROM latest_by_date
+                    WHERE revision_rank = 1
+                ), per_symbol AS (
+                    SELECT symbol, max(trade_date) AS latest_trade_date,
+                           count(*) AS bar_count
+                    FROM deduped
+                    GROUP BY symbol
+                ), date_counts AS (
+                    SELECT latest_trade_date, count(*) AS symbol_count
+                    FROM per_symbol
+                    GROUP BY latest_trade_date
+                )
+                SELECT
+                    (SELECT count(*) FROM per_symbol),
+                    (SELECT latest_trade_date FROM date_counts
+                     ORDER BY symbol_count DESC, latest_trade_date DESC LIMIT 1),
+                    (SELECT symbol_count FROM date_counts
+                     ORDER BY symbol_count DESC, latest_trade_date DESC LIMIT 1),
+                    (SELECT max(latest_trade_date) FROM per_symbol),
+                    (SELECT symbol_count FROM date_counts
+                     WHERE latest_trade_date = (SELECT max(latest_trade_date) FROM per_symbol)),
+                    (SELECT count(*) FROM per_symbol WHERE bar_count >= ?),
+                    (SELECT count(*) FROM per_symbol WHERE bar_count >= ?)
+                """,
+                [*validated, target_date, minimum_bars, backfill_bars],
+            ).fetchone()
+        return BarCoverageAggregate(
+            universe_count=int(rows[0] or 0),
+            dominant_trade_date=rows[1],
+            dominant_date_count=int(rows[2] or 0),
+            latest_available_trade_date=rows[3],
+            latest_available_trade_date_count=int(rows[4] or 0),
+            history_ready_count=int(rows[5] or 0),
+            backfill_complete_count=int(rows[6] or 0),
+        )
 
     def latest(
         self, symbol: str, limit: int = 250, *, cutoff: datetime | None = None,
@@ -222,6 +338,28 @@ class BarRepository:
                 ORDER BY symbol
                 """,
                 [as_of, _database_cutoff(cutoff), _database_cutoff(cutoff), minimum_bars],
+            ).fetchall()
+        symbols = []
+        for row in rows:
+            try:
+                symbols.append(validate_a_share_code(row[0]))
+            except ValueError:
+                continue
+        return symbols
+
+    def symbols_up_to(
+        self, as_of: date, *, cutoff: datetime | None = None,
+    ) -> list[str]:
+        """Return every valid A-share symbol represented by bars up to a date."""
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT DISTINCT symbol
+                FROM daily_bars
+                WHERE trade_date <= ? AND (? IS NULL OR ingested_at <= ?)
+                ORDER BY symbol
+                """,
+                [as_of, _database_cutoff(cutoff), _database_cutoff(cutoff)],
             ).fetchall()
         symbols = []
         for row in rows:

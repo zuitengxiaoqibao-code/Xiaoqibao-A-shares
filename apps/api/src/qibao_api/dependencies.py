@@ -1,4 +1,6 @@
 from datetime import datetime, timezone
+import os
+from pathlib import Path
 
 from fastapi import Request
 
@@ -6,6 +8,28 @@ from qibao_api.gongbu.data_service import MarketDataService
 from qibao_api.shangshu.pipeline import ResearchPipeline
 from qibao_api.libu_compliance.repository import ComplianceRepository
 from qibao_api.dongchang.repository import AuditFindingRepository
+from qibao_api.operations.read_model import OperationsReadModel
+from qibao_api.tasks.progress import TaskProgressRegistry
+
+
+_fallback_task_progress_registry = TaskProgressRegistry()
+
+
+class _DisabledTdxAutoImportMonitor:
+    def status(self):
+        return {
+            "state": "disabled",
+            "last_poll_at": None,
+            "last_change_at": None,
+            "last_submitted_at": None,
+            "submitted_job_id": None,
+            "skip_reason": "not_initialized",
+            "error": None,
+            "file_count": 0,
+        }
+
+
+_disabled_tdx_auto_import_monitor = _DisabledTdxAutoImportMonitor()
 
 
 def get_pipeline(request: Request) -> ResearchPipeline:
@@ -22,6 +46,14 @@ def get_full_market_history_service(request: Request):
 
 def get_history_sync_executor(request: Request):
     return request.app.state.history_sync_executor
+
+
+def get_tdx_import_service(request: Request):
+    return request.app.state.tdx_import_service
+
+
+def get_tdx_import_executor(request: Request):
+    return request.app.state.tdx_import_executor
 
 
 def get_compliance_repository(request: Request) -> ComplianceRepository:
@@ -72,6 +104,37 @@ def get_operations_repository(request: Request):
     return request.app.state.operations_repository
 
 
+def get_operations_read_model(request: Request):
+    configured = getattr(request.app.state, "operations_read_model", None)
+    if configured is not None:
+        return configured
+    portable_root = os.environ.get("QIBAO_PORTABLE_ROOT")
+    if portable_root:
+        return OperationsReadModel(Path(portable_root))
+    data_dir = Path(os.environ.get("QIBAO_DATA_DIR", "data")).resolve()
+    return OperationsReadModel(data_dir.parent)
+
+
+def get_tdx_auto_import_monitor(request: Request):
+    return getattr(request.app.state, "tdx_auto_import_monitor", _disabled_tdx_auto_import_monitor)
+
+
+def get_task_progress_registry(request: Request) -> TaskProgressRegistry:
+    return getattr(
+        request.app.state,
+        "task_progress_registry",
+        _fallback_task_progress_registry,
+    )
+
+
+def get_performance_store(request: Request):
+    return request.app.state.performance_store
+
+
+def get_shared_snapshot_registry(request: Request):
+    return getattr(request.app.state, "shared_snapshot_registry", None)
+
+
 def get_a_share_diagnosis_service(request: Request):
     return request.app.state.a_share_diagnosis_service
 
@@ -82,6 +145,14 @@ def get_a_share_cockpit_service(request: Request):
 
 def get_company_research_service(request: Request):
     return request.app.state.company_research_service
+
+
+def get_company_research_task_service(request: Request):
+    return request.app.state.company_research_task_service
+
+
+def get_company_research_ai_task_service(request: Request):
+    return request.app.state.company_research_ai_task_service
 
 
 def get_a_share_preparation_service(request: Request):
@@ -122,6 +193,22 @@ def get_local_market_review_source(request: Request):
 
 def get_quant_strategy_service(request: Request):
     return request.app.state.quant_strategy_service
+
+
+def get_quant_shadow_ledger(request: Request):
+    return request.app.state.quant_shadow_ledger
+
+
+def get_decision_journal(request: Request):
+    return request.app.state.decision_journal
+
+
+def get_portfolio_risk_service(request: Request):
+    return request.app.state.portfolio_risk_service
+
+
+def get_portfolio_risk_store(request: Request):
+    return request.app.state.portfolio_risk_store
 
 
 def get_candidate_sentiment_service(request: Request):

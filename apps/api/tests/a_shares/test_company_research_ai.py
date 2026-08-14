@@ -1,0 +1,57 @@
+import json
+from datetime import datetime, timezone
+
+from qibao_api.a_shares.company_research_ai import CompanyResearchAIGateway
+from qibao_api.contracts.company_research import CompanyResearchAIRequest, CompanyResearchAIEvidence
+
+
+NOW = datetime(2026, 8, 12, 15, tzinfo=timezone.utc)
+
+
+def request() -> CompanyResearchAIRequest:
+    return CompanyResearchAIRequest(
+        snapshot_id="research-v2",
+        symbol="600519",
+        generated_at=NOW,
+        evidence=(
+            CompanyResearchAIEvidence(evidence_id="cash-1", section="利润质量", summary="经营现金流覆盖净利润"),
+            CompanyResearchAIEvidence(evidence_id="risk-1", section="反方风险", summary="估值处于高风险阈值"),
+        ),
+        deterministic_conclusions=("利润质量证据已核验", "估值风险规则已触发"),
+    )
+
+
+def test_company_research_ai_accepts_only_frozen_evidence_and_returns_structured_counter_case() -> None:
+    class Provider:
+        def complete(self, _payload):
+            return json.dumps({
+                "executive_summary": "现金流证据支持利润质量，但估值风险仍需核验。",
+                "contrary_risks": [
+                    {"title": "估值压力", "detail": "当前规则已触发估值风险。", "evidence_ids": ["risk-1"]},
+                ],
+                "verification_questions": ["后续现金流能否继续覆盖利润？"],
+            }, ensure_ascii=False)
+
+    result = CompanyResearchAIGateway(Provider(), provider_name="test", model="model").analyze(request())
+
+    assert result.status == "ready"
+    assert result.snapshot_id == "research-v2"
+    assert result.analysis is not None
+    assert result.analysis.contrary_risks[0].evidence_ids == ("risk-1",)
+
+
+def test_company_research_ai_rejects_unfrozen_evidence_or_trade_instructions() -> None:
+    class Provider:
+        def complete(self, _payload):
+            return json.dumps({
+                "executive_summary": "建议买入并设置止损。",
+                "contrary_risks": [
+                    {"title": "未知风险", "detail": "新增事实", "evidence_ids": ["outside"]},
+                ],
+                "verification_questions": [],
+            }, ensure_ascii=False)
+
+    result = CompanyResearchAIGateway(Provider(), provider_name="test", model="model").analyze(request())
+
+    assert result.status == "invalid"
+    assert result.analysis is None

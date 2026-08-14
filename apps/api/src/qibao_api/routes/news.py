@@ -1,4 +1,5 @@
 from typing import Annotated
+import hashlib
 from datetime import date, datetime, timedelta, timezone
 from typing import Literal
 from uuid import uuid4
@@ -14,6 +15,8 @@ from qibao_api.contracts.news import (
     NormalizedNewsEvent,
 )
 from qibao_api.contracts.news_alerts import BreakingNewsAlertResponse
+from qibao_api.contracts.unified_event import UnifiedDecisionEvent
+from qibao_api.a_shares.unified_events import UnifiedEventProjectionService
 from qibao_api.dependencies import (
     get_decision_calendar,
     get_hotspot_service,
@@ -21,6 +24,7 @@ from qibao_api.dependencies import (
     get_news_alert_service,
     get_news_service,
     get_server_time,
+    get_shared_snapshot_registry,
 )
 from qibao_api.gongbu.hotspot import HotspotSyncResult
 from qibao_api.gongbu.news_repository import NewsIntegrityError
@@ -111,13 +115,57 @@ def sync_hotspots(
 
 
 @router.get("/events", response_model=list[NormalizedNewsEvent])
-def news_events(repository: Annotated[object, Depends(get_news_repository)]):
+def news_events(
+    repository: Annotated[object, Depends(get_news_repository)],
+    registry: Annotated[object, Depends(get_shared_snapshot_registry)],
+):
     try:
-        return repository.events()
+        events = repository.events()
+        encoded = b"[" + b",".join(
+            item.model_dump_json().encode("utf-8") for item in events
+        ) + b"]"
+        dates = [item.occurred_at.date() for item in events]
+        observed = max(
+            (item.normalized_at for item in events),
+            default=datetime.now(timezone.utc),
+        )
+        if registry is not None:
+            registry.record(
+                "news_events",
+                content_hash=hashlib.sha256(encoded).hexdigest(),
+                trade_date=max(dates) if dates else None,
+                observed_at=observed,
+                coverage_percent=100.0 if events else None,
+                freshness="repository",
+                source="news-repository",
+                reused=True,
+                latency_ms=0,
+            )
+        return events
     except NewsIntegrityError as error:
         raise HTTPException(
             status_code=503,
             detail={"code": "news_integrity_error", "message": "新闻证据存档校验失败"},
+        ) from error
+
+
+@router.get("/unified-events", response_model=list[UnifiedDecisionEvent])
+def unified_news_events(
+    repository: Annotated[object, Depends(get_news_repository)],
+    now: Annotated[datetime, Depends(get_server_time)],
+):
+    try:
+        events = tuple(repository.effective_events(cutoff=now))
+        latest = repository.latest_interpretations_by_event(
+            tuple(item.event_id for item in events), now
+        )
+        return UnifiedEventProjectionService().project(
+            events, tuple(latest.values()), cutoff=now
+        )
+    except NewsIntegrityError as error:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "news_integrity_error", "message": "统一事件证据校验失败"},
         ) from error
 
 

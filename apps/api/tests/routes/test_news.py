@@ -17,6 +17,7 @@ from qibao_api.dependencies import (
     get_news_repository,
     get_news_service,
     get_server_time,
+    get_shared_snapshot_registry,
 )
 from qibao_api.contracts.news_alerts import (
     BreakingNewsAlert,
@@ -73,6 +74,12 @@ class Repository:
                 citation_ids=(citation.citation_id,),
             ),), citations=(citation,),
         )]
+
+    def effective_events(self, *, cutoff=None):
+        return self.events()
+
+    def latest_interpretations_by_event(self, event_ids, cutoff):
+        return {item.event_id: item for item in self.interpretations() if item.event_id in event_ids}
 
     def append_correction(self, correction):
         self.saved_corrections.append(correction)
@@ -159,6 +166,40 @@ def test_news_sync_and_event_routes_expose_auditable_results() -> None:
     assert events.json()[0]["citations"][0]["article_id"] == "news-1"
     assert interpretations.status_code == 200
     assert interpretations.json()[0]["degraded"] is True
+
+
+def test_news_event_read_registers_repository_snapshot_reuse() -> None:
+    calls = []
+
+    class Registry:
+        def record(self, kind, **payload):
+            calls.append((kind, payload))
+
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_news_repository] = lambda: Repository()
+    app.dependency_overrides[get_shared_snapshot_registry] = lambda: Registry()
+    with TestClient(app) as test_client:
+        response = test_client.get("/api/v1/news/events")
+
+    assert response.status_code == 200
+    assert calls[0][0] == "news_events"
+    assert calls[0][1]["reused"] is True
+    assert calls[0][1]["trade_date"] == NOW.date()
+    assert len(calls[0][1]["content_hash"]) == 64
+
+
+def test_unified_event_route_reuses_real_event_ids_and_keeps_unknown_effects_explicit() -> None:
+    with client() as test_client:
+        response = test_client.get("/api/v1/news/unified-events")
+
+    assert response.status_code == 200
+    projected = response.json()[0]
+    assert projected["event_id"] == "event-news-1"
+    assert projected["category"] == "rumor_unverified"
+    assert projected["direction"] == "uncertain"
+    assert projected["duration"] == "unknown"
+    assert projected["price_reflection"] == "unknown"
 
 
 def test_news_sync_for_selected_a_share_delegates_to_symbol_source() -> None:

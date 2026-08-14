@@ -13,6 +13,17 @@
   --status-warning: #e5b84b;
   --status-live: #39c8dd;
   --status-unavailable: #7d8993;
+  --risk-low: #e5b84b;
+  --risk-medium: #f08c46;
+  --risk-high: #f04f5f;
+  --event-policy: #a78bfa;
+  --event-industry: #f6bd60;
+  --event-company: #60a5fa;
+  --event-financial: #facc15;
+  --event-capital: #e879f9;
+  --event-anomaly: #fb923c;
+  --event-risk: #f472b6;
+  --event-rumor: #94a3b8;
   --font-display: "Orbitron", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
   --font-body: "JetBrains Mono", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
   --font-xs: 13px;

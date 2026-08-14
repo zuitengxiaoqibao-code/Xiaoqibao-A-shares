@@ -1,12 +1,14 @@
 import re
 import sqlite3
 import threading
+import json
 from collections.abc import Callable, Sequence
 from datetime import date, datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
 from qibao_api.contracts.history_sync import (
+    HistoryRepairAudit,
     HistorySyncItem,
     HistorySyncItemState,
     HistorySyncJob,
@@ -62,6 +64,24 @@ class HistorySyncRepository:
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY(job_id, symbol),
                     FOREIGN KEY(job_id) REFERENCES history_sync_jobs(job_id)
+                );
+                CREATE TABLE IF NOT EXISTS history_repair_audits (
+                    audit_id TEXT PRIMARY KEY,
+                    job_id TEXT NOT NULL,
+                    mode TEXT NOT NULL,
+                    target_date TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    completed_at TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    gap_count_before INTEGER NOT NULL,
+                    coverage_before_percent REAL,
+                    written_rows INTEGER NOT NULL,
+                    ready_count INTEGER NOT NULL,
+                    failed_count INTEGER NOT NULL,
+                    skipped_count INTEGER NOT NULL,
+                    coverage_after_percent REAL,
+                    final_state TEXT NOT NULL,
+                    failure_reasons_json TEXT NOT NULL DEFAULT '[]'
                 );
                 CREATE INDEX IF NOT EXISTS ix_history_sync_items_pending
                 ON history_sync_items(job_id, state, symbol);
@@ -278,6 +298,48 @@ class HistorySyncRepository:
 
     def close(self) -> None:
         return None
+
+    def append_repair_audit(self, audit: HistoryRepairAudit) -> None:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """INSERT INTO history_repair_audits(
+                   audit_id, job_id, mode, target_date, started_at, completed_at,
+                   source, gap_count_before, coverage_before_percent, written_rows,
+                   ready_count, failed_count, skipped_count, coverage_after_percent,
+                   final_state, failure_reasons_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    audit.audit_id, audit.job_id, audit.mode, audit.target_date.isoformat(),
+                    audit.started_at.isoformat(), audit.completed_at.isoformat(), audit.source,
+                    audit.gap_count_before, audit.coverage_before_percent, audit.written_rows,
+                    audit.ready_count, audit.failed_count, audit.skipped_count,
+                    audit.coverage_after_percent, audit.final_state,
+                    json.dumps(audit.failure_reasons, ensure_ascii=False),
+                ),
+            )
+
+    def repair_audits(self, *, limit: int = 50) -> tuple[HistoryRepairAudit, ...]:
+        if limit < 1 or limit > 500:
+            raise ValueError("limit must be between 1 and 500")
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM history_repair_audits ORDER BY completed_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return tuple(
+            HistoryRepairAudit(
+                audit_id=row["audit_id"], job_id=row["job_id"], mode=row["mode"],
+                target_date=row["target_date"], started_at=row["started_at"],
+                completed_at=row["completed_at"], source=row["source"],
+                gap_count_before=int(row["gap_count_before"]),
+                coverage_before_percent=row["coverage_before_percent"],
+                written_rows=int(row["written_rows"]), ready_count=int(row["ready_count"]),
+                failed_count=int(row["failed_count"]), skipped_count=int(row["skipped_count"]),
+                coverage_after_percent=row["coverage_after_percent"],
+                final_state=row["final_state"],
+                failure_reasons=tuple(json.loads(row["failure_reasons_json"] or "[]")),
+            ) for row in rows
+        )
 
     def _set_job_state(self, job_id: str, state: str) -> None:
         with self._lock, self._connect() as connection:

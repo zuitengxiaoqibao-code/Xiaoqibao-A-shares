@@ -143,6 +143,59 @@ export function buildRadarOption({ indicators, values, name = "指标" }: RadarI
   };
 }
 
+export function buildHorizontalRankOption({ categories, values, name, tone = "live" }: {
+  categories: string[];
+  values: NullableNumber[];
+  name: string;
+  tone?: MetricTone;
+}): EChartsOption {
+  return {
+    ...baseOption(),
+    grid: { left: 86, right: 30, top: 22, bottom: 28 },
+    xAxis: valueAxis(),
+    yAxis: { ...categoryAxis(categories), inverse: true },
+    series: [{
+      name,
+      type: "bar" as const,
+      data: values,
+      barMaxWidth: 18,
+      itemStyle: { color: chartToneColor(tone) },
+      label: { show: true, position: "right" as const, color: text, fontSize: 12 },
+    }],
+  };
+}
+
+export function buildStackedCompositionOption({ categories, series }: {
+  categories: string[];
+  series: Array<NamedSeries & { tone: MetricTone }>;
+}): EChartsOption {
+  return {
+    ...baseOption(),
+    grid: { left: 52, right: 22, top: 34, bottom: 34 },
+    legend: { top: 0, textStyle: { color: muted, fontSize: 12 } },
+    xAxis: categoryAxis(categories),
+    yAxis: valueAxis(),
+    series: series.map((item) => ({
+      name: item.name,
+      type: "bar" as const,
+      stack: "composition",
+      data: item.values,
+      barMaxWidth: 34,
+      itemStyle: { color: chartToneColor(item.tone) },
+    })),
+  };
+}
+
+export function buildFactorOption(input: RadarInput): EChartsOption {
+  if (input.indicators.length <= 8) return buildRadarOption(input);
+  return buildHorizontalRankOption({
+    categories: input.indicators.map((item) => item.name),
+    values: input.values,
+    name: input.name ?? "指标",
+    tone: "warning",
+  });
+}
+
 export function buildHeatmapOption({ x, y, values }: {
   x: string[];
   y: string[];

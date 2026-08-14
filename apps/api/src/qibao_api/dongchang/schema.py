@@ -59,6 +59,33 @@ CREATE TABLE IF NOT EXISTS audit_finding_snapshots (
     PRIMARY KEY (finding_id, snapshot_id)
 );
 
+CREATE TABLE IF NOT EXISTS audit_source_observations (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    audit_run_id TEXT NOT NULL,
+    asset TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    as_of TEXT NOT NULL,
+    field TEXT NOT NULL,
+    value TEXT NOT NULL,
+    source TEXT NOT NULL,
+    evidence_link TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS audit_source_observations_lookup
+ON audit_source_observations(asset, symbol, field, as_of, sequence);
+
+CREATE TRIGGER IF NOT EXISTS audit_source_observations_no_update
+BEFORE UPDATE ON audit_source_observations
+BEGIN
+    SELECT RAISE(ABORT, 'audit source observations are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audit_source_observations_no_delete
+BEFORE DELETE ON audit_source_observations
+BEGIN
+    SELECT RAISE(ABORT, 'audit source observations are immutable');
+END;
+
 CREATE TRIGGER IF NOT EXISTS audit_finding_snapshots_no_update
 BEFORE UPDATE ON audit_finding_snapshots
 BEGIN

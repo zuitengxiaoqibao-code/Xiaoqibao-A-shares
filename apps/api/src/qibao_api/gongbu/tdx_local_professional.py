@@ -64,6 +64,11 @@ class TdxProfessionalRow:
     values: dict[str, Decimal | str]
     fetched_at: datetime
     source: str = "tdx-local-rpc-professional"
+    # A successful table response only proves that the requested field was
+    # returned.  The vendor's Fn/GP/BK/SC/GO names and units are not mapped to
+    # business semantics until independently verified, so rows remain
+    # explicitly unbound.
+    semantic_status: Literal["semantic_unmapped", "verified"] = "semantic_unmapped"
 
 
 def _canonical_field(method: str, field: str) -> str:
@@ -115,6 +120,11 @@ def _symbol(value: Any) -> str | None:
 
 def _value(value: Any) -> Decimal | str | None:
     if value in (None, "", "--", "-"):
+        return None
+    # Professional table responses may contain dated record arrays (for
+    # example BK9 -> [{Date, Value: [...]}]).  Those are not scalar fields and
+    # must never be stringified into a seemingly valid value.
+    if isinstance(value, (Mapping, list, tuple, set)) or isinstance(value, bool):
         return None
     try:
         number = Decimal(str(value))
@@ -227,6 +237,7 @@ def parse_tdx_professional_rows(
             values=values,
             fetched_at=fetched_at,
             source=source,
+            semantic_status="semantic_unmapped",
         ))
     if not parsed:
         raise TdxProfessionalDataUnavailable(

@@ -21,9 +21,11 @@ def build_risk_status(*, sentiment_repository=None, news_repository=None, now=No
     alerts = _news_alerts(news_repository, generated_at)
     dimensions = [
         _market_dimension(sentiment),
+        _stock_dimension(),
+        _news_dimension(alerts),
         _freshness_dimension(sentiment, generated_at),
         _coverage_dimension(sentiment),
-        _news_dimension(alerts),
+        _strategy_dimension(),
     ]
     available_levels = [item["level"] for item in dimensions if item["level"] != "unavailable"]
     overall = max(available_levels, key=LEVEL_RANK.get) if available_levels else "unavailable"
@@ -87,6 +89,28 @@ def _news_dimension(alerts: list[dict]) -> dict:
     evidence = f"其中 {high_count} 条高风险" if alerts else "只统计已复核且方向置信度达到 60% 的事件"
     action = "逐条核对受影响股票和板块" if alerts else "继续监控已核验新闻"
     return _dimension("news_events", "新闻事件", level, value, evidence, action)
+
+
+def _stock_dimension() -> dict:
+    return _dimension(
+        "stock_specific",
+        "个股风险",
+        "unavailable",
+        "等待选择股票",
+        "全局风险页没有绑定单只股票，不能用市场均值代替个股风险",
+        "进入个股观察或公司研究后核验财务、价格和事件风险",
+    )
+
+
+def _strategy_dimension() -> dict:
+    return _dimension(
+        "strategy_execution",
+        "策略风险",
+        "unavailable",
+        "等待策略与触发记录",
+        "当前没有可归属到具体策略版本的执行样本",
+        "先冻结策略参数，再根据样本外回测和实际触发结果评估",
+    )
 
 
 def _news_alerts(repository, now: datetime) -> list[dict]:

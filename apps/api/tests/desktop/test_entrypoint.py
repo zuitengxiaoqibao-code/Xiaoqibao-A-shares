@@ -88,6 +88,18 @@ def test_entrypoint_sets_portable_paths_and_stops_after_window(
     assert not previous_data.exists()
 
 
+def test_entrypoint_applies_current_data_migrations_before_api_start(tmp_path: Path, monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(entrypoint, "apply_migrations", lambda root, target_version: calls.append((root, target_version)) or target_version)
+    monkeypatch.setattr(entrypoint, "_create_local_api_server", lambda _port: FakeServer())
+    monkeypatch.setattr(entrypoint, "SingleInstance", FakeInstance)
+    monkeypatch.setattr(entrypoint, "configure_desktop_logging", lambda _path: None)
+    monkeypatch.setattr(entrypoint, "run_window", lambda start, **_kwargs: start())
+
+    assert entrypoint.main(["--portable-root", str(tmp_path)]) == 0
+    assert calls == [(tmp_path, entrypoint.CURRENT_MIGRATION_VERSION)]
+
+
 def test_gui_prepares_runtime_and_launches_api_before_window(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -189,3 +201,25 @@ def test_second_launch_restores_existing_window(tmp_path: Path, monkeypatch) -> 
 
     assert entrypoint.main(["--portable-root", str(tmp_path)]) == 2
     assert restored == ["一树电子商务-A股观测台"]
+
+
+def test_entrypoint_accepts_an_explicit_instance_name_for_isolated_smoke(
+    tmp_path: Path, monkeypatch
+) -> None:
+    names: list[str] = []
+
+    class NamedInstance(FakeInstance):
+        def __init__(self, name: str) -> None:
+            names.append(name)
+            super().__init__(name)
+
+    monkeypatch.setattr(entrypoint, "SingleInstance", NamedInstance)
+    monkeypatch.setattr(entrypoint, "_create_local_api_server", lambda _port: FakeServer())
+    monkeypatch.setattr(entrypoint, "configure_desktop_logging", lambda _path: None)
+    monkeypatch.setattr(entrypoint, "run_window", lambda start, **_kwargs: start())
+
+    assert entrypoint.main([
+        "--portable-root", str(tmp_path),
+        "--instance-name", "xiaoqibao-smoke-test",
+    ]) == 0
+    assert names == ["xiaoqibao-smoke-test"]

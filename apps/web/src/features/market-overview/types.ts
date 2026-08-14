@@ -1,3 +1,5 @@
+import type { FieldEvidence } from "../../shared/evidence/FieldEvidenceDetails";
+
 export type OverviewQuality = "ready" | "partial" | "stale" | "unavailable";
 
 export type OverviewSentiment = {
@@ -34,6 +36,9 @@ export type OverviewAnomaly = {
   direction: "positive" | "negative" | "neutral" | "uncertain";
   themes: string[];
   symbols: string[];
+  category?: "policy_macro" | "industry_sector" | "company_announcement" | "earnings_financial" | "capital_dragon_tiger" | "price_volume_anomaly" | "risk_event" | "rumor_unverified" | null;
+  strength?: "high" | "medium" | "low" | "unknown";
+  credibility?: "multi_source_verified" | "verified" | "pending" | "rejected";
 };
 
 export type OverviewLiveFeedItem = {
@@ -137,10 +142,15 @@ export type MarketReviewSnapshot = {
   as_of: string;
   observed_at: string;
   latest_trade_date: string | null;
+  latest_available_trade_date?: string | null;
+  latest_available_trade_date_count?: number;
+  latest_trade_date_coverage_percent?: string | null;
   source: string;
   quality: OverviewQuality;
   universe_count: number;
   history_ready_count: number;
+  watermark?: MarketDataWatermark;
+  evidence_ledger?: EvidenceLedgerEntry[];
   consecutive_limit_up: MarketReviewStock[];
   first_limit_up: MarketReviewStock[];
   new_high_100: MarketReviewStock[];
@@ -151,6 +161,18 @@ export type MarketReviewSnapshot = {
   dragon_tiger: DragonTigerStock[];
   warnings: string[];
   formula_version: string;
+};
+
+export type MarketDataWatermark = {
+  dominant_trade_date: string | null;
+  latest_available_trade_date: string | null;
+  universe_count: number;
+  history_ready_count: number;
+  coverage_percent: string | null;
+  fragmented_latest_count: number;
+  missing_history_count: number;
+  quality: OverviewQuality;
+  blockers: string[];
 };
 
 export type MarketIntervalReviewStock = {
@@ -214,6 +236,55 @@ export type OverviewRegimeAssessment = {
   formula_version: string;
 };
 
+export type OverviewDataScope = {
+  market_aggregate: "full_a_share_market" | "unavailable";
+  market_quote_count: number;
+  market_universe_count: number;
+  stock_sample: "representative" | "none";
+  stock_sample_count: number;
+  sector_sample: "strong_sector" | "news_linked" | "none";
+  sector_sample_count: number;
+  large_order_sample_count?: number;
+  sector_fund_flow_sample_count?: number;
+  sector_fund_flow_snapshot_count?: number;
+};
+
+export type OverviewLargeOrderFlow = {
+  symbol: string;
+  name: string;
+  latest_trade_date: string;
+  observed_at: string;
+  main_net_yi: string;
+  large_net_yi: string;
+  super_net_yi: string;
+  direction: "inflow" | "outflow" | "balanced";
+  source: string;
+  quality: OverviewQuality;
+};
+
+export type OverviewSectorFundFlowPoint = {
+  sector_code: string;
+  sector_name: string;
+  observed_at: string;
+  main_net_yi: string;
+  large_net_yi: string | null;
+  super_net_yi: string | null;
+  source: string;
+  quality: OverviewQuality;
+};
+
+export type OverviewOfficialEvent = {
+  event_id: string;
+  event_date: string;
+  event_type: "subscription" | "allotment" | "listing";
+  code: string;
+  name: string;
+  kind: string;
+  observed_at: string;
+  source: string;
+  quality: OverviewQuality;
+};
+
 export type MarketOverviewResponse = {
   status: "ready" | "partial" | "unavailable";
   as_of: string;
@@ -245,6 +316,7 @@ export type MarketOverviewResponse = {
     phase?: "premarket" | "intraday" | "postclose" | "closed";
     freshness?: "live" | "previous_close" | "final" | "stale" | "unavailable" | "unknown";
   };
+  data_scope?: OverviewDataScope;
   indices: OverviewIndexQuote[];
   minute_series: OverviewMinutePoint[];
   anomalies: OverviewAnomaly[];
@@ -252,6 +324,10 @@ export type MarketOverviewResponse = {
   sectors: OverviewSector[];
   sector_stocks: Record<string, OverviewSectorStock[]>;
   market_stocks: OverviewFeatureStock[];
+  large_order_flows?: OverviewLargeOrderFlow[];
+  sector_fund_flow?: OverviewSectorFundFlowPoint[];
+  official_events?: OverviewOfficialEvent[];
+  field_evidence?: FieldEvidence[];
   review?: MarketReviewSnapshot | null;
   regime_metrics?: OverviewRegimeMetrics;
   regime?: OverviewRegimeAssessment;
@@ -261,3 +337,4 @@ export type MarketOverviewResponse = {
 
 export type MarketOverviewLoader = (signal?: AbortSignal) => Promise<MarketOverviewResponse>;
 export type MarketIntervalReviewLoader = (startDate: string, endDate: string, signal?: AbortSignal) => Promise<MarketIntervalReviewSnapshot>;
+import type { EvidenceLedgerEntry } from "../../shared/evidence/EvidenceLedger";

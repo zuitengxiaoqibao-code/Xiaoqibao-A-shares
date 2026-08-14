@@ -13,6 +13,10 @@ from qibao_api.a_shares.candidates import (
     score_candidates,
 )
 from qibao_api.a_shares.factors import InsufficientHistoryError, build_factor_snapshot
+from qibao_api.a_shares.quant_factor_cache import (
+    QuantFactorCache,
+    daily_history_fingerprint,
+)
 from qibao_api.a_shares.fundamentals import FundamentalSnapshot
 from qibao_api.a_shares.models import (
     CandidateBoard,
@@ -148,6 +152,7 @@ class AShareDiagnosisService:
         self.classification_repository = classification_repository
         self.fund_flow_repository = fund_flow_repository
         self.trading_calendar = trading_calendar
+        self._factor_cache = QuantFactorCache()
 
     async def inspect_sources(
         self, symbol: str, as_of: date, *, cutoff: datetime | None = None
@@ -334,7 +339,14 @@ class AShareDiagnosisService:
         exclusions = []
         for index, symbol in enumerate(symbols, start=1):
             try:
-                snapshot = build_factor_snapshot(histories.get(symbol, []), as_of)
+                history = histories.get(symbol, [])
+                snapshot = self._factor_cache.get_or_compute(
+                    trading_date=as_of,
+                    symbol=symbol,
+                    factor_version=FACTOR_VERSION,
+                    history_fingerprint=daily_history_fingerprint(history),
+                    loader=lambda history=history: build_factor_snapshot(history, as_of),
+                )
                 if (
                     self.trading_calendar is not None
                     and snapshot.latest_trade_date != as_of
@@ -589,6 +601,21 @@ class AShareDiagnosisService:
             "pb": market.pb if market is not None else getattr(finance, "pb", None),
             "market_cap_yi": market.market_cap_yi if market is not None else getattr(finance, "market_cap_yi", None),
         }
+        if market is not None and finance is not None and market.source != finance.source:
+            for field in ("pe_ttm", "pb", "market_cap_yi"):
+                primary = getattr(market, field, None)
+                alternative = getattr(finance, field, None)
+                if primary is None or alternative is None or primary == alternative:
+                    continue
+                relative_difference = abs(primary - alternative) / max(
+                    abs(primary), abs(alternative), Decimal("0.0001")
+                )
+                if relative_difference < Decimal("0.05"):
+                    continue
+                metrics[f"{field}_alternative"] = alternative
+                metrics[f"{field}_alternative_source"] = finance.source
+                metrics[f"{field}_alternative_observed_at"] = finance.observed_at.isoformat()
+                metrics[f"{field}_difference"] = primary - alternative
         source = market.source if market is not None else getattr(finance, "source", "tencent")
         observed_at = market.observed_at if market is not None else getattr(finance, "observed_at", None)
         status = "ready" if any(value is not None for value in metrics.values()) else "unavailable"

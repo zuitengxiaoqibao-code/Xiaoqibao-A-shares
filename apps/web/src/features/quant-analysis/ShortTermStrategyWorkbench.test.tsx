@@ -53,15 +53,51 @@ const dashboard: QuantStrategyDashboard = {
     { name: "反核修复模型", applicable_regimes: ["冰点修复"], selected: false, defensive: false },
     { name: "空仓防守模型", applicable_regimes: ["高位退潮", "缩量混沌"], selected: false, defensive: true },
   ],
+  candidate_funnel: {
+    stages: [
+      { key: "universe", label: "全市场股票", count: 5000 },
+      { key: "history_ready", label: "日线历史完整", count: 4700 },
+      { key: "factor_ready", label: "因子计算完成", count: 4650 },
+      { key: "liquidity_ready", label: "流动性达标", count: 4200 },
+      { key: "ranked", label: "策略排名入选", count: 12 },
+      { key: "trigger_confirmed", label: "盘中触发确认", count: 2 },
+      { key: "final_candidates", label: "最终候选", count: 1 },
+    ],
+    exclusion_reasons: { insufficient_history: 300, insufficient_liquidity: 450 },
+    completeness: "partial",
+    blockers: ["incomplete_daily_history"],
+  },
+  field_evidence: [{
+    field_path: "candidates.600001.strategy_score", value: "82.4", source: "tdx-local-daily / tdx-local-realtime",
+    source_field: null, status: "derived", trade_date: "2026-07-31", observed_at: "2026-07-31T14:00:00+08:00",
+    coverage_percent: "82", derived: true, formula: "a-share-short-strategy-v2.0", evidence_ids: [], limitations: [],
+  }],
   candidates: [{
     symbol: "600001", name: "样本股份", model: "0轴低吸模型",
     strategy_score: "82.4", regime_match: "1", stock_score: "0.9",
     trigger_score: "0", rr_score: "0", risk_penalty: "4.9",
     status: "pending_trigger", trigger_confirmed: false, position: "0",
     planned_position: "0", evidence_coverage_percent: "82",
+    vote_consensus: "0.20", vote_position: "0",
+    signal_votes: [
+      { signal: "市场风格", vote: 1, evidence_value: "1" },
+      { signal: "个股质量", vote: 1, evidence_value: "0.9" },
+      { signal: "盘中触发", vote: -1, evidence_value: "0" },
+      { signal: "盈亏比", vote: -1, evidence_value: "0" },
+      { signal: "风险约束", vote: 1, evidence_value: "0.84" },
+    ],
     buy_triggers: ["涨跌幅位于 -1.5% 至 +2%", "3分钟涨幅转正"],
     invalidation_rules: ["跌破盘中均价且3分钟不能收回"], risk_flags: [],
     missing_evidence: ["three_minute_return", "net_large_flow"],
+    alert_gate: {
+      eligible: false,
+      checks: [
+        { key: "strategy_score", label: "策略分门槛", passed: true, detail: "82.40 / 80" },
+        { key: "trigger_confirmed", label: "盘中触发确认", passed: false, detail: "尚未确认" },
+        { key: "evidence_coverage", label: "证据覆盖", passed: false, detail: "82.00% / 90%" },
+      ],
+      blockers: ["盘中触发未确认", "证据覆盖低于90%"],
+    },
     factor_as_of: "2026-07-31", sources: ["tdx-local-daily", "tdx-local-realtime"],
   }],
   discipline: "情绪主升：只做核心强股的分歧确认，不追后排和一致加速。",
@@ -86,14 +122,24 @@ describe("ShortTermStrategyWorkbench", () => {
     ]) expect(within(metrics).getByText(label)).toBeInTheDocument();
     const candidate = screen.getByRole("article", { name: "600001 样本股份" });
     expect(candidate).toHaveTextContent("82.4");
-    expect(candidate).toHaveTextContent("待盘中确认");
+    expect(candidate).toHaveTextContent("等待确认");
     expect(candidate).toHaveTextContent("0轴低吸模型");
     expect(candidate).toHaveTextContent("触发后仓位上限 0.0%");
     expect(candidate).toHaveTextContent("3分钟涨幅转正");
+    expect(within(candidate).getByLabelText("信号投票仓位引擎")).toHaveTextContent("信号一致度 0.20");
+    expect(within(candidate).getByLabelText("信号投票仓位引擎")).toHaveTextContent("R(t) = Rmax");
+    const evidence = screen.getByRole("region", { name: "量化证据摘要" });
+    expect(evidence).toHaveTextContent("全市场样本");
+    expect(within(evidence).getByText("5,000")).toBeInTheDocument();
+    expect(within(evidence).getByText("85%")).toBeInTheDocument();
+    const alertGate = within(candidate).getByLabelText("严格提醒门槛");
+    expect(alertGate).toHaveTextContent("盘中触发确认尚未确认");
+    expect(alertGate).toHaveTextContent("证据覆盖82.00% / 90%");
     const modelPool = screen.getByRole("region", { name: "六模型策略池" });
     for (const model of dashboard.strategy_models) {
       expect(within(modelPool).getByText(model.name)).toBeInTheDocument();
     }
+    expect(screen.getByRole("group", { name: "关键字段证据" })).toHaveTextContent("1 项推算");
   });
 
   it("keeps a defensive regime useful without inventing candidates", () => {

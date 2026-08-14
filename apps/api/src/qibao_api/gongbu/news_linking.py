@@ -12,6 +12,7 @@ from qibao_api.contracts.news import (
     NewsArticle,
     NormalizedNewsEvent,
 )
+from qibao_api.contracts.evidence_ledger import EvidenceLedgerEntry
 
 
 class DeterministicNewsLinker:
@@ -112,6 +113,16 @@ class DeterministicNewsLinker:
             association_kind=association_kind,
             association_reasons=reasons,
             review_state=review_state,
+            evidence_ledger=(EvidenceLedgerEntry(
+                source=article.publisher,
+                operation="news_linking",
+                status="ready" if review_state == "verified" else "partial",
+                trade_date=article.published_at.date(),
+                observed_at=article.fetched_at,
+                formula_version="news-association-v2",
+                sample_count=1,
+                limitations=() if review_state == "verified" else ("关联仍待人工复核",),
+            ),),
         )
 
     @staticmethod

@@ -12,7 +12,7 @@ import type { ResearchCard } from "./types";
 import type { AuditStatus, ComplianceStatus, RiskStatus } from "../governance/GovernanceViews";
 import type { BondCandidates, BondDashboard, BondDiagnosis, BondDiagnosisBatch } from "../convertible-bonds/types";
 import type { CorrectionInput, NewsIntelligenceBundle } from "../news-intelligence/types";
-import type { BackupRecord, BackupVerification, OperationsStatus } from "../operations/types";
+import type { BackupRecord, BackupVerification, CacheCleanupResult, CleanupPreview, OperationsDiagnostics, OperationsStatus, PerformanceSummary } from "../operations/types";
 import type { AShareDiagnosis, CandidateBoard, CandidateScoreLoader } from "../a-shares/types";
 import type { DecisionResponse } from "../decision-workbench/types";
 import type { MarketSentimentResponse, MarketSentimentSnapshot } from "../market-sentiment/types";
@@ -28,12 +28,14 @@ import { commitLocation } from "../instrument-selection/location";
 import { useOptionalSelectedInstrument, useSelectedInstrument } from "../instrument-selection/SelectedInstrumentProvider";
 import { BeginnerNavigation, type BeginnerView } from "../beginner-shell/BeginnerNavigation";
 import type { FirstLimitUpBoard } from "../first-limit-up/types";
-import type { QuantForecastLoader, QuantStrategyLoader, QuantTickLoader, TdxFormulaLoader } from "../quant-analysis/types";
+import type { DecisionJournalCreator, DecisionJournalLoader, QuantForecastLoader, QuantShadowAnalyticsLoader, QuantShadowLoader, QuantStrategyLoader, QuantTickLoader, TdxFormulaLoader } from "../quant-analysis/types";
 import { MarketOverviewView } from "../market-overview/MarketOverviewView";
 import type { MarketIntervalReviewLoader, MarketOverviewLoader } from "../market-overview/types";
 import type { StockTimelineLoader } from "../stock-timeline/types";
 import type { BreakingNewsAlertLoader } from "../news-alerts/types";
+import type { PortfolioPositionRemover, PortfolioPositionSaver, PortfolioRiskAnalyzer, PortfolioRiskLoader } from "../portfolio-risk/types";
 import type { CompanyResearchResponse } from "../company-research/types";
+import { scheduleRoutePreload } from "./routePreload";
 import type {
   SpeechSettingsLoader,
   SpeechSettingsSaver,
@@ -46,6 +48,7 @@ import type {
   AISettingsLoader,
   AISettingsSaver,
   HistoryCoverageLoader,
+  HistoryRepairCenterLoader,
   HistorySyncController,
   HistorySyncLoader,
   HistorySyncStarter,
@@ -55,15 +58,40 @@ import type {
   SourceHealthLoader,
 } from "../data-settings/types";
 
-const ConvertibleBondView = lazy(() => import("../convertible-bonds/ConvertibleBondView").then(({ ConvertibleBondView: view }) => ({ default: view })));
-const NewsIntelligenceView = lazy(() => import("../news-intelligence/NewsIntelligenceView").then(({ NewsIntelligenceView: view }) => ({ default: view })));
-const TodayDecisionView = lazy(() => import("../decision-workbench/TodayDecisionView").then(({ TodayDecisionView: view }) => ({ default: view })));
-const BeginnerRiskView = lazy(() => import("../beginner-shell/BeginnerRiskView").then(({ BeginnerRiskView: view }) => ({ default: view })));
-const HistoryReview = lazy(() => import("../beginner-shell/HistoryReview").then(({ HistoryReview: view }) => ({ default: view })));
-const DataSettingsView = lazy(() => import("../data-settings/DataSettingsView").then(({ DataSettingsView: view }) => ({ default: view })));
-const FirstLimitUpView = lazy(() => import("../first-limit-up/FirstLimitUpView").then(({ FirstLimitUpView: view }) => ({ default: view })));
-const QuantAnalysisDashboard = lazy(() => import("../quant-analysis/QuantAnalysisDashboard").then(({ QuantAnalysisDashboard: view }) => ({ default: view })));
-const CompanyResearchView = lazy(() => import("../company-research/CompanyResearchView").then(({ CompanyResearchView: view }) => ({ default: view })));
+const loadConvertibleBondModule = () => import("../convertible-bonds/ConvertibleBondView");
+const loadNewsIntelligenceModule = () => import("../news-intelligence/NewsIntelligenceView");
+const loadTodayDecisionModule = () => import("../decision-workbench/TodayDecisionView");
+const loadFirstLimitUpModule = () => import("../first-limit-up/FirstLimitUpView");
+const loadQuantAnalysisModule = () => import("../quant-analysis/QuantAnalysisDashboard");
+const loadCompanyResearchModule = () => import("../company-research/CompanyResearchView");
+const loadBeginnerRiskModule = () => import("../beginner-shell/BeginnerRiskView");
+const loadHistoryReviewModule = () => import("../beginner-shell/HistoryReview");
+const loadDataSettingsModule = () => import("../data-settings/DataSettingsView");
+const loadOperationsModule = () => import("../operations/OperationsView");
+
+const ConvertibleBondView = lazy(() => loadConvertibleBondModule().then(({ ConvertibleBondView: view }) => ({ default: view })));
+const NewsIntelligenceView = lazy(() => loadNewsIntelligenceModule().then(({ NewsIntelligenceView: view }) => ({ default: view })));
+const TodayDecisionView = lazy(() => loadTodayDecisionModule().then(({ TodayDecisionView: view }) => ({ default: view })));
+const FirstLimitUpView = lazy(() => loadFirstLimitUpModule().then(({ FirstLimitUpView: view }) => ({ default: view })));
+const QuantAnalysisDashboard = lazy(() => loadQuantAnalysisModule().then(({ QuantAnalysisDashboard: view }) => ({ default: view })));
+const CompanyResearchView = lazy(() => loadCompanyResearchModule().then(({ CompanyResearchView: view }) => ({ default: view })));
+const BeginnerRiskView = lazy(() => loadBeginnerRiskModule().then(({ BeginnerRiskView: view }) => ({ default: view })));
+const HistoryReview = lazy(() => loadHistoryReviewModule().then(({ HistoryReview: view }) => ({ default: view })));
+const DataSettingsView = lazy(() => loadDataSettingsModule().then(({ DataSettingsView: view }) => ({ default: view })));
+const OperationsView = lazy(() => loadOperationsModule().then(({ OperationsView: view }) => ({ default: view })));
+
+const primaryRoutePreloaders = [
+  loadTodayDecisionModule,
+  loadCompanyResearchModule,
+  loadFirstLimitUpModule,
+  loadQuantAnalysisModule,
+  loadNewsIntelligenceModule,
+  loadBeginnerRiskModule,
+  loadHistoryReviewModule,
+  loadDataSettingsModule,
+  loadOperationsModule,
+  loadConvertibleBondModule,
+];
 
 type ViewState =
   | { kind: "idle" }
@@ -76,6 +104,10 @@ type Props = {
   syncHistory?: (symbol: string, limit?: number) => Promise<SyncReport>;
   runBacktest?: BacktestRunner;
   loadRisk?: () => Promise<RiskStatus>; loadCompliance?: (asset?: "a_share" | "convertible_bond") => Promise<ComplianceStatus>; loadAudit?: () => Promise<AuditStatus>;
+  analyzePortfolioRisk?: PortfolioRiskAnalyzer;
+  loadPortfolioRisk?: PortfolioRiskLoader;
+  savePortfolioPosition?: PortfolioPositionSaver;
+  removePortfolioPosition?: PortfolioPositionRemover;
   complianceAction?: (source: string, action: "authorize" | "revoke" | "acknowledge", permissionReference?: string, asset?: "a_share" | "convertible_bond") => Promise<unknown>;
   loadBondDashboard?: () => Promise<BondDashboard>;
   loadBondDiagnosis?: (code: string) => Promise<BondDiagnosis>;
@@ -87,10 +119,12 @@ type Props = {
   syncHotspots?: () => Promise<Record<string, number>>;
   createNewsCorrection?: (input: CorrectionInput) => Promise<unknown>;
   loadOperationsStatus?: () => Promise<OperationsStatus>;
+  loadOperationsDiagnostics?: () => Promise<OperationsDiagnostics>;
   setSchedulerPaused?: (paused: boolean) => Promise<OperationsStatus["scheduler"]>;
   createBackup?: () => Promise<BackupRecord>;
   verifyBackup?: (backupId: string) => Promise<BackupVerification>;
   runManualJob?: (phase: string, tradingDate: string) => Promise<{ report_id: string }>;
+  cleanupCache?: (olderThanHours: number) => Promise<CacheCleanupResult>;
   loadAShareCandidates?: () => Promise<CandidateBoard>;
   loadAShareCandidateScores?: CandidateScoreLoader;
   loadAShareDiagnosis?: (symbol: string, asOf?: string) => Promise<AShareDiagnosis>;
@@ -115,14 +149,25 @@ type Props = {
   loadSourceHealth?: SourceHealthLoader;
   loadHistorySync?: HistorySyncLoader;
   loadHistoryCoverage?: HistoryCoverageLoader;
+  loadHistoryRepairCenter?: HistoryRepairCenterLoader;
+  loadHistoryRepairAudits?: import("../data-settings/types").HistoryRepairAuditLoader;
   startHistoryBackfill?: HistorySyncStarter;
   pauseHistorySync?: HistorySyncController;
   resumeHistorySync?: HistorySyncController;
+  loadTdxImport?: import("../data-settings/types").TdxImportLoader;
+  scanTdxImport?: import("../data-settings/types").TdxImportScanner;
+  startTdxImport?: import("../data-settings/types").TdxImportStarter;
+  pauseTdxImport?: import("../data-settings/types").TdxImportController;
+  resumeTdxImport?: import("../data-settings/types").TdxImportController;
   loadFirstLimitUp?: () => Promise<FirstLimitUpBoard>;
   refreshFirstLimitUp?: () => Promise<FirstLimitUpBoard>;
   loadQuantTicks?: QuantTickLoader;
   loadKronosForecast?: QuantForecastLoader;
   loadQuantStrategy?: QuantStrategyLoader;
+  loadQuantShadowDecisions?: QuantShadowLoader;
+  loadQuantShadowAnalytics?: QuantShadowAnalyticsLoader;
+  loadDecisionJournal?: DecisionJournalLoader;
+  createDecisionJournal?: DecisionJournalCreator;
   loadTdxFormula?: TdxFormulaLoader;
   loadMarketOverview?: MarketOverviewLoader;
   loadMarketIntervalReview?: MarketIntervalReviewLoader;
@@ -132,6 +177,9 @@ type Props = {
   saveSpeechSettings?: SpeechSettingsSaver;
   synthesizeSpeech?: SpeechSynthesizer;
   loadCompanyResearch?: (symbol: string, asOf?: string, signal?: AbortSignal) => Promise<CompanyResearchResponse>;
+  previewStorageCleanup?: (olderThanHours: number) => Promise<CleanupPreview>;
+  cleanupStorage?: (olderThanHours: number) => Promise<CacheCleanupResult>;
+  loadPerformanceSummary?: () => Promise<PerformanceSummary>;
 };
 
 type ActiveView = BeginnerView;
@@ -160,6 +208,7 @@ function viewFromPath(path: string): ActiveView {
   if (path === "/risk") return "risk";
   if (path === "/history") return "history";
   if (path === "/settings") return "settings";
+  if (path === "/operations") return "operations";
   return "market_overview";
 }
 
@@ -227,15 +276,15 @@ function SelectedNewsWorkspace({ loadBundle, syncNews, syncHotspots, createCorre
 
 export function RouteLoadingFallback() {
   return (
-    <main className="beginner-page route-loading-fallback" role="status" aria-label="页面加载状态">
+    <main className="beginner-page route-loading-fallback" role="status" aria-label="页面准备状态" aria-busy="true">
       <span className="pulse-dot" aria-hidden="true" />
-      <h1>正在加载工作区</h1>
-      <p>正在准备图表、指标和证据状态，请稍候。</p>
+      <h1>页面准备中</h1>
+      <p>数据请求已在后台启动。</p>
     </main>
   );
 }
 
-export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, loadCompliance, loadAudit, complianceAction, loadBondDashboard, loadBondDiagnosis, loadCachedBondDiagnosis, loadBondCandidates, diagnoseBondBatch, loadNewsIntelligence, syncNews, syncHotspots, createNewsCorrection, loadOperationsStatus, setSchedulerPaused, createBackup, verifyBackup, runManualJob, loadAShareCandidates, loadAShareCandidateScores, loadAShareDiagnosis, loadDecisionCurrent, loadDecisionDate, loadMarketSentiment, refreshMarketSentiment, loadCandidateSentiments, refreshCandidateSentiments, searchAShareInstruments, loadStockCockpit, loadStockCockpitAI, loadStockTimeline, prepareStockData, loadAISettings, saveAISettings, deleteAISettings, loadLocalSourceSettings, detectLocalSourceSettings, saveLocalSourceSettings, syncAShareUniverse, loadSourceHealth, loadHistorySync, loadHistoryCoverage, startHistoryBackfill, pauseHistorySync, resumeHistorySync, loadFirstLimitUp, refreshFirstLimitUp, loadQuantTicks, loadKronosForecast, loadQuantStrategy, loadTdxFormula, loadMarketOverview, loadMarketIntervalReview, loadBreakingNewsAlerts, loadSpeechSettings, loadSpeechVoices, saveSpeechSettings, synthesizeSpeech, loadCompanyResearch }: Props) {
+export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, analyzePortfolioRisk, loadPortfolioRisk, savePortfolioPosition, removePortfolioPosition, loadCompliance, loadAudit, complianceAction, loadBondDashboard, loadBondDiagnosis, loadCachedBondDiagnosis, loadBondCandidates, diagnoseBondBatch, loadNewsIntelligence, syncNews, syncHotspots, createNewsCorrection, loadOperationsStatus, loadOperationsDiagnostics, setSchedulerPaused, createBackup, verifyBackup, runManualJob, cleanupCache, previewStorageCleanup, cleanupStorage, loadPerformanceSummary, loadAShareCandidates, loadAShareCandidateScores, loadAShareDiagnosis, loadDecisionCurrent, loadDecisionDate, loadMarketSentiment, refreshMarketSentiment, loadCandidateSentiments, refreshCandidateSentiments, searchAShareInstruments, loadStockCockpit, loadStockCockpitAI, loadStockTimeline, prepareStockData, loadAISettings, saveAISettings, deleteAISettings, loadLocalSourceSettings, detectLocalSourceSettings, saveLocalSourceSettings, syncAShareUniverse, loadSourceHealth, loadHistorySync, loadHistoryCoverage, loadHistoryRepairCenter, loadHistoryRepairAudits, startHistoryBackfill, pauseHistorySync, resumeHistorySync, loadTdxImport, scanTdxImport, startTdxImport, pauseTdxImport, resumeTdxImport, loadFirstLimitUp, refreshFirstLimitUp, loadQuantTicks, loadKronosForecast, loadQuantStrategy, loadQuantShadowDecisions, loadQuantShadowAnalytics, loadDecisionJournal, createDecisionJournal, loadTdxFormula, loadMarketOverview, loadMarketIntervalReview, loadBreakingNewsAlerts, loadSpeechSettings, loadSpeechVoices, saveSpeechSettings, synthesizeSpeech, loadCompanyResearch }: Props) {
   const selectedInstrument = useOptionalSelectedInstrument();
   const [state, setState] = useState<ViewState>({ kind: "idle" });
   const [symbol, setSymbol] = useState("600000");
@@ -256,10 +305,14 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, lo
     return () => window.removeEventListener("popstate", syncPath);
   }, []);
   useEffect(() => {
+    if (import.meta.env.MODE === "test") return undefined;
+    return scheduleRoutePreload(primaryRoutePreloaders);
+  }, []);
+  useEffect(() => {
     if (activeView !== "a_shares") setCandidateSentiments(null);
   }, [activeView]);
   function navigate(view: ActiveView) {
-    const paths: Record<ActiveView, string> = { market_overview: "/market-overview", dashboard: "/today-decision", a_shares: "/a-shares", company_research: "/company-research", first_limit_up: "/first-limit-up", quant_analysis: "/first-limit-up/quant-analysis", risk: "/risk", history: "/history", settings: "/settings", bonds: "/convertible-bonds", news: "/news-intelligence" };
+    const paths: Record<ActiveView, string> = { market_overview: "/market-overview", dashboard: "/today-decision", a_shares: "/a-shares", company_research: "/company-research", first_limit_up: "/first-limit-up", quant_analysis: "/first-limit-up/quant-analysis", risk: "/risk", history: "/history", settings: "/settings", operations: "/operations", bonds: "/convertible-bonds", news: "/news-intelligence" };
     const next = new URL(paths[view], window.location.origin);
     const selectedSymbol = new URL(window.location.href).searchParams.get("symbol") ?? selectedInstrument?.lastSymbol;
     if (view !== "bonds" && selectedSymbol) next.searchParams.set("symbol", selectedSymbol);
@@ -275,6 +328,11 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, lo
   function openCompanyResearch(symbol: string) {
     commitLocation(`/company-research?symbol=${encodeURIComponent(symbol)}`);
     setActiveView("company_research");
+  }
+
+  function openQuantAnalysis(symbol: string) {
+    commitLocation(`/first-limit-up/quant-analysis?symbol=${encodeURIComponent(symbol)}`);
+    setActiveView("quant_analysis");
   }
 
   async function inspect(requestedSymbol: string) {
@@ -307,10 +365,10 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, lo
     <div className="app-shell">
       <BeginnerNavigation active={activeView} onNavigate={navigate} />
 
-      {activeView === "market_overview" && loadMarketOverview && <MarketOverviewView load={loadMarketOverview} loadAlerts={loadBreakingNewsAlerts} onOpenAShare={openOverviewStock} synthesizeSpeech={synthesizeSpeech} loadIntervalReview={loadMarketIntervalReview} />}
+      {activeView === "market_overview" && loadMarketOverview && <MarketOverviewView load={loadMarketOverview} loadAlerts={loadBreakingNewsAlerts} onOpenAShare={openOverviewStock} onOpenCompanyResearch={openCompanyResearch} onOpenQuantAnalysis={openQuantAnalysis} synthesizeSpeech={synthesizeSpeech} loadIntervalReview={loadMarketIntervalReview} />}
       {activeView === "market_overview" && !loadMarketOverview && <main className="market-overview-page"><header className="overview-titlebar"><div><p>A-SHARE MARKET TERMINAL</p><h1>信息总览</h1></div></header><div className="overview-error"><ShieldAlert size={15} />信息总览服务暂不可用，请检查本地 API。</div></main>}
 
-      {activeView === "risk" && <Suspense fallback={<RouteLoadingFallback />}><BeginnerRiskView load={loadRisk} /></Suspense>}
+      {activeView === "risk" && <Suspense fallback={<RouteLoadingFallback />}><BeginnerRiskView load={loadRisk} analyzePortfolio={analyzePortfolioRisk} loadPortfolio={loadPortfolioRisk} savePortfolioPosition={savePortfolioPosition} removePortfolioPosition={removePortfolioPosition} /></Suspense>}
 
       {activeView === "a_shares" && <div className="stock-workbench-layout observation-workspace">
         {loadAShareCandidates && searchAShareInstruments && <StockSelector loadCandidates={loadAShareCandidates} loadWatchlistScores={loadAShareCandidateScores} prepare={prepareStockData} search={searchAShareInstruments} loadCandidateSentiments={loadCandidateSentiments} refreshCandidateSentiments={refreshCandidateSentiments} onCandidateSentiments={setCandidateSentiments} />}
@@ -323,7 +381,7 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, lo
       {activeView === "first_limit_up" && loadFirstLimitUp && refreshFirstLimitUp && <Suspense fallback={<RouteLoadingFallback />}><FirstLimitUpView load={loadFirstLimitUp} refresh={refreshFirstLimitUp} /></Suspense>}
       {activeView === "first_limit_up" && (!loadFirstLimitUp || !refreshFirstLimitUp) && <main className="beginner-page"><header><p className="eyebrow">A 股 / 盘后筛选</p><h1>首次涨停</h1><p>首次涨停筛选服务暂不可用，请检查本地 API 和日线数据后重试。</p></header></main>}
 
-      {activeView === "quant_analysis" && loadFirstLimitUp && loadQuantTicks && runBacktest && <Suspense fallback={<RouteLoadingFallback />}><QuantAnalysisDashboard loadBoard={loadFirstLimitUp} refreshBoard={refreshFirstLimitUp} loadTicks={loadQuantTicks} runBacktest={runBacktest} loadKronosForecast={loadKronosForecast} loadQuantStrategy={loadQuantStrategy} loadTdxFormula={loadTdxFormula} loadTimeline={loadStockTimeline} selectedSymbol={selectedSymbol} searchInstruments={searchAShareInstruments} onSelectSymbol={(nextSymbol) => selectedInstrument?.select(nextSymbol, "search")} /></Suspense>}
+      {activeView === "quant_analysis" && loadFirstLimitUp && loadQuantTicks && runBacktest && <Suspense fallback={<RouteLoadingFallback />}><QuantAnalysisDashboard loadBoard={loadFirstLimitUp} refreshBoard={refreshFirstLimitUp} loadTicks={loadQuantTicks} runBacktest={runBacktest} loadKronosForecast={loadKronosForecast} loadQuantStrategy={loadQuantStrategy} loadQuantShadowDecisions={loadQuantShadowDecisions} loadQuantShadowAnalytics={loadQuantShadowAnalytics} loadDecisionJournal={loadDecisionJournal} createDecisionJournal={createDecisionJournal} loadTdxFormula={loadTdxFormula} loadTimeline={loadStockTimeline} selectedSymbol={selectedSymbol} searchInstruments={searchAShareInstruments} onSelectSymbol={(nextSymbol) => selectedInstrument?.select(nextSymbol, "search")} /></Suspense>}
       {activeView === "quant_analysis" && (!loadFirstLimitUp || !loadQuantTicks || !runBacktest) && <main className="quant-analysis-page"><header><p className="eyebrow">FIRST LIMIT-UP / QUANT LAB</p><h1>量化分析仪表盘</h1><p>量化证据链暂不完整，请检查首次涨停、盘中 TICK 与回测服务。</p></header></main>}
 
       {activeView === "bonds" && loadBondDashboard && loadBondDiagnosis && loadBondCandidates && <Suspense fallback={<RouteLoadingFallback />}><ConvertibleBondView loadDashboard={loadBondDashboard} loadDiagnosis={loadBondDiagnosis} loadCachedDiagnosis={loadCachedBondDiagnosis} loadCandidates={loadBondCandidates} diagnoseDiscovered={diagnoseBondBatch} openBondCompliance={() => navigate("settings")} /></Suspense>}
@@ -332,8 +390,11 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, lo
 
       {activeView === "history" && loadDecisionCurrent && <Suspense fallback={<RouteLoadingFallback />}><HistoryReview loadCurrent={loadDecisionCurrent} loadDate={loadDecisionDate} symbol={selectedInstrument?.symbol ?? selectedInstrument?.lastSymbol ?? null} runBacktest={runBacktest} /></Suspense>}
 
-      {activeView === "settings" && loadAISettings && saveAISettings && deleteAISettings && <Suspense fallback={<RouteLoadingFallback />}><DataSettingsView loadAI={loadAISettings} saveAI={saveAISettings} deleteAI={deleteAISettings} loadLocalSources={loadLocalSourceSettings} detectLocalSources={detectLocalSourceSettings} saveLocalSources={saveLocalSourceSettings} loadSpeech={loadSpeechSettings} loadSpeechVoices={loadSpeechVoices} saveSpeech={saveSpeechSettings} synthesizeSpeech={synthesizeSpeech} symbol={selectedSymbol} prepare={prepareStockData} preparation={preparationForSymbol(latestCockpit, selectedSymbol)} loadCompliance={loadCompliance} complianceAction={complianceAction} syncAShareUniverse={syncAShareUniverse} loadSourceHealth={loadSourceHealth} loadHistorySync={loadHistorySync} loadHistoryCoverage={loadHistoryCoverage} startHistoryBackfill={startHistoryBackfill} pauseHistorySync={pauseHistorySync} resumeHistorySync={resumeHistorySync} onAIChanged={() => setCockpitRefreshToken((value) => value + 1)} /></Suspense>}
+      {activeView === "settings" && loadAISettings && saveAISettings && deleteAISettings && <Suspense fallback={<RouteLoadingFallback />}><DataSettingsView loadAI={loadAISettings} saveAI={saveAISettings} deleteAI={deleteAISettings} loadLocalSources={loadLocalSourceSettings} detectLocalSources={detectLocalSourceSettings} saveLocalSources={saveLocalSourceSettings} loadSpeech={loadSpeechSettings} loadSpeechVoices={loadSpeechVoices} saveSpeech={saveSpeechSettings} synthesizeSpeech={synthesizeSpeech} symbol={selectedSymbol} prepare={prepareStockData} preparation={preparationForSymbol(latestCockpit, selectedSymbol)} loadCompliance={loadCompliance} complianceAction={complianceAction} syncAShareUniverse={syncAShareUniverse} loadSourceHealth={loadSourceHealth} loadHistorySync={loadHistorySync} loadHistoryCoverage={loadHistoryCoverage} startHistoryBackfill={startHistoryBackfill} pauseHistorySync={pauseHistorySync} resumeHistorySync={resumeHistorySync} loadTdxImport={loadTdxImport} scanTdxImport={scanTdxImport} startTdxImport={startTdxImport} pauseTdxImport={pauseTdxImport} resumeTdxImport={resumeTdxImport} onAIChanged={() => setCockpitRefreshToken((value) => value + 1)} /></Suspense>}
       {activeView === "settings" && (!loadAISettings || !saveAISettings || !deleteAISettings) && <main className="beginner-page"><header><p className="eyebrow">数据设置</p><h1>数据源与 AI</h1><p>设置服务暂不可用，请检查本地服务后重试。</p></header></main>}
+
+      {activeView === "operations" && loadOperationsStatus && setSchedulerPaused && createBackup && verifyBackup && runManualJob && <Suspense fallback={<RouteLoadingFallback />}><OperationsView loadStatus={loadOperationsStatus} setSchedulerPaused={setSchedulerPaused} createBackup={createBackup} verifyBackup={verifyBackup} runManualJob={runManualJob} cleanupCache={cleanupCache} previewCleanup={previewStorageCleanup} cleanupStorage={cleanupStorage} loadPerformance={loadPerformanceSummary} loadDiagnostics={loadOperationsDiagnostics} loadHistoryRepairCenter={loadHistoryRepairCenter} loadHistoryRepairAudits={loadHistoryRepairAudits} startHistoryBackfill={startHistoryBackfill} pauseHistorySync={pauseHistorySync} resumeHistorySync={resumeHistorySync} loadTdxImport={loadTdxImport} scanTdxImport={scanTdxImport} startTdxImport={startTdxImport} pauseTdxImport={pauseTdxImport} resumeTdxImport={resumeTdxImport} /></Suspense>}
+      {activeView === "operations" && (!loadOperationsStatus || !setSchedulerPaused || !createBackup || !verifyBackup || !runManualJob) && <main className="beginner-page"><header><p className="eyebrow">本地运维</p><h1>数据与运维中心</h1><p>运维服务暂不可用，请检查本地服务后重试。</p></header></main>}
 
       {activeView === "dashboard" && loadDecisionCurrent && <Suspense fallback={<RouteLoadingFallback />}><TodayDecisionView
         loadCurrent={loadDecisionCurrent}

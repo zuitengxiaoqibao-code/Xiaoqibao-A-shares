@@ -112,6 +112,7 @@ class News:
         )
         self.events = [
             self.intraday,
+            event("announcement", datetime(2026, 7, 28, 9, 5, tzinfo=CHINA_TZ), event_type="market_announcement"),
             event("batch-hotspot", datetime(2026, 7, 27, 10, 20, tzinfo=CHINA_TZ), event_type="market_hotspot"),
             event("pending", datetime(2026, 7, 27, 10, 30, tzinfo=CHINA_TZ), review_state="pending"),
             event("wrong-symbol", datetime(2026, 7, 27, 10, 40, tzinfo=CHINA_TZ), symbol="000001"),
@@ -129,6 +130,10 @@ class News:
             "article-weekend": SimpleNamespace(
                 article_id="article-weekend", publisher="证券时报",
                 canonical_url="https://source-a.example/weekend", source_verified=True,
+            ),
+            "article-announcement": SimpleNamespace(
+                article_id="article-announcement", publisher="巨潮资讯",
+                canonical_url="https://source-a.example/announcement", source_verified=True,
             ),
         }
 
@@ -161,7 +166,7 @@ class News:
         return [self.articles[article_id] for article_id in article_ids if article_id in self.articles]
 
     def interpretations_for_events(self, event_ids, *, cutoff=None):
-        assert event_ids == ("weekend", "intraday")
+        assert event_ids in (("weekend", "intraday"), ("weekend", "intraday", "announcement"))
         assert cutoff == CUTOFF
         return [
             interpretation(
@@ -187,7 +192,7 @@ def test_timeline_uses_real_bars_and_only_verified_timestamped_stock_news() -> N
     assert [item.trade_date for item in result.bars] == [
         date(2026, 7, 24), date(2026, 7, 27), date(2026, 7, 28),
     ]
-    assert [item.event_id for item in result.events] == ["weekend", "intraday"]
+    assert [item.event_id for item in result.events] == ["weekend", "intraday", "announcement"]
     assert result.events[0].mapped_trade_date is None
     assert result.events[0].label == "消费"
     assert result.events[0].direction == "uncertain"
@@ -201,6 +206,13 @@ def test_timeline_uses_real_bars_and_only_verified_timestamped_stock_news() -> N
     assert result.events[1].verification_state == "multi_source_confirmed"
     assert result.events[1].urgency == "tracking"
     assert result.events[1].source_count == 2
+    assert result.events[1].category == "industry_sector"
+    assert result.events[1].strength == "medium"
+    assert result.events[1].duration == "unknown"
+    assert result.events[1].price_reflection == "unknown"
+    assert result.events[1].follow_up_indicators == (
+        "观察板块成交额、涨停扩散和龙头持续性",
+    )
     assert result.sources == ("local-daily-bars", "verified-market-news")
 
 

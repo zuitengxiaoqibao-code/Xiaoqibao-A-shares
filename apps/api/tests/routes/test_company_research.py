@@ -13,7 +13,10 @@ from qibao_api.contracts.company_research import (
     ValuationObservation,
 )
 from qibao_api.dependencies import get_company_research_service
+from qibao_api.dependencies import get_company_research_ai_task_service
 from qibao_api.routes.research import router
+from qibao_api.contracts.company_research_ai_task import CompanyResearchAITaskSnapshot
+from qibao_api.contracts.task_progress import TaskProgress
 
 
 NOW = datetime(2026, 8, 3, tzinfo=timezone.utc)
@@ -100,3 +103,33 @@ def test_company_research_route_translates_service_failure() -> None:
 
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "company_research_unavailable"
+
+
+def test_company_research_ai_task_routes_start_and_read_independent_supplement() -> None:
+    progress = TaskProgress(
+        task_id="ai-task-1", kind="company-research-ai", status="succeeded",
+        stage="complete", processed=2, total=2, percent=100,
+        detail="AI 证据总结已完成", error=None, started_at=NOW, updated_at=NOW,
+        finished_at=NOW,
+    )
+    snapshot = CompanyResearchAITaskSnapshot(progress=progress, result=None)
+
+    class AIService:
+        def start(self, snapshot_id):
+            assert snapshot_id == "research-version-1"
+            return snapshot
+
+        def snapshot(self, task_id):
+            assert task_id == "ai-task-1"
+            return snapshot
+
+    app = application(Service())
+    app.dependency_overrides[get_company_research_ai_task_service] = lambda: AIService()
+    client = TestClient(app)
+
+    started = client.post("/api/v1/a-shares/company-research/versions/research-version-1/ai/tasks")
+    polled = client.get("/api/v1/a-shares/company-research/ai/tasks/ai-task-1")
+
+    assert started.status_code == 200
+    assert polled.status_code == 200
+    assert polled.json()["progress"]["stage"] == "complete"

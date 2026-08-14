@@ -4,6 +4,7 @@ from typing import Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
+from qibao_api.contracts.field_evidence import FieldEvidence
 from qibao_api.contracts.market_review import MarketReviewSnapshot
 
 
@@ -145,6 +146,11 @@ class OverviewAnomaly(BaseModel):
     direction: Literal["positive", "negative", "neutral", "uncertain"]
     themes: tuple[str, ...] = ()
     symbols: tuple[str, ...] = ()
+    category: str | None = None
+    strength: Literal["high", "medium", "low", "unknown"] = "unknown"
+    credibility: Literal[
+        "multi_source_verified", "verified", "pending", "rejected"
+    ] = "pending"
 
 
 class OverviewLiveFeedItem(BaseModel):
@@ -192,6 +198,48 @@ class OverviewFeatureStock(BaseModel):
     quality: OverviewQuality
 
 
+class OverviewLargeOrderFlow(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    symbol: str = Field(pattern=r"^\d{6}$")
+    name: str = Field(min_length=1)
+    latest_trade_date: date
+    observed_at: AwareDatetime
+    main_net_yi: Decimal
+    large_net_yi: Decimal
+    super_net_yi: Decimal
+    direction: Literal["inflow", "outflow", "balanced"]
+    source: str = Field(min_length=1)
+    quality: OverviewQuality
+
+
+class OverviewSectorFundFlowPoint(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    sector_code: str = Field(pattern=r"^BK\d{4}$")
+    sector_name: str = Field(min_length=1)
+    observed_at: AwareDatetime
+    main_net_yi: Decimal
+    large_net_yi: Decimal | None = None
+    super_net_yi: Decimal | None = None
+    source: str = Field(min_length=1)
+    quality: OverviewQuality
+
+
+class OverviewOfficialEvent(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    event_id: str = Field(min_length=1)
+    event_date: date
+    event_type: Literal["subscription", "allotment", "listing"]
+    code: str = Field(pattern=r"^\d{6}$")
+    name: str = Field(min_length=1)
+    kind: str = Field(min_length=1)
+    observed_at: AwareDatetime
+    source: str = Field(min_length=1)
+    quality: OverviewQuality
+
+
 class OverviewSector(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -215,6 +263,21 @@ class OverviewMarketDataStatus(BaseModel):
     universe_count: int = Field(default=0, ge=0)
     phase: OverviewMarketPhase = "closed"
     freshness: OverviewMarketFreshness = "unknown"
+
+
+class OverviewDataScope(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    market_aggregate: Literal["full_a_share_market", "unavailable"] = "unavailable"
+    market_quote_count: int = Field(default=0, ge=0)
+    market_universe_count: int = Field(default=0, ge=0)
+    stock_sample: Literal["representative", "none"] = "none"
+    stock_sample_count: int = Field(default=0, ge=0)
+    sector_sample: Literal["strong_sector", "news_linked", "none"] = "none"
+    sector_sample_count: int = Field(default=0, ge=0)
+    large_order_sample_count: int = Field(default=0, ge=0)
+    sector_fund_flow_sample_count: int = Field(default=0, ge=0)
+    sector_fund_flow_snapshot_count: int = Field(default=0, ge=0)
 
 
 class OverviewMarketSnapshot(BaseModel):
@@ -258,6 +321,7 @@ class MarketOverviewResponse(BaseModel):
     market_data: OverviewMarketDataStatus = Field(
         default_factory=OverviewMarketDataStatus
     )
+    data_scope: OverviewDataScope = Field(default_factory=OverviewDataScope)
     indices: tuple[OverviewIndexQuote, ...] = ()
     minute_series: tuple[OverviewMinutePoint, ...] = ()
     anomalies: tuple[OverviewAnomaly, ...] = ()
@@ -267,6 +331,10 @@ class MarketOverviewResponse(BaseModel):
         default_factory=dict
     )
     market_stocks: tuple[OverviewFeatureStock, ...] = ()
+    large_order_flows: tuple[OverviewLargeOrderFlow, ...] = ()
+    sector_fund_flow: tuple[OverviewSectorFundFlowPoint, ...] = ()
+    official_events: tuple[OverviewOfficialEvent, ...] = ()
+    field_evidence: tuple[FieldEvidence, ...] = ()
     review: MarketReviewSnapshot | None = None
     warnings: tuple[str, ...] = ()
     sources: tuple[str, ...] = ()

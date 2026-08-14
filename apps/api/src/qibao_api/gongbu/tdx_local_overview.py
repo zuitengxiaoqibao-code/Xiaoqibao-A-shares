@@ -187,6 +187,7 @@ def probe_tdx_capabilities(rpc, *, stock_code: str = "600000.SH") -> dict[str, o
                 "label": label,
                 "method": method,
                 "status": "unavailable",
+                "semantic_status": "not_applicable",
                 "detail": "本地桥接端口不可达",
             })
         return {
@@ -221,6 +222,7 @@ def probe_tdx_capabilities(rpc, *, stock_code: str = "600000.SH") -> dict[str, o
                 "label": label,
                 "method": method,
                 "status": "unavailable",
+                "semantic_status": "not_applicable",
                 "detail": f"接口不可用（{type(error).__name__}）",
             })
         else:
@@ -229,7 +231,12 @@ def probe_tdx_capabilities(rpc, *, stock_code: str = "600000.SH") -> dict[str, o
                 "label": label,
                 "method": method,
                 "status": "ready",
-                "detail": "只读接口返回响应",
+                "semantic_status": "detected_only" if key.startswith("professional_") else "not_applicable",
+                "detail": (
+                    "结构响应已验证；字段语义和单位尚未映射，不绑定业务菜单"
+                    if key.startswith("professional_")
+                    else "只读接口返回响应"
+                ),
             })
 
     ready_count = sum(item["status"] == "ready" for item in capabilities)

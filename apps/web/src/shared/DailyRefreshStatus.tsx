@@ -1,6 +1,6 @@
 import { CheckCircle2, Database, LoaderCircle, Radio, TriangleAlert } from "lucide-react";
 
-import type { LoadProgress, LoadStage } from "./fetchJsonWithProgress";
+import type { LoadProgress, LoadProgressMode, LoadStage } from "./fetchJsonWithProgress";
 import "./dailyRefreshStatus.css";
 
 type Props = {
@@ -25,8 +25,28 @@ const stageNames: Record<LoadStage, string> = {
   complete: "结果刷新",
 };
 
+const progressModeNames: Record<LoadProgressMode, string> = {
+  estimated: "阶段估算",
+  measured: "真实字节",
+  verified: "已核验节点",
+};
+
+function progressMode(progress: LoadProgress | null | undefined): LoadProgressMode {
+  if (progress?.mode) return progress.mode;
+  if (progress?.stage === "receiving") return "measured";
+  if (progress?.stage === "parsing" || progress?.stage === "complete") return "verified";
+  return "estimated";
+}
+
+function formatElapsed(elapsedMs: number | undefined): string | null {
+  if (elapsedMs === undefined || elapsedMs < 0) return null;
+  return `已等待 ${(elapsedMs / 1_000).toFixed(1)} 秒`;
+}
+
 export function DailyRefreshStatus({ label, cachedAt, loading, completion = "live", progress, error, updatedAt }: Props) {
   const percent = Math.max(1, Math.min(100, progress?.percent ?? (loading ? 1 : 100)));
+  const mode = progressMode(progress);
+  const elapsed = formatElapsed(progress?.elapsedMs);
   const partial = !error && !loading && Boolean(updatedAt) && completion === "partial";
   const status = error ? "error" : loading ? "loading" : partial ? "partial" : "ready";
   const monitoring = !error && !loading && !partial && Boolean(updatedAt);
@@ -46,7 +66,11 @@ export function DailyRefreshStatus({ label, cachedAt, loading, completion = "liv
       <div><strong>{title}</strong><span>{timestamp}</span></div>
       <b className="daily-refresh-percent">{error ? "失败" : loading ? `${percent}%` : partial ? "待补齐" : monitoring ? "LIVE" : "缓存"}</b>
     </div>
-    {loading && <div className="daily-refresh-progress-track" role="progressbar" aria-valuemin={1} aria-valuemax={100} aria-valuenow={percent} aria-label={`${label}最新数据加载进度`}><span style={{ width: `${percent}%` }} /></div>}
+    {loading && <div className="daily-refresh-progress-row">
+      <span className={`daily-refresh-progress-mode ${mode}`}>{progressModeNames[mode]}</span>
+      {elapsed && <small>{elapsed}</small>}
+      <div className="daily-refresh-progress-track active" role="progressbar" aria-valuemin={1} aria-valuemax={100} aria-valuenow={percent} aria-label={`${label}最新数据加载进度`} data-progress-mode={mode}><span style={{ width: `${percent}%` }} /><i aria-hidden="true" /></div>
+    </div>}
     {monitoring && <div className="daily-refresh-progress-track complete" role="progressbar" aria-valuemin={1} aria-valuemax={100} aria-valuenow={100} aria-label={`${label}实时监控状态`}><span /></div>}
     {error ? <div className="daily-refresh-failure">
       <span><b>失败环节：</b>{stageNames[progress?.stage ?? "connecting"]}</span>

@@ -54,6 +54,7 @@ def test_market_overview_accepts_partial_regions_without_fabricated_rows() -> No
     assert result.minute_series == ()
     assert result.sectors == ()
     assert result.sentiment.score == Decimal("76")
+    assert result.field_evidence == ()
 
 
 def test_index_quote_rejects_non_positive_values() -> None:

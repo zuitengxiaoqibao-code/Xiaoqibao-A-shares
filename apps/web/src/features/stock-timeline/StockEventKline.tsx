@@ -14,8 +14,6 @@ import type {
 
 const UP_COLOR = chartTheme.upColor;
 const DOWN_COLOR = chartTheme.downColor;
-const NEUTRAL_COLOR = chartTheme.warningColor;
-const UNCERTAIN_COLOR = chartTheme.unavailableColor;
 const SELECTED_COLOR = "#f8fafc";
 const MAX_CHART_EVENTS = 15;
 const MAX_COMPACT_CHART_EVENTS = 3;
@@ -41,13 +39,35 @@ const associationNames = {
   theme: "题材关联",
   macro: "宏观",
 } as const;
-
-function directionColor(direction: StockTimelineEvent["direction"]): string {
-  if (direction === "positive") return UP_COLOR;
-  if (direction === "negative") return DOWN_COLOR;
-  if (direction === "neutral") return NEUTRAL_COLOR;
-  return UNCERTAIN_COLOR;
-}
+const categoryNames: Record<StockTimelineEvent["category"], string> = {
+  policy_macro: "政策宏观",
+  industry_sector: "行业板块",
+  company_announcement: "公司公告",
+  earnings_financial: "业绩财务",
+  capital_dragon_tiger: "资金龙虎榜",
+  price_volume_anomaly: "价格成交异动",
+  risk_event: "风险事件",
+  rumor_unverified: "传闻待核验",
+};
+const categoryColors: Record<StockTimelineEvent["category"], string> = {
+  policy_macro: chartTheme.eventColors.policy,
+  industry_sector: chartTheme.eventColors.industry,
+  company_announcement: chartTheme.eventColors.company,
+  earnings_financial: chartTheme.eventColors.financial,
+  capital_dragon_tiger: chartTheme.eventColors.capital,
+  price_volume_anomaly: chartTheme.eventColors.anomaly,
+  risk_event: chartTheme.eventColors.risk,
+  rumor_unverified: chartTheme.eventColors.rumor,
+};
+const strengthNames: Record<StockTimelineEvent["strength"], string> = {
+  high: "高", medium: "中", low: "低", unknown: "待核验",
+};
+const durationNames: Record<StockTimelineEvent["duration"], string> = {
+  intraday: "日内", multi_day: "多日", long_term: "长期", unknown: "待核验",
+};
+const priceReflectionNames: Record<StockTimelineEvent["price_reflection"], string> = {
+  not_reflected: "尚未反映", partially_reflected: "部分反映", fully_reflected: "充分反映", unknown: "待核验",
+};
 
 function numericConfidence(value: string | null): number {
   const parsed = Number(value);
@@ -100,9 +120,14 @@ type Marker = {
     fontSize: number;
     fontWeight: number;
     rotate: 0;
-    position: "insideEndTop";
+    position: "middle";
     offset: [number, number];
     lineHeight: number;
+    backgroundColor: string;
+    borderColor: string;
+    borderWidth: number;
+    borderRadius: number;
+    padding: [number, number];
   };
 };
 
@@ -118,44 +143,54 @@ function numberTimelineEvents(events: StockTimelineEvent[]): NumberedTimelineEve
   }));
 }
 
+function eventLineLabel(event: StockTimelineEvent): string {
+  const source = event.label.trim() || event.themes[0]?.trim() || event.headline.trim() || "事件";
+  const compact = source.replace(/[\s，。；：、,.!?！？:;]+/g, "").slice(0, 8);
+  return [...compact].join("\n");
+}
+
 function eventMarkers(
   data: StockTimelineResponse,
   selectedEventId: string | null,
   maxEvents: number,
 ): Marker[] {
-  const dateIndex = new Map(data.bars.map((item, index) => [item.trade_date, index]));
   const mapped = numberTimelineEvents(selectTimelineChartEvents(data, selectedEventId, maxEvents));
-  const sameDateCounts = new Map<string, number>();
-  let previousIndex = Number.NEGATIVE_INFINITY;
-  let previousLane = 2;
-  return mapped.map(({ event, number }) => {
-    const tradeDate = event.mapped_trade_date as string;
-    const index = dateIndex.get(tradeDate) as number;
-    const lane = index - previousIndex < MIN_EVENT_BAR_GAP ? (previousLane + 1) % 3 : 0;
-    previousIndex = index;
-    previousLane = lane;
-    const dateCount = sameDateCounts.get(tradeDate) ?? 0;
-    sameDateCounts.set(tradeDate, dateCount + 1);
-    const selected = selectedEventId === event.event_id;
-    const color = directionColor(event.direction);
+  const eventsByDate = new Map<string, NumberedTimelineEvent[]>();
+  for (const numbered of mapped) {
+    const tradeDate = numbered.event.mapped_trade_date as string;
+    const group = eventsByDate.get(tradeDate) ?? [];
+    group.push(numbered);
+    eventsByDate.set(tradeDate, group);
+  }
+  return [...eventsByDate.entries()].map(([tradeDate, group]) => {
+    const representative = group.find(({ event }) => event.event_id === selectedEventId) ?? group[0];
+    const { event } = representative;
+    const selected = group.some(({ event: candidate }) => selectedEventId === candidate.event_id);
+    const color = categoryColors[event.category];
+    const groupedSuffix = group.length > 1 ? `\n+${group.length - 1}` : "";
     return {
       name: event.event_id,
       xAxis: tradeDate,
       lineStyle: {
         color,
         width: selected ? 2 : 1,
-        type: selected ? "solid" : "dashed",
+        type: "dashed",
       },
       label: {
         show: true,
-        formatter: number,
+        formatter: `${eventLineLabel(event)}${groupedSuffix}`,
         color: selected ? SELECTED_COLOR : color,
-        fontSize: 12,
+        fontSize: 13,
         fontWeight: selected ? 800 : 650,
         rotate: 0,
-        position: "insideEndTop",
-        offset: [dateCount * 22, lane * 20] as [number, number],
-        lineHeight: 13,
+        position: "middle",
+        offset: [0, 0] as [number, number],
+        lineHeight: 15,
+        backgroundColor: "rgba(6, 15, 24, .84)",
+        borderColor: color,
+        borderWidth: selected ? 1 : 0,
+        borderRadius: 3,
+        padding: [4, 3],
       },
     };
   });
@@ -168,13 +203,11 @@ export function stockTimelineOption(
 ): EChartsOption {
   const dates = data.bars.map((item) => item.trade_date);
   const markers = eventMarkers(data, selectedEventId, maxEvents);
-  const mappedEvents = new Map(data.events.map((event) => [event.event_id, event]));
-  const barsByDate = new Map(data.bars.map((item) => [item.trade_date, item]));
   return {
     animation: false,
     backgroundColor: "transparent",
     grid: [
-      { left: 58, right: 18, top: 72, bottom: 102 },
+      { left: 58, right: 18, top: 34, bottom: 102 },
       { left: 58, right: 18, height: 54, bottom: 34 },
     ],
     tooltip: {
@@ -248,26 +281,6 @@ export function stockTimelineOption(
           symbol: ["none", "none"],
           silent: true,
           data: markers,
-        },
-        markPoint: {
-          symbol: "circle",
-          silent: true,
-          label: { show: false },
-          data: markers.map((marker) => {
-            const event = mappedEvents.get(marker.name) as StockTimelineEvent;
-            const bar = barsByDate.get(marker.xAxis);
-            const selected = event.event_id === selectedEventId;
-            return {
-              name: event.event_id,
-              coord: [marker.xAxis, Number(bar?.high ?? 0)],
-              symbolSize: selected ? 10 : 7,
-              itemStyle: {
-                color: "#07111d",
-                borderColor: directionColor(event.direction),
-                borderWidth: selected ? 3 : 2,
-              },
-            };
-          }),
         },
       },
       {
@@ -408,9 +421,17 @@ export function StockEventKline({
   return <section className="terminal-panel stock-event-kline" aria-label="个股新闻与热点事件 K 线">
     <header className="stock-event-kline-header">
       <div><span className="event-kline-icon"><Newspaper size={18} /></span><div><p>NEWS / PRICE EVIDENCE</p><h2>事件 K 线</h2></div></div>
-      <div className="event-kline-legend"><span className="up">红涨</span><span className="down">绿跌</span><span className="uncertain">灰色·影响待核验</span>{loading && <RefreshCw className="spin" size={14} />}</div>
+      <div className="event-kline-legend"><span className="up">红涨</span><span className="down">绿跌</span><span className="uncertain">灰色·方向待核验</span>{loading && <RefreshCw className="spin" size={14} />}</div>
     </header>
     {error && !data ? <div className="stock-timeline-state error" role="alert"><AlertTriangle size={18} /><b>事件 K 线暂不可用</b><span>{error}</span></div> : !data || data.status === "unavailable" || !option ? <div className="stock-timeline-state"><AlertTriangle size={18} /><b>本地日线尚未就绪</b><span>不会使用示例行情补位</span></div> : <>
+      <div className="event-category-legend" aria-label="事件归属色图例">
+        <strong>事件归属色不代表涨跌</strong>
+        {Object.entries(categoryNames).map(([category, label]) => <span
+          data-event-category-legend={category}
+          data-category={category}
+          key={category}
+        >{label}</span>)}
+      </div>
       {numberedChartEvents.length > 0 && <nav className="stock-event-index" aria-label="K 线事件索引">
         {numberedChartEvents.map(({ event, number }) => {
           const selected = selectedEventId === event.event_id;
@@ -419,6 +440,7 @@ export function StockEventKline({
             key={event.event_id}
             type="button"
             data-testid="stock-event-index-item"
+            data-category={event.category}
             className={`stock-event-index-item direction-${event.direction}`}
             aria-label={`${number} ${formatEventDate(event.occurred_at)} ${title} ${directionNames[event.direction]} ${urgencyNames[event.urgency]} ${verificationNames[event.verification_state]} ${associationNames[event.association_kind]}`}
             aria-pressed={selected}
@@ -433,10 +455,12 @@ export function StockEventKline({
       </nav>}
       {selectedEvent && <section
         className={`stock-event-detail direction-${selectedEvent.direction}`}
+        data-category={selectedEvent.category}
         aria-label="当前事件详情"
       >
         <div className="stock-event-detail-heading">
           <div className="stock-event-detail-badges">
+            <span className="event-category-badge">{categoryNames[selectedEvent.category]}</span>
             <span>{directionNames[selectedEvent.direction]}</span>
             <span>{urgencyNames[selectedEvent.urgency]}</span>
             <span>{verificationNames[selectedEvent.verification_state]}</span>
@@ -450,7 +474,11 @@ export function StockEventKline({
           <span>{selectedEvent.source_count} 个来源</span>
           <span>关联 {percent(selectedEvent.association_confidence)}</span>
           <span>AI {percent(selectedEvent.confidence)}</span>
+          <span>影响强度：{strengthNames[selectedEvent.strength]}</span>
+          <span>持续时间：{durationNames[selectedEvent.duration]}</span>
+          <span>价格反映：{priceReflectionNames[selectedEvent.price_reflection]}</span>
         </div>
+        <div className="stock-event-detail-follow-up">后续观察：{selectedEvent.follow_up_indicators[0] ?? "待补充可核验指标"}</div>
         <div className="stock-event-detail-tags">
           {selectedEvent.themes.length
             ? selectedEvent.themes.slice(0, 3).map((theme) => <em key={theme}>{theme}</em>)
@@ -468,6 +496,7 @@ export function StockEventKline({
           return <article
             key={event.event_id}
             className={`stock-event-item direction-${event.direction}${selected ? " selected" : ""}`}
+            data-category={event.category}
           >
             <button
               type="button"

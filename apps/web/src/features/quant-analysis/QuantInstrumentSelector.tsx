@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LoaderCircle, Search, ShieldAlert } from "lucide-react";
 
 import { friendlyError } from "../../shared/friendlyError";
 import type { FirstLimitUpCandidate } from "../first-limit-up/types";
 import type { AShareInstrument, InstrumentSearchResponse } from "../stock-cockpit/types";
+import { createInstrumentDirectory } from "../../shared/instruments/instrumentDirectory";
 
 type Props = {
   symbol: string | null;
@@ -12,11 +13,14 @@ type Props = {
   candidate: FirstLimitUpCandidate | null;
   boardAsOf?: string;
   search?: (query: string) => Promise<InstrumentSearchResponse>;
+  directoryItems?: AShareInstrument[];
   onSelect: (symbol: string, instrument?: AShareInstrument) => void;
 };
 
+const EMPTY_DIRECTORY_ITEMS: AShareInstrument[] = [];
+
 export function QuantInstrumentSelector({
-  symbol, name, candidates, candidate, boardAsOf, search, onSelect,
+  symbol, name, candidates, candidate, boardAsOf, search, directoryItems = EMPTY_DIRECTORY_ITEMS, onSelect,
 }: Props) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<AShareInstrument[]>([]);
@@ -24,6 +28,7 @@ export function QuantInstrumentSelector({
   const [sourceUnavailable, setSourceUnavailable] = useState(false);
   const [error, setError] = useState("");
   const requestRef = useRef(0);
+  const localDirectory = useMemo(() => createInstrumentDirectory(directoryItems), [directoryItems]);
 
   const executeSearch = useCallback((value: string, request = ++requestRef.current) => {
     if (!search) return;
@@ -50,6 +55,11 @@ export function QuantInstrumentSelector({
       setState("idle");
       return;
     }
+    const localResults = localDirectory.search(normalized);
+    if (localResults.length) {
+      setResults(localResults); setSourceUnavailable(false); setState("ready");
+      return;
+    }
     setState("loading");
     setError("");
     const timer = window.setTimeout(
@@ -57,7 +67,7 @@ export function QuantInstrumentSelector({
       /^\d{6}$/.test(normalized) ? 0 : 250,
     );
     return () => window.clearTimeout(timer);
-  }, [executeSearch, query, search]);
+  }, [executeSearch, localDirectory, query, search]);
 
   const selectResult = (item: AShareInstrument) => {
     onSelect(item.symbol, item);
@@ -67,13 +77,17 @@ export function QuantInstrumentSelector({
   return <section className="quant-instrument-control" aria-label="当前量化分析标的">
     <div className="quant-instrument-layout split">
       <div className="quant-instrument-primary">
-        <header className="quant-instrument-heading">
+        <header className="quant-instrument-heading stacked">
           <span>分析标的</span>
           <b className={candidate ? "candidate" : "custom"}>{candidate ? "候选池标的" : "自定义标的"}</b>
         </header>
         <div className="quant-selected-instrument quant-selected-row">
           <strong className="quant-selected-symbol">{symbol ?? "------"}</strong>
           <span className="quant-selected-name">{name ?? (symbol ? "名称待验证" : "尚未选择")}</span>
+        </div>
+        <div className="quant-instrument-state" role="status">
+          <span><i aria-hidden="true" />{symbol ? "标的已锁定" : "等待选择标的"}</span>
+          <small>{candidate ? "已关联首次涨停规则池" : symbol ? "自定义标的 · 等待规则核验" : "输入代码或名称开始分析"}</small>
         </div>
         <label className="quant-symbol-search quant-search-row">
           <Search size={16} />
@@ -101,8 +115,12 @@ export function QuantInstrumentSelector({
         </div>}
       </div>
       <div className="quant-instrument-secondary">
+        <div className="quant-candidate-context stacked">
+          <span>快速切换</span>
+          <b>首次涨停候选快速切换</b>
+        </div>
         <label className="quant-candidate-switch quant-candidate-row">
-          <span>首次涨停候选快速切换</span>
+          <span>候选池标的</span>
           <select
             aria-label="量化分析股票"
             value={candidate ? candidate.symbol : symbol ?? ""}
@@ -117,7 +135,7 @@ export function QuantInstrumentSelector({
             {candidates.map((item) => <option value={item.symbol} key={item.symbol}>{item.symbol} · {item.name}</option>)}
           </select>
         </label>
-        <small>{boardAsOf ? `规则快照 ${boardAsOf}` : "正在读取规则快照"}</small>
+        <small className="quant-rule-snapshot"><span>规则快照</span><strong>{boardAsOf ?? "正在读取"}</strong></small>
       </div>
     </div>
   </section>;

@@ -3,12 +3,22 @@ import { Building2, Clock3, ExternalLink, LoaderCircle, Search, ShieldAlert, X }
 
 import { DailyCacheHistory } from "../../shared/DailyCacheHistory";
 import { DailyRefreshStatus } from "../../shared/DailyRefreshStatus";
+import { EvidenceLedger } from "../../shared/evidence/EvidenceLedger";
+import { FieldEvidenceDetails } from "../../shared/evidence/FieldEvidenceDetails";
+import { DataWatermarkStrip } from "../../shared/evidence/DataWatermarkStrip";
 import { readDailySnapshot, writeDailySnapshot } from "../../shared/dailySnapshotCache";
 import type { LoadProgress, LoadProgressCallback } from "../../shared/fetchJsonWithProgress";
 import type { InstrumentSearchResponse } from "../stock-cockpit/types";
-import type { CompanyResearchResponse, FinancialPeriod } from "./types";
+import type { CompanyResearchAIResult, CompanyResearchResponse, FinancialPeriod } from "./types";
 import { LatestTipEvidencePanel } from "./LatestTipEvidencePanel";
 import { ResearchVisualSummary } from "./ResearchVisualSummary";
+import { ResearchEnrichmentPanel } from "./ResearchEnrichmentPanel";
+import { FinancialTrendChart } from "./FinancialTrendChart";
+import { ResearchComparisonMatrix } from "./ResearchComparisonMatrix";
+import { CompanyResearchSections } from "./CompanyResearchSections";
+import { ResearchVersionChanges } from "./ResearchVersionChanges";
+import { CompanyResearchAIInsight } from "./CompanyResearchAIInsight";
+import { loadCompanyResearchAI } from "./api";
 import "./companyResearch.css";
 
 type Props = {
@@ -90,32 +100,46 @@ function FinancialTable({ periods }: { periods: FinancialPeriod[] }) {
   </div>;
 }
 
-function dimensionMetric(value: CompanyResearchResponse, dimensionKey: string, metricKey: string): string | null {
-  return value.dimensions.find((item) => item.key === dimensionKey)?.metrics[metricKey] ?? null;
+function PeerComparison({ peers }: { peers: CompanyResearchResponse[] }) {
+  return <ResearchComparisonMatrix peers={peers} />;
 }
 
-function PeerComparison({ peers }: { peers: CompanyResearchResponse[] }) {
-  if (peers.length < 2) return null;
-  return <section className="research-card research-comparison" aria-label="同行横向比较">
-    <div className="research-card-header"><h2>同行横向比较</h2><span className="research-status partial">同口径原值 · 不做主观排名</span></div>
-    <div className="research-comparison-scroll"><table className="financial-table">
-      <thead><tr><th>公司</th><th>研究分</th><th>覆盖度</th><th>PE</th><th>PB</th><th>营收3年CAGR</th><th>净利润3年CAGR</th><th>ROE</th><th>风险扣分</th></tr></thead>
-      <tbody>{peers.map((peer) => <tr key={peer.symbol}>
-        <td>{peer.name}<br />{peer.symbol}</td><td>{numeric(peer.final_score)?.toFixed(1) ?? "--"}</td>
-        <td>{pct(peer.evidence_coverage, 100)}</td><td>{numeric(peer.valuation.pe_ttm)?.toFixed(2) ?? "--"}</td>
-        <td>{numeric(peer.valuation.pb)?.toFixed(2) ?? "--"}</td><td>{pct(peer.financial_history.revenue_cagr_3y, 100)}</td>
-        <td>{pct(peer.financial_history.net_profit_cagr_3y, 100)}</td><td>{pct(dimensionMetric(peer, "profitability", "roe"))}</td>
-        <td>{numeric(peer.risk_penalty)?.toFixed(1) ?? "--"}</td>
-      </tr>)}</tbody>
-    </table></div>
+const researchStages = [
+  ["identity", "标的"], ["diagnosis", "行情诊断"], ["financials", "财务"],
+  ["profile", "F10"], ["events", "事件催化"], ["analysis", "综合分析"],
+] as const;
+
+function ResearchStageStrip({ progress }: { progress?: LoadProgress | null }) {
+  const current = progress?.detail ?? "等待真实数据源返回";
+  const completed = progress?.percent === 100 ? researchStages.length : Math.floor((progress?.percent ?? 0) / (100 / researchStages.length));
+  return <section className="research-stage-strip" aria-label="公司研究分块进度">
+    <header><b>六区块增量研究</b><small>{current}</small></header>
+    <div>{researchStages.map(([key, label], index) => <span key={key} data-state={index < completed ? "ready" : index === completed && progress ? "running" : "pending"}>{label}</span>)}</div>
   </section>;
 }
 
-function ResearchDashboard({ value, peers, onOpenAShare }: { value: CompanyResearchResponse; peers: CompanyResearchResponse[]; onOpenAShare?: (symbol: string) => void }) {
+function ResearchDashboard({ value, peers, onOpenAShare, onAddPeer }: { value: CompanyResearchResponse; peers: CompanyResearchResponse[]; onOpenAShare?: (symbol: string) => void; onAddPeer?: (symbol: string, name: string) => void }) {
   const score = numeric(value.final_score);
   const coverage = numeric(value.evidence_coverage);
   const risk = numeric(value.risk_penalty);
   const triggered = value.counter_case.filter((item) => item.status === "triggered").length;
+  const [aiResult, setAiResult] = useState<CompanyResearchAIResult | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState("");
+  useEffect(() => {
+    const snapshotId = value.research_version?.snapshot_id;
+    if (!snapshotId) { setAiResult(null); setAiLoading(false); setAiError(""); return; }
+    const controller = new AbortController();
+    setAiLoading(true); setAiError("");
+    void loadCompanyResearchAI(snapshotId, controller.signal).then((snapshot) => {
+      if (controller.signal.aborted) return;
+      setAiResult(snapshot.result);
+      if (snapshot.progress.status !== "succeeded") setAiError(snapshot.progress.detail ?? "AI 证据总结不可用");
+    }).catch((error) => {
+      if (!controller.signal.aborted) setAiError(error instanceof Error ? error.message : "AI 证据总结不可用");
+    }).finally(() => { if (!controller.signal.aborted) setAiLoading(false); });
+    return () => controller.abort();
+  }, [value.research_version?.snapshot_id]);
   return <div className="research-dashboard">
     <section className="research-card research-card-header" aria-label="公司研究摘要">
       <div><p className="eyebrow">{value.symbol} / {value.as_of} / 研究账本</p><h2>{value.name}</h2></div>
@@ -125,12 +149,26 @@ function ResearchDashboard({ value, peers, onOpenAShare }: { value: CompanyResea
         <div><span>证据质量</span><b>{value.status === "ready" ? "证据完整" : value.status === "partial" ? "部分证据" : "证据不可用"}</b><small>覆盖 {pct(value.evidence_coverage, 100)}</small></div>
       </div>
     </section>
+    <DataWatermarkStrip
+      status={value.status}
+      tradeDate={value.as_of}
+      observedAt={value.valuation.observed_at ?? value.financial_history.observed_at}
+      generatedAt={value.generated_at}
+      sourceCount={value.sources.filter((item) => item.status !== "unavailable").length}
+      sampleCount={value.financial_history.periods.length}
+      refreshState="ready"
+      limitations={value.reasons}
+    />
     <section className="research-gauges" aria-label="公司研究核心仪表">
       <ScoreGauge label="研究分" value={score} suffix="/100" />
       <ScoreGauge label="证据覆盖度" value={coverage === null ? null : coverage * 100} suffix="%" />
       <ScoreGauge label="风险压力" value={risk === null ? null : risk * 4} suffix={risk === null ? "" : ` · 扣${risk.toFixed(1)}分`} tone="risk" />
     </section>
+    <ResearchVersionChanges version={value.research_version} />
+    <CompanyResearchSections sections={value.research_sections ?? []} />
+    {value.research_version && <CompanyResearchAIInsight result={aiResult} loading={aiLoading} error={aiError} />}
     <ResearchVisualSummary value={value} />
+    <ResearchEnrichmentPanel value={value.enrichment} currentSymbol={value.symbol} onAddPeer={onAddPeer} />
     <PeerComparison peers={peers} />
     <div className="research-grid">
       <section className="research-card" aria-label="九维公司研究矩阵">
@@ -146,27 +184,38 @@ function ResearchDashboard({ value, peers, onOpenAShare }: { value: CompanyResea
       </section>
       <section className="research-card" aria-label="估值观察">
         <div className="research-card-header"><h2>估值观察</h2><span className={`research-status ${value.valuation.status}`}>{value.valuation.status}</span></div>
-        <div className="valuation-grid">
+        <div className="valuation-grid valuation-grid--expanded">
           <div className="valuation-item"><span>PE(TTM)</span><strong>{numeric(value.valuation.pe_ttm)?.toFixed(2) ?? "--"}</strong></div>
           <div className="valuation-item"><span>PB</span><strong>{numeric(value.valuation.pb)?.toFixed(2) ?? "--"}</strong></div>
           <div className="valuation-item"><span>总市值</span><strong>{value.valuation.market_cap_yi ? `${Number(value.valuation.market_cap_yi).toFixed(1)}亿` : "--"}</strong></div>
+        <div className="valuation-item"><span>明年 EPS 中位</span><strong>{numeric(value.valuation.forward_eps_median)?.toFixed(2) ?? "--"}</strong><small>{value.valuation.forward_eps_sample_count ?? 0} 家不同机构</small></div>
+        <div className={`valuation-item forward-${value.valuation.forward_pe_status ?? "unavailable"}`}><span>前向 PE</span><strong>{numeric(value.valuation.forward_pe)?.toFixed(2) ?? "--"}</strong><small>{value.valuation.forward_pe_status === "available" ? "样本充足" : value.valuation.forward_pe_status === "low_confidence" ? "低可信" : "不可用"}</small></div>
+        <div className={`valuation-item forecast-${value.valuation.forecast_freshness ?? "unavailable"}`}><span>预测时效</span><strong>{value.valuation.forecast_age_days != null ? `${value.valuation.forecast_age_days}天` : "--"}</strong><small>{value.valuation.forecast_latest_report_date ? `最新 ${value.valuation.forecast_latest_report_date}` : "暂无有效报告"}</small></div>
         </div>
         <p className="financial-note">同行中位数：PE {numeric(value.valuation.peer_pe_median)?.toFixed(2) ?? "待建立同行样本"} · PB {numeric(value.valuation.peer_pb_median)?.toFixed(2) ?? "待建立同行样本"}</p>
+        <p className="financial-note">{value.valuation.forward_pe_reason ?? "前向估值证据尚未建立。"}</p>
+        {value.valuation.scenario_range && <div className={`valuation-scenario-range ${value.valuation.scenario_range.status}`} aria-label="估值机械情景区间">
+          <header><b>估值机械情景</b><span>{value.valuation.scenario_range.status === "available" ? `${value.valuation.scenario_range.institution_sample_count} 家机构` : "证据不足"}</span></header>
+          <div><span>保守<strong>{numeric(value.valuation.scenario_range.conservative)?.toFixed(2) ?? "--"}</strong><small>0.8×同行PE</small></span><span>中性<strong>{numeric(value.valuation.scenario_range.neutral)?.toFixed(2) ?? "--"}</strong><small>1.0×同行PE</small></span><span>乐观<strong>{numeric(value.valuation.scenario_range.optimistic)?.toFixed(2) ?? "--"}</strong><small>1.2×同行PE</small></span></div>
+          <p>{value.valuation.scenario_range.reason}</p>
+        </div>}
         <p className="financial-note">{value.valuation.observation_range_reason}</p>
       </section>
       <section className="research-card" aria-label="多年财务趋势">
         <div className="research-card-header"><h2>多年财务趋势</h2><span className={`research-status ${value.financial_history.status}`}>{value.financial_history.source}</span></div>
+        <FinancialTrendChart periods={value.financial_history.annual_periods.length ? value.financial_history.annual_periods : value.financial_history.periods} />
         <FinancialTable periods={value.financial_history.annual_periods} />
         <p className="financial-note">营收3年CAGR {pct(value.financial_history.revenue_cagr_3y, 100)} · 净利润3年CAGR {pct(value.financial_history.net_profit_cagr_3y, 100)}</p>
       </section>
-      <section className="research-card" aria-label="反方审查">
-        <div className="research-card-header"><h2>十项反方审查</h2><span className={`research-status ${triggered ? "triggered" : "clear"}`}>{triggered ? `${triggered}项触发` : "未见触发"}</span></div>
+      <section className="research-card" aria-label="逻辑失效条件">
+        <div className="research-card-header"><div><p className="eyebrow">THESIS INVALIDATION</p><h2>逻辑失效条件</h2></div><span className={`research-status ${triggered ? "triggered" : "clear"}`}>{triggered ? `${triggered}项已触发` : "当前未触发"}</span></div>
+        <p className="financial-note">以下十项由财务、估值、行情和事件阈值确定；触发表示原研究逻辑需要重新核验，不等同于自动交易结论。</p>
         <div className="counter-list">{value.counter_case.map((item) => <article className={`counter-item ${item.status}`} key={item.key}>
           <header><span>{item.title}</span><span>{item.status === "clear" ? "通过" : item.status === "triggered" ? `扣${item.penalty}` : "待核验"}</span></header>
           <p>{item.detail}{item.threshold ? ` · 规则：${item.threshold}` : ""}</p>
         </article>)}</div>
       </section>
-      <LatestTipEvidencePanel items={value.profile.latest_tip_items ?? []} source={value.profile.source} observedAt={value.profile.observed_at} />
+      <LatestTipEvidencePanel items={value.profile.latest_tip_items ?? []} source={value.profile.source} observedAt={value.profile.observed_at} unlocks={value.enrichment?.unlocks ?? []} />
       <section className="research-card" aria-label="F10原文证据">
         <div className="research-card-header"><h2>F10 原文证据</h2><span className={`research-status ${value.profile.status}`}>{value.profile.source}</span></div>
         <div className="profile-copy">
@@ -185,6 +234,8 @@ function ResearchDashboard({ value, peers, onOpenAShare }: { value: CompanyResea
         </article>)}</div>
         {value.reasons.length > 0 && <p className="financial-note">限制：{value.reasons.join("；")}</p>}
       </section>
+      {(value.field_evidence?.length ?? 0) > 0 && <FieldEvidenceDetails entries={value.field_evidence!} />}
+      {(value.evidence_ledger?.length ?? 0) > 0 && <EvidenceLedger entries={value.evidence_ledger!} />}
     </div>
   </div>;
 }
@@ -326,8 +377,9 @@ export function CompanyResearchView({ load, search, selectedSymbol, onSelectSymb
     </span>)}</div>}
     {!active && <section className="research-empty"><Building2 size={24} /><h2>建立公司研究池</h2><p>输入股票代码或名称，系统将读取真实多年财报、当前估值、通达信 F10 与反方风险证据。</p></section>}
     {active && <DailyRefreshStatus label="公司研究" cachedAt={active.cachedAt} loading={active.refreshing} progress={active.progress} error={active.refreshError ?? active.error} updatedAt={active.updatedAt} />}
+    {active?.refreshing && <ResearchStageStrip progress={active.progress} />}
     {active?.state === "loading" && <section className="research-empty" aria-busy="true"><LoaderCircle size={24} /><h2>正在建立 {active.symbol} 研究账本</h2><p>财务、估值与 F10 分源加载中；缺失项不会用推测值填补。</p></section>}
     {active?.state === "error" && <section className="research-error" role="alert"><ShieldAlert size={22} /><h2>{active.symbol} 研究数据不可用</h2><p>{active.error}</p></section>}
-    {active?.state === "ready" && active.value && <ResearchDashboard value={active.value} peers={entries.flatMap((entry) => entry.value ? [entry.value] : [])} onOpenAShare={onOpenAShare} />}
+    {active?.state === "ready" && active.value && <ResearchDashboard value={active.value} peers={entries.flatMap((entry) => entry.value ? [entry.value] : [])} onOpenAShare={onOpenAShare} onAddPeer={(symbol, name) => void addCompany(symbol, name)} />}
   </main>;
 }

@@ -67,7 +67,11 @@ def read_tdx_day_bars(
     try:
         size = path.stat().st_size
         record_count = size // TDX_DAY_RECORD.size
-        first_record = 0 if start_date is not None else max(0, record_count - max(limit * 2, limit or 0))
+        first_record = (
+            0
+            if start_date is not None or limit is None
+            else max(0, record_count - max(limit * 2, limit))
+        )
         with path.open("rb") as handle:
             handle.seek(first_record * TDX_DAY_RECORD.size)
             content = handle.read()
@@ -107,6 +111,8 @@ def _a_share_symbol(path: Path) -> str | None:
     if name.startswith("sh") and symbol.startswith(("600", "601", "603", "605", "688", "689")):
         return symbol
     if name.startswith("sz") and symbol.startswith(("000", "001", "002", "003", "300", "301")):
+        return symbol
+    if name.startswith("bj") and symbol.startswith(("4", "8", "920")):
         return symbol
     return None
 

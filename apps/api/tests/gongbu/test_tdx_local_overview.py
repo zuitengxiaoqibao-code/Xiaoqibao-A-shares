@@ -345,6 +345,8 @@ def test_probe_tdx_capabilities_uses_table_list_for_professional_methods() -> No
     assert "field_list" not in financial_call[1]
     financial_capability = next(item for item in result["capabilities"] if item["key"] == "professional_finance")
     assert financial_capability["status"] == "ready"
+    assert financial_capability["semantic_status"] == "detected_only"
+    assert "字段语义和单位尚未映射" in financial_capability["detail"]
 
 
 def test_probe_tdx_capabilities_rejects_unwrapped_professional_rows_without_error_contract() -> None:
@@ -396,3 +398,31 @@ def test_probe_tdx_capabilities_does_not_treat_empty_or_error_payloads_as_ready(
     assert statuses["sectors"] == "unavailable"
     assert statuses["snapshot"] == "unavailable"
     assert result["status"] == "unavailable"
+
+
+def test_probe_tdx_capabilities_does_not_treat_nested_professional_records_as_ready() -> None:
+    class NestedProfessionalRpc:
+        def available(self) -> bool:
+            return True
+
+        def call(self, method: str, params: dict) -> object:
+            if method == "get_bkjy_value":
+                return {
+                    "ErrorId": "0",
+                    "Value": {
+                        "880660.SH": {
+                            "BK9": [
+                                {"Date": "20260807", "Value": ["0.00", "0.00"]}
+                            ]
+                        }
+                    },
+                }
+            return {"ErrorId": "12", "Value": []}
+
+    result = probe_tdx_capabilities(NestedProfessionalRpc())
+    status = next(
+        item["status"]
+        for item in result["capabilities"]
+        if item["key"] == "professional_sector_trade"
+    )
+    assert status == "unavailable"

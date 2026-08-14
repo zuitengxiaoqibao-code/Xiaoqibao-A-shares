@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
+from qibao_api.contracts.evidence_ledger import EvidenceLedgerEntry
+
 
 ReviewQuality = Literal["ready", "partial", "stale", "unavailable"]
 ReviewCategory = Literal[
@@ -85,12 +87,29 @@ class DragonTigerStock(BaseModel):
     source: str = "eastmoney-dragon-tiger"
 
 
+class MarketDataWatermark(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    dominant_trade_date: date | None = None
+    latest_available_trade_date: date | None = None
+    universe_count: int = Field(default=0, ge=0)
+    history_ready_count: int = Field(default=0, ge=0)
+    coverage_percent: Decimal | None = Field(default=None, ge=0, le=100)
+    fragmented_latest_count: int = Field(default=0, ge=0)
+    missing_history_count: int = Field(default=0, ge=0)
+    quality: ReviewQuality = "unavailable"
+    blockers: tuple[str, ...] = ()
+
+
 class MarketReviewSnapshot(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     as_of: date
     observed_at: AwareDatetime
     latest_trade_date: date | None = None
+    latest_available_trade_date: date | None = None
+    latest_available_trade_date_count: int = Field(default=0, ge=0)
+    latest_trade_date_coverage_percent: Decimal | None = Field(default=None, ge=0, le=100)
     source: str = "unavailable"
     quality: ReviewQuality = "unavailable"
     universe_count: int = Field(default=0, ge=0)
@@ -103,6 +122,8 @@ class MarketReviewSnapshot(BaseModel):
     previous_high_breakouts: tuple[MarketReviewStock, ...] = ()
     low_position_volume: tuple[MarketReviewStock, ...] = ()
     dragon_tiger: tuple[DragonTigerStock, ...] = ()
+    watermark: MarketDataWatermark = Field(default_factory=MarketDataWatermark)
+    evidence_ledger: tuple[EvidenceLedgerEntry, ...] = ()
     warnings: tuple[str, ...] = ()
     formula_version: str = "a-share-market-review-v2"
 

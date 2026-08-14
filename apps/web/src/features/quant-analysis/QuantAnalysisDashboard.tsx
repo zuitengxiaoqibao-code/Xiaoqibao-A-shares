@@ -12,16 +12,25 @@ import { QuantInstrumentSelector } from "./QuantInstrumentSelector";
 import { QuantLiveStatusBar } from "./QuantLiveStatusBar";
 import { QuantChart } from "./QuantChart";
 import { ShortTermStrategyWorkbench } from "./ShortTermStrategyWorkbench";
+import { QuantShadowLedgerPanel } from "./QuantShadowLedgerPanel";
 import { TdxFormulaPanel } from "./TdxFormulaPanel";
 import { StockEventKline } from "../stock-timeline/StockEventKline";
+import { DataWatermarkStrip } from "../../shared/evidence/DataWatermarkStrip";
+import { buildFactorOption } from "../../shared/visualization/chartOptions";
+import { chartTheme } from "../../shared/visualization/chartTheme";
 import type { StockTimelineLoader } from "../stock-timeline/types";
 import { useQuantLiveResource } from "./useQuantLiveRefresh";
+import { retainReadyStrategySnapshot } from "./strategySnapshot";
 import { equityPoints, factorRadar, signalMetrics } from "./metrics";
 import type {
+  DecisionJournalCreator,
+  DecisionJournalLoader,
   IntradayTick,
   KronosForecastResponse,
   QuantForecastLoader,
   QuantStrategyLoader,
+  QuantShadowAnalyticsLoader,
+  QuantShadowLoader,
   QuantTickLoader,
   TdxFormulaLoader,
 } from "./types";
@@ -33,6 +42,10 @@ type Props = {
   runBacktest: (symbol: string, signal?: AbortSignal) => Promise<BacktestResult>;
   loadKronosForecast?: QuantForecastLoader;
   loadQuantStrategy?: QuantStrategyLoader;
+  loadQuantShadowDecisions?: QuantShadowLoader;
+  loadQuantShadowAnalytics?: QuantShadowAnalyticsLoader;
+  loadDecisionJournal?: DecisionJournalLoader;
+  createDecisionJournal?: DecisionJournalCreator;
   loadTdxFormula?: TdxFormulaLoader;
   loadTimeline?: StockTimelineLoader;
   selectedSymbol?: string | null;
@@ -40,16 +53,16 @@ type Props = {
   onSelectSymbol?: (symbol: string) => void;
 };
 
-const gridColor = "rgba(74, 105, 135, .22)";
-const axisColor = "#63758a";
-const gold = "#f4c76a";
-const cyan = "#34d6ff";
-const magenta = "#ff5c8a";
+const gridColor = chartTheme.gridColor;
+const axisColor = chartTheme.mutedTextColor;
+const gold = chartTheme.warningColor;
+const cyan = chartTheme.liveColor;
+const magenta = chartTheme.eventColors.risk;
 
 function panelOption(): Pick<EChartsOption, "animation" | "textStyle"> {
   return {
     animation: false,
-    textStyle: { color: "#aab9ca", fontFamily: "JetBrains Mono, Consolas, monospace" },
+    textStyle: { color: chartTheme.textColor, fontFamily: chartTheme.fontFamily },
   };
 }
 
@@ -70,11 +83,18 @@ function percentText(value: string | number | null | undefined): string {
   return parsed === null ? "--" : `${(parsed * 100).toFixed(1)}%`;
 }
 
+function backtestSampleLabel(result: BacktestResult): string {
+  if (result.evidence?.sample_status === "segmented") return "样本外已验证";
+  if (result.evidence?.sample_status === "descriptive") return "描述性样本";
+  if (result.evidence?.sample_status === "insufficient") return "样本不足";
+  return result.metrics.closed_trade_count ? "可计算" : "不足";
+}
+
 export function tickOption(ticks: IntradayTick[]): EChartsOption {
   return {
     ...panelOption(),
     grid: [{ left: 52, right: 24, top: 20, height: "52%" }, { left: 52, right: 24, top: "73%", height: "14%" }],
-    tooltip: { trigger: "axis", backgroundColor: "#071018", borderColor: cyan, textStyle: { color: "#d8e6f1" } },
+    tooltip: { trigger: "axis", backgroundColor: chartTheme.tooltipBackgroundColor, borderColor: cyan, textStyle: { color: chartTheme.textColor } },
     axisPointer: { link: [{ xAxisIndex: "all" }] },
     dataZoom: [
       { type: "inside", xAxisIndex: [0, 1], filterMode: "none", throttle: 80 },
@@ -90,33 +110,18 @@ export function tickOption(ticks: IntradayTick[]): EChartsOption {
     ],
     series: [
       { name: "价格", type: "line", data: ticks.map((item) => Number(item.price)), xAxisIndex: 0, yAxisIndex: 0, symbol: "none", smooth: 0.2, lineStyle: { width: 2, color: cyan, shadowBlur: 8, shadowColor: cyan }, areaStyle: { color: "rgba(52,214,255,.08)" } },
-      { name: "成交量", type: "bar", data: ticks.map((item) => Number(item.volume)), xAxisIndex: 1, yAxisIndex: 1, itemStyle: { color: (params: { dataIndex: number }) => Number(ticks[params.dataIndex]?.change_percent) >= 0 ? "#f04f5f" : "#2fcf91" } },
+      { name: "成交量", type: "bar", data: ticks.map((item) => Number(item.volume)), xAxisIndex: 1, yAxisIndex: 1, itemStyle: { color: (params: { dataIndex: number }) => Number(ticks[params.dataIndex]?.change_percent) >= 0 ? chartTheme.upColor : chartTheme.downColor } },
     ],
   };
 }
 
 function radarOption(candidate: FirstLimitUpCandidate): EChartsOption {
   const radar = factorRadar(candidate);
-  return {
-    ...panelOption(),
-    radar: {
-      radius: "66%",
-      splitNumber: 4,
-      indicator: radar.indicators.map((name) => ({ name, max: 100 })),
-      axisName: { color: "#9fb0c0", fontSize: 12 },
-      splitLine: { lineStyle: { color: [gridColor] } },
-      splitArea: { areaStyle: { color: ["rgba(11,18,28,.3)", "rgba(15,26,39,.2)"] } },
-      axisLine: { lineStyle: { color: gridColor } },
-    },
-    series: [{
-      type: "radar",
-      data: [{ value: radar.values, name: "规则因子" }],
-      symbolSize: 5,
-      lineStyle: { color: gold, width: 2 },
-      itemStyle: { color: gold },
-      areaStyle: { color: "rgba(244,199,106,.16)" },
-    }],
-  };
+  return buildFactorOption({
+    indicators: radar.indicators.map((name) => ({ name, max: 100 })),
+    values: radar.values,
+    name: "规则因子",
+  });
 }
 
 function backtestOption(backtest: BacktestResult): EChartsOption {
@@ -125,7 +130,7 @@ function backtestOption(backtest: BacktestResult): EChartsOption {
     ...panelOption(),
     grid: { left: 58, right: 28, top: 30, bottom: 38 },
     legend: { top: 0, right: 8, textStyle: { color: axisColor }, data: ["权益", "回撤"] },
-    tooltip: { trigger: "axis", backgroundColor: "#071018", borderColor: gold, textStyle: { color: "#d8e6f1" } },
+    tooltip: { trigger: "axis", backgroundColor: chartTheme.tooltipBackgroundColor, borderColor: gold, textStyle: { color: chartTheme.textColor } },
     xAxis: { type: "category", data: points.map((item) => item.date), axisLine: { lineStyle: { color: gridColor } }, axisLabel: { color: axisColor, hideOverlap: true } },
     yAxis: [
       { type: "value", scale: true, splitLine: { lineStyle: { color: gridColor } }, axisLabel: { color: axisColor } },
@@ -150,7 +155,7 @@ function candidatesFrom(board: FirstLimitUpBoard | null): FirstLimitUpCandidate[
   });
 }
 
-export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, runBacktest, loadKronosForecast, loadQuantStrategy, loadTdxFormula, loadTimeline, selectedSymbol, searchInstruments, onSelectSymbol }: Props) {
+export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, runBacktest, loadKronosForecast, loadQuantStrategy, loadQuantShadowDecisions, loadQuantShadowAnalytics, loadDecisionJournal, createDecisionJournal, loadTdxFormula, loadTimeline, selectedSymbol, searchInstruments, onSelectSymbol }: Props) {
   const [selected, setSelected] = useState<string | null>(selectedSymbol ?? null);
   const [selectedIdentity, setSelectedIdentity] = useState<AShareInstrument | null>(null);
   const [backtest, setBacktest] = useState<BacktestResult | null>(null);
@@ -236,8 +241,45 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     intervalMs: 5_000,
     enabled: Boolean(loadQuantStrategy),
     errorMessage: "短线策略数据暂不可用",
+    mergeData: retainReadyStrategySnapshot,
   });
   const strategyDashboard = strategyResource.data;
+  const shadowLoader = useCallback(
+    () => loadQuantShadowDecisions ? loadQuantShadowDecisions(50) : Promise.resolve([]),
+    [loadQuantShadowDecisions],
+  );
+  const shadowResource = useQuantLiveResource({
+    loader: shadowLoader,
+    intervalMs: 60_000,
+    enabled: Boolean(loadQuantShadowDecisions),
+    errorMessage: "策略影子账本暂不可用",
+  });
+  const shadowAnalyticsLoader = useCallback(
+    () => loadQuantShadowAnalytics ? loadQuantShadowAnalytics(5) : Promise.reject(new Error("shadow analytics disabled")),
+    [loadQuantShadowAnalytics],
+  );
+  const shadowAnalyticsResource = useQuantLiveResource({
+    loader: shadowAnalyticsLoader,
+    intervalMs: 60_000,
+    enabled: Boolean(loadQuantShadowAnalytics),
+    errorMessage: "评分校准统计暂不可用",
+  });
+  const decisionJournalLoader = useCallback(
+    () => loadDecisionJournal ? loadDecisionJournal(50) : Promise.resolve([]),
+    [loadDecisionJournal],
+  );
+  const decisionJournalResource = useQuantLiveResource({
+    loader: decisionJournalLoader,
+    intervalMs: 60_000,
+    enabled: Boolean(loadDecisionJournal),
+    errorMessage: "个人复盘日志暂不可用",
+  });
+  const refreshDecisionJournal = decisionJournalResource.refreshNow;
+  const appendDecisionJournal = useCallback(async (request: Parameters<DecisionJournalCreator>[0]) => {
+    if (!createDecisionJournal) return;
+    await createDecisionJournal(request);
+    await refreshDecisionJournal();
+  }, [createDecisionJournal, refreshDecisionJournal]);
   const boardAsOf = board?.as_of;
 
   useEffect(() => {
@@ -306,6 +348,16 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
       strategyStatus={strategyResource.status}
       strategyEnabled={Boolean(loadQuantStrategy)}
     />
+    {strategyDashboard && <DataWatermarkStrip
+      status={strategyDashboard.status}
+      tradeDate={strategyDashboard.as_of}
+      observedAt={strategyDashboard.market_observed_at}
+      generatedAt={strategyDashboard.generated_at}
+      sourceCount={strategyDashboard.sources.length}
+      sampleCount={strategyDashboard.candidate_funnel?.stages.find((item) => item.key === "universe")?.count ?? null}
+      refreshState={strategyDashboard.refresh_state ?? "ready"}
+      limitations={[...strategyDashboard.missing_data, ...strategyDashboard.warnings]}
+    />}
 
     {loadTimeline && selected && <section className="tdx-research-overview" role="region" aria-label="通达信式研究总览">
       <header className="tdx-research-overview-header"><div><p>TDX STYLE / PRICE EVIDENCE</p><h2>{selectedName ?? selected} · 研究总览</h2></div><span>红涨 · 绿跌 · 灰色代表数据未接入</span></header>
@@ -343,7 +395,7 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
 
       <section className="quant-panel quant-backtest-panel" role="region" aria-label="回测风险收益">
         <header><div><span>Q4 / RISK RETURN</span><h2>回测风险收益</h2></div>{selectedBacktest && <small>{selectedBacktest.metrics.closed_trade_count} 笔闭合交易</small>}</header>
-        {selectedBacktest && equity.length > 0 ? <><QuantChart option={backtestOption(selectedBacktest)} ariaLabel={`${selectedName ?? selected ?? "当前股票"}历史回测权益和回撤`} /><div className="quant-backtest-stats"><span>总收益<b data-state={finiteNumber(selectedBacktest.total_return) === null ? "unavailable" : "ready"}>{percentText(selectedBacktest.total_return)}</b></span><span>最大回撤<b data-state={finiteNumber(selectedBacktest.max_drawdown) === null ? "unavailable" : "ready"}>{percentText(selectedBacktest.max_drawdown)}</b></span><span>样本状态<b>{selectedBacktest.metrics.closed_trade_count ? "可计算" : "不足"}</b></span></div></> : <div className="quant-empty"><AlertTriangle size={24} /><b>{backtestError || "等待历史回测"}</b><p>需要完整日线和闭合交易样本，胜率、赔率与 EV 才会显示。</p></div>}
+        {selectedBacktest && equity.length > 0 ? <><QuantChart option={backtestOption(selectedBacktest)} ariaLabel={`${selectedName ?? selected ?? "当前股票"}历史回测权益和回撤`} /><div className="quant-backtest-stats"><span>总收益<b data-state={finiteNumber(selectedBacktest.total_return) === null ? "unavailable" : "ready"}>{percentText(selectedBacktest.total_return)}</b></span><span>最大回撤<b data-state={finiteNumber(selectedBacktest.max_drawdown) === null ? "unavailable" : "ready"}>{percentText(selectedBacktest.max_drawdown)}</b></span><span>样本状态<b>{backtestSampleLabel(selectedBacktest)}</b></span></div></> : <div className="quant-empty"><AlertTriangle size={24} /><b>{backtestError || "等待历史回测"}</b><p>需要完整日线和闭合交易样本，胜率、赔率与 EV 才会显示。</p></div>}
       </section>
 
       <KronosForecastPanel forecast={selectedForecast} loading={forecastLoading} error={forecastError} />
@@ -353,6 +405,19 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
       dashboard={strategyDashboard}
       loading={strategyResource.status === "loading" && !strategyDashboard}
       error={strategyResource.error}
+    />}
+    {loadQuantShadowDecisions && <QuantShadowLedgerPanel
+      records={shadowResource.data ?? []}
+      loading={shadowResource.status === "loading" && !shadowResource.data}
+      error={shadowResource.error}
+      analytics={shadowAnalyticsResource.data}
+      analyticsLoading={shadowAnalyticsResource.status === "loading" && !shadowAnalyticsResource.data}
+      analyticsError={shadowAnalyticsResource.error}
+      journalRecords={decisionJournalResource.data ?? []}
+      journalSymbol={selected}
+      journalLoading={decisionJournalResource.status === "loading" && !decisionJournalResource.data}
+      journalError={decisionJournalResource.error}
+      onJournalCreate={createDecisionJournal ? appendDecisionJournal : undefined}
     />}
     <TdxFormulaPanel symbol={selected} load={loadTdxFormula} />
   </main>;

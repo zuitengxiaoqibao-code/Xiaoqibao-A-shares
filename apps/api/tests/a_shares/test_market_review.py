@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -198,3 +199,73 @@ def test_review_excludes_benchmark_files_from_stock_rankings() -> None:
 
     assert result.new_high_100 == ()
     assert result.first_limit_up == ()
+
+
+def test_review_uses_dominant_trade_date_instead_of_sparse_latest_outlier() -> None:
+    histories = {
+        "600011": bars("600011", ["10.00", "10.10"]),
+        "600012": bars("600012", ["10.00", "10.20"]),
+        "600013": bars("600013", ["10.00", "10.30", "10.40"]),
+    }
+    # The third symbol has one newer bar, but it must not move the market-wide
+    # review date away from the date shared by the majority of stocks.
+    histories["600013"] = tuple([
+        *histories["600013"][:-1],
+        TdxLocalDailyBar(
+            symbol="600013",
+            trade_date=date(2026, 1, 3),
+            open=Decimal("10.40"),
+            high=Decimal("10.40"),
+            low=Decimal("10.40"),
+            close=Decimal("10.40"),
+            volume=100,
+            amount=Decimal("1040"),
+        ),
+    ])
+
+    result = build_market_review(
+        histories,
+        as_of=date(2026, 7, 30),
+        observed_at=NOW,
+        name_resolver=lambda symbol: symbol,
+    )
+
+    assert result.latest_trade_date == date(2026, 1, 2)
+    assert result.latest_available_trade_date == date(2026, 1, 3)
+    assert result.latest_trade_date_coverage_percent == Decimal("66.67")
+    assert result.watermark.dominant_trade_date == date(2026, 1, 2)
+    assert result.watermark.latest_available_trade_date == date(2026, 1, 3)
+    assert result.watermark.universe_count == 3
+    assert result.watermark.history_ready_count == 2
+    assert result.watermark.fragmented_latest_count == 1
+    assert result.watermark.coverage_percent == Decimal("66.67")
+    assert result.watermark.quality == "partial"
+    assert "history_dates_fragmented" in result.warnings
+    assert "history_latest_outlier" in result.warnings
+
+
+def test_review_does_not_mark_large_fragmented_watermark_ready() -> None:
+    histories = {
+        f"6{index:05d}": bars(f"6{index:05d}", ["10.00", "10.10"])
+        for index in range(1_021)
+    }
+    for index in range(1_000, 1_021):
+        symbol = f"6{index:05d}"
+        histories[symbol] = (
+            histories[symbol][0],
+            replace(histories[symbol][1], trade_date=date(2026, 1, 3)),
+        )
+
+    result = build_market_review(
+        histories,
+        as_of=date(2026, 7, 30),
+        observed_at=NOW,
+        name_resolver=lambda symbol: symbol,
+    )
+
+    assert result.history_ready_count == 1_000
+    assert result.latest_trade_date_coverage_percent == Decimal("97.94")
+    assert result.quality == "partial"
+    assert result.watermark.quality == "partial"
+    assert "history_dates_fragmented" in result.watermark.blockers
+    assert "history_coverage_below_98_percent" in result.watermark.blockers

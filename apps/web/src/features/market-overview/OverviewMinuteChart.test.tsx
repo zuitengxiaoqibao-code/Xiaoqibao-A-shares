@@ -3,10 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("echarts", () => ({ init: vi.fn(() => ({ setOption: vi.fn(), resize: vi.fn(), dispose: vi.fn() })) }));
 
-import { buildAnomalyMarkers, OverviewMinuteChart, overviewMinuteOption } from "./OverviewMinuteChart";
+import { anomalyAttributionColor, buildAnomalyPulseGroups, OverviewMinuteChart, overviewMinuteOption } from "./OverviewMinuteChart";
 
 describe("OverviewMinuteChart", () => {
-  it("creates an intraday option with anomaly marker lines", () => {
+  it("centers the anomaly title on a vertical dashed marker line", () => {
     const option = overviewMinuteOption(
       [{ observed_at: "2026-07-29T09:30:00+08:00", price: "3800", volume: "10", amount: "100" }],
       [{ anomaly_id: "a1", occurred_at: "2026-07-29T09:30:00+08:00", label: "算力", headline: "异动", direction: "positive", themes: [], symbols: [] }],
@@ -14,7 +14,13 @@ describe("OverviewMinuteChart", () => {
     );
 
     expect(option.series).toHaveLength(2);
-    expect(JSON.stringify(option)).toContain("算力");
+    const priceSeries = (option.series as Array<Record<string, unknown>>)[0];
+    const markLine = priceSeries.markLine as { data: Array<Record<string, unknown>> };
+    expect(markLine.data[0]).toMatchObject({
+      lineStyle: { type: "dashed", width: 2 },
+      label: { formatter: "算\n力", position: "middle", rotate: 0 },
+    });
+    expect(option.animation).toBe(false);
   });
 
   it("keeps the complete A-share session on the axis without inventing future prices", () => {
@@ -35,34 +41,67 @@ describe("OverviewMinuteChart", () => {
     expect((priceSeries as { data: Array<number | null> }).data.at(-1)).toBeNull();
   });
 
-  it("pins second-level events to the nearest real minute and drops unrelated events", () => {
+  it("pins second-level events to the nearest real minute and exposes both list numbers and chart titles", () => {
     const points = [
       { observed_at: "2026-07-29T09:30:00+08:00", price: "3800", volume: "10", amount: "100" },
       { observed_at: "2026-07-29T09:31:00+08:00", price: "3801", volume: "12", amount: "120" },
     ];
-    const markers = buildAnomalyMarkers(points, [
+    const groups = buildAnomalyPulseGroups(points, [
       { anomaly_id: "a1", occurred_at: "2026-07-29T09:30:42+08:00", label: "算力", headline: "异动", direction: "positive", themes: [], symbols: [] },
       { anomaly_id: "old", occurred_at: "2026-07-28T09:30:00+08:00", label: "旧闻", headline: "旧闻", direction: "neutral", themes: [], symbols: [] },
     ], "a1");
 
-    expect(markers).toHaveLength(1);
-    expect(markers[0].xAxis).toBe("09:31");
-    expect(markers[0].lineStyle).toMatchObject({ color: "#f04f5f", type: "solid", width: 2 });
-    expect(markers[0].label).toMatchObject({ formatter: "算\n力", rotate: 0 });
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({ minute: "09:31", marker: "02", lineLabel: "算\n力", selected: true, color: "#a78bfa" });
+    expect(groups[0].events.map((item) => item.anomaly_id)).toEqual(["a1"]);
   });
 
-  it("uses A-share colors and staggered labels for adjacent event markers", () => {
+  it("uses attribution colors that stay distinct from the red-green candles and cyan price line", () => {
     const points = [0, 1, 2].map((minute) => ({
       observed_at: `2026-07-29T09:3${minute}:00+08:00`, price: "3800", volume: "10", amount: "100",
     }));
-    const markers = buildAnomalyMarkers(points, [
-      { anomaly_id: "up", occurred_at: "2026-07-29T09:30:00+08:00", label: "拉升", headline: "拉升", direction: "positive", themes: [], symbols: [] },
-      { anomaly_id: "down", occurred_at: "2026-07-29T09:31:00+08:00", label: "风险", headline: "风险", direction: "negative", themes: [], symbols: [] },
-      { anomaly_id: "wait", occurred_at: "2026-07-29T09:32:00+08:00", label: "待确认", headline: "待确认", direction: "uncertain", themes: [], symbols: [] },
+    const groups = buildAnomalyPulseGroups(points, [
+      { anomaly_id: "tech", occurred_at: "2026-07-29T09:30:00+08:00", label: "算力异动", headline: "AI 算力板块走强", direction: "positive", themes: ["算力"], symbols: [] },
+      { anomaly_id: "finance", occurred_at: "2026-07-29T09:31:00+08:00", label: "券商异动", headline: "证券板块放量", direction: "negative", themes: ["证券"], symbols: [] },
+      { anomaly_id: "health", occurred_at: "2026-07-29T09:32:00+08:00", label: "医药异动", headline: "创新药活跃", direction: "uncertain", themes: ["创新药"], symbols: [] },
     ], null);
 
-    expect(markers.map((item) => item.lineStyle.color)).toEqual(["#f04f5f", "#f04f5f", "#7d8993"]);
-    expect(markers.map((item) => item.label.offset[1])).toEqual([0, 148, 0]);
+    expect(groups.map((item) => item.color)).toEqual(["#a78bfa", "#f6bd60", "#f472b6"]);
+    expect(groups.map((item) => item.lane)).toEqual([0, 1, 0]);
+    expect(groups.map((item) => item.color)).not.toContain("#f04f5f");
+    expect(groups.map((item) => item.color)).not.toContain("#2fcf91");
+    expect(groups.map((item) => item.color)).not.toContain("#39c8dd");
+  });
+
+  it("keeps the same attribution color regardless of event direction or selection", () => {
+    const positive = { anomaly_id: "a1", occurred_at: "2026-07-29T09:30:00+08:00", label: "机器人", headline: "工业机器人异动", direction: "positive" as const, themes: ["机器人"], symbols: [] };
+    const negative = { ...positive, anomaly_id: "a2", direction: "negative" as const };
+
+    expect(anomalyAttributionColor(positive)).toBe("#60a5fa");
+    expect(anomalyAttributionColor(negative)).toBe("#60a5fa");
+    const points = [{ observed_at: "2026-07-29T09:30:00+08:00", price: "3800", volume: "10", amount: "100" }];
+    expect(buildAnomalyPulseGroups(points, [positive], "a1")[0].color).toBe("#60a5fa");
+  });
+
+  it("aggregates events mapped to the same minute instead of overlapping labels", () => {
+    const points = [
+      { observed_at: "2026-07-29T09:30:00+08:00", price: "3800", volume: "10", amount: "100" },
+      { observed_at: "2026-07-29T09:31:00+08:00", price: "3801", volume: "12", amount: "120" },
+    ];
+    const groups = buildAnomalyPulseGroups(points, [
+      { anomaly_id: "a1", occurred_at: "2026-07-29T09:30:40+08:00", label: "算力", headline: "算力异动", direction: "positive", themes: [], symbols: [] },
+      { anomaly_id: "a2", occurred_at: "2026-07-29T09:31:10+08:00", label: "机器人", headline: "机器人异动", direction: "neutral", themes: [], symbols: [] },
+    ], null);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({ marker: "01 +1", lineLabel: "算\n力\n+1", minute: "09:31", count: 2 });
+    expect(groups[0].events.map((item) => item.anomaly_id)).toEqual(["a1", "a2"]);
+
+    const selectedSecond = buildAnomalyPulseGroups(points, [
+      { anomaly_id: "a1", occurred_at: "2026-07-29T09:30:40+08:00", label: "算力", headline: "算力异动", direction: "positive", themes: [], symbols: [] },
+      { anomaly_id: "a2", occurred_at: "2026-07-29T09:31:10+08:00", label: "机器人", headline: "机器人异动", direction: "neutral", themes: [], symbols: [] },
+    ], "a2");
+    expect(selectedSecond[0]).toMatchObject({ marker: "02 +1", lineLabel: "机\n器\n人\n+1", selected: true });
   });
 
   it("adds a hollow intersection marker at each verified event price", () => {
@@ -78,8 +117,10 @@ describe("OverviewMinuteChart", () => {
     const priceSeries = (option.series as Array<Record<string, unknown>>)[0];
     expect(priceSeries.markPoint).toMatchObject({
       symbol: "circle",
-      data: [{ name: "算力", coord: ["09:31", 3802] }],
+      data: [{ name: "01", coord: ["09:31", 3802] }],
     });
+    const serialized = JSON.stringify(option);
+    expect(serialized).toContain("算\\n力");
   });
 
   it("shows an explicit empty state instead of synthetic points", () => {

@@ -23,6 +23,19 @@ def test_startup_progress_uses_latest_verified_milestone(tmp_path: Path) -> None
     assert progress.detail == "正在准备首页与量化服务"
 
 
+def test_startup_progress_exposes_elapsed_milliseconds_when_logged(tmp_path: Path) -> None:
+    log = tmp_path / "xiaoqibao.log"
+    log.write_text(
+        "2026-08-11 INFO desktop startup stage=market-sentiment-ready elapsed_ms=828\n",
+        encoding="utf-8",
+    )
+
+    progress = read_startup_progress(log)
+
+    assert progress is not None
+    assert progress.elapsed_ms == 828
+
+
 def test_startup_progress_ignores_unknown_or_incomplete_log(tmp_path: Path) -> None:
     log = tmp_path / "xiaoqibao.log"
     log.write_text(

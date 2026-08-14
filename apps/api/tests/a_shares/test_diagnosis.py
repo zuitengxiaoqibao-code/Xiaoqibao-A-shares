@@ -189,6 +189,29 @@ def test_valuation_can_use_explicit_local_tdx_detail_when_market_quote_is_missin
     assert section.metrics["pb"] == Decimal("1.4")
 
 
+def test_valuation_discloses_material_tencent_and_local_tdx_conflicts() -> None:
+    market = FakeMarket()
+    finance = FundamentalSnapshot(
+        symbol="600000",
+        observed_at=datetime(2026, 7, 15, 10, 29, tzinfo=UTC),
+        pe_ttm=Decimal("6.80"),
+        pb=Decimal("0.62"),
+        source="tdx-local-rpc-detail",
+    )
+
+    section = AShareDiagnosisService._valuation_section(
+        asyncio.run(market.fetch_snapshot("600000")), None, finance
+    )
+
+    assert section.source == "tencent"
+    assert section.metrics["pe_ttm"] == Decimal("6.32")
+    assert section.metrics["pe_ttm_alternative"] == Decimal("6.80")
+    assert section.metrics["pe_ttm_alternative_source"] == "tdx-local-rpc-detail"
+    assert section.metrics["pe_ttm_difference"] == Decimal("-0.48")
+    assert section.metrics["pb_alternative"] == Decimal("0.62")
+    assert section.metrics["pb_difference"] == Decimal("-0.04")
+
+
 class FundFlows:
     def __init__(
         self,

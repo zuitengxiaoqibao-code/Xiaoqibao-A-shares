@@ -105,7 +105,10 @@ def test_tdx_local_professional_route_returns_verified_rows_and_table_list() -> 
 
     assert response.status_code == 200
     assert response.json()["status"] == "ready"
+    assert response.json()["semantic_status"] == "detected_only"
+    assert "字段语义/单位尚未映射" in response.json()["detail"]
     assert response.json()["rows"][0]["values"] == {"Fn193": "12.5"}
+    assert response.json()["rows"][0]["semantic_status"] == "semantic_unmapped"
     assert professional_source.calls[0]["method"] == "get_financial_data"
     assert professional_source.calls[0]["fields"] == ("Fn193",)
 

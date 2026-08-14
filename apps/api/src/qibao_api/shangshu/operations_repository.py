@@ -43,6 +43,12 @@ class OperationsRepository:
           error_code TEXT,
           metadata_json TEXT NOT NULL DEFAULT '{}'
         );
+        CREATE TABLE IF NOT EXISTS source_health_snapshots (
+          snapshot_id INTEGER PRIMARY KEY CHECK(snapshot_id = 1),
+          generated_at TEXT NOT NULL,
+          window_size INTEGER NOT NULL,
+          sources_json TEXT NOT NULL
+        );
         CREATE TRIGGER IF NOT EXISTS reject_update_scheduler_state
         BEFORE UPDATE ON scheduler_state_events
         BEGIN SELECT RAISE(ABORT, 'append-only scheduler state'); END;
@@ -213,6 +219,52 @@ class OperationsRepository:
                 "validation": metadata.get("validation"),
             })
         return sorted(result, key=lambda item: (item["source"], item["operation"], item["target"]))
+
+    def refresh_source_health_snapshot(
+        self, limit: int = 20, *, generated_at: datetime | None = None
+    ) -> dict:
+        """Persist a bounded health read model for fast, non-probing reads."""
+        timestamp = generated_at or datetime.now().astimezone()
+        payload = {
+            "generated_at": timestamp.isoformat(),
+            "window_size": limit,
+            "sources": self.source_health(limit),
+        }
+        with self._lock, self.connection:
+            self.connection.execute(
+                """INSERT INTO source_health_snapshots(
+                   snapshot_id, generated_at, window_size, sources_json
+                ) VALUES(1, ?, ?, ?)
+                ON CONFLICT(snapshot_id) DO UPDATE SET
+                   generated_at=excluded.generated_at,
+                   window_size=excluded.window_size,
+                   sources_json=excluded.sources_json""",
+                (
+                    payload["generated_at"],
+                    limit,
+                    json.dumps(payload["sources"], ensure_ascii=False, sort_keys=True),
+                ),
+            )
+        return payload
+
+    def source_health_snapshot(self) -> dict | None:
+        with self._lock:
+            row = self.connection.execute(
+                "SELECT generated_at, window_size, sources_json FROM source_health_snapshots WHERE snapshot_id=1"
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            sources = json.loads(row["sources_json"])
+        except (TypeError, json.JSONDecodeError):
+            return None
+        if not isinstance(sources, list):
+            return None
+        return {
+            "generated_at": row["generated_at"],
+            "window_size": row["window_size"],
+            "sources": sources,
+        }
 
     def close(self) -> None:
         with self._lock:

@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import UTC, date, datetime
 
 from qibao_api.gongbu.history_sync_repository import HistorySyncRepository
 
@@ -81,3 +81,19 @@ def test_failed_item_keeps_only_safe_error_code(tmp_path) -> None:
     assert item.error_code == "DataSourceUnavailable"
     assert item.state == "failed"
     assert repository.get(job.job_id).failed_count == 1
+
+
+def test_repository_appends_and_reads_history_repair_audit(tmp_path) -> None:
+    from qibao_api.contracts.history_sync import HistoryRepairAudit
+
+    repository = HistorySyncRepository(tmp_path / "history-sync.sqlite3")
+    observed = datetime(2026, 7, 24, 8, tzinfo=UTC)
+    audit = HistoryRepairAudit(
+        audit_id="repair-audit-1", job_id="history-sync-1", mode="incremental",
+        target_date=TARGET, started_at=observed, completed_at=observed,
+        source="mootdx", gap_count_before=2, coverage_before_percent=95.0,
+        written_rows=12, ready_count=1, failed_count=0, skipped_count=1,
+        coverage_after_percent=98.5, final_state="completed",
+    )
+    repository.append_repair_audit(audit)
+    assert repository.repair_audits(limit=10) == (audit,)

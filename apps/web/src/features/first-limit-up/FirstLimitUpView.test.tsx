@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { FirstLimitUpView } from "./FirstLimitUpView";
@@ -71,6 +71,66 @@ describe("FirstLimitUpView", () => {
     expect(screen.getByText("-8%")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "刷新首次涨停" }));
     await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+  });
+
+  it("turns summary counts into precise filters and opens the first matching detail", async () => {
+    const filterBoard: FirstLimitUpBoard = {
+      ...board,
+      scanned_count: 3,
+      qualified_count: 2,
+      no_buy_count: 1,
+      today: [
+        board.today[0],
+        {
+          ...board.today[0],
+          symbol: "600002",
+          name: "合格观察样本",
+          stage: "waiting_pullback",
+          action: "observe",
+          score: "64.2",
+          risk_flags: [],
+        },
+        {
+          ...board.today[0],
+          symbol: "600003",
+          name: "规则排除样本",
+          selection_status: "excluded",
+          stage: "limit_up_day",
+          action: "avoid",
+          score: "21.0",
+          reasons: ["pe_above_50"],
+          risk_flags: [],
+        },
+      ],
+    };
+    render(<FirstLimitUpView load={() => Promise.resolve(filterBoard)} refresh={() => Promise.resolve(filterBoard)} />);
+
+    const list = await screen.findByRole("region", { name: "首次涨停候选列表" });
+    expect(list).toHaveTextContent("底部样本");
+    expect(list).toHaveTextContent("合格观察样本");
+    expect(list).toHaveTextContent("规则排除样本");
+
+    fireEvent.click(screen.getByRole("button", { name: /筛选规则合格股票，共 2 只/ }));
+    expect(list).toHaveTextContent("规则合格 · 2 只");
+    expect(list).toHaveTextContent("底部样本");
+    expect(list).toHaveTextContent("合格观察样本");
+    expect(list).not.toHaveTextContent("规则排除样本");
+
+    fireEvent.click(screen.getByRole("button", { name: /筛选回撤窗口股票，共 1 只/ }));
+    expect(screen.getByRole("tab", { name: "回撤池" })).toHaveAttribute("aria-selected", "true");
+    expect(list).toHaveTextContent("回撤窗口 · 1 只");
+    expect(list).toHaveTextContent("底部样本");
+    expect(screen.getByRole("region", { name: "首次涨停标的详情" })).toHaveTextContent("进入回撤窗口");
+
+    fireEvent.click(screen.getByRole("button", { name: /筛选涨停日禁买股票，共 1 只/ }));
+    expect(screen.getByRole("tab", { name: "识别结果" })).toHaveAttribute("aria-selected", "true");
+    expect(list).toHaveTextContent("涨停日禁买 · 1 只");
+    expect(within(list).getByRole("button", { name: /600001.*底部样本/ })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "首次涨停标的详情" })).toHaveTextContent("涨停当日不能买入");
+
+    fireEvent.click(screen.getByRole("button", { name: "查看当前分组全部股票" }));
+    expect(list).toHaveTextContent("本次已识别涨停 · 3 只");
+    expect(list).toHaveTextContent("规则排除样本");
   });
 
   it("shows source and priority context, readable bottom states, and neutral evidence for incomplete candidates", async () => {

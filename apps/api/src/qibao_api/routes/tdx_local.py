@@ -107,6 +107,7 @@ def get_professional_data(
     except (TdxProfessionalDataUnavailable, OSError, ValueError) as error:
         return TdxProfessionalResponse(
             status="unavailable",
+            semantic_status="not_applicable",
             detail=_professional_unavailable_detail(error),
         )
     views = tuple(
@@ -115,6 +116,8 @@ def get_professional_data(
     )
     return TdxProfessionalResponse(
         status="ready",
+        semantic_status="detected_only",
         rows=views,
         fetched_at=max(item.fetched_at for item in views),
+        detail="结构响应已验证；字段语义/单位尚未映射，未绑定业务菜单",
     )

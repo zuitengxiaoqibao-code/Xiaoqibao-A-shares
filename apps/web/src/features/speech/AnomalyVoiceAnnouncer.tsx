@@ -18,6 +18,13 @@ function byOccurredAt(left: OverviewAnomaly, right: OverviewAnomaly): number {
   return new Date(left.occurred_at).getTime() - new Date(right.occurred_at).getTime();
 }
 
+export function isVoiceEligible(item: OverviewAnomaly): boolean {
+  return item.credibility !== "pending"
+    && item.credibility !== "rejected"
+    && item.strength !== "low"
+    && item.direction !== "uncertain";
+}
+
 export function AnomalyVoiceAnnouncer({ anomalies, synthesize }: {
   anomalies: OverviewAnomaly[];
   synthesize: SpeechSynthesizer;
@@ -96,7 +103,7 @@ export function AnomalyVoiceAnnouncer({ anomalies, synthesize }: {
   };
 
   useEffect(() => {
-    const ordered = [...anomalies].sort(byOccurredAt);
+    const ordered = [...anomalies].filter(isVoiceEligible).sort(byOccurredAt);
     if (!initialized.current) {
       ordered.forEach((item) => knownIds.current.add(item.anomaly_id));
       const latest = ordered.at(-1);

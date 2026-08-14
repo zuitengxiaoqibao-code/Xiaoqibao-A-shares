@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import type { BreakingNewsAlert, BreakingNewsAlertLoader } from "./types";
+import { appendUniqueEntities } from "../../shared/incrementalResource";
 
 
 export function useBreakingNewsAlerts(
@@ -20,18 +21,52 @@ export function useBreakingNewsAlerts(
       return;
     }
     const controller = new AbortController();
-    setLoading(true);
+    let timer: number | undefined;
+    let inFlight = false;
+    const stopTimer = () => {
+      if (timer !== undefined) window.clearInterval(timer);
+      timer = undefined;
+    };
+    const refresh = async (initial = false) => {
+      if (inFlight || controller.signal.aborted) return;
+      inFlight = true;
+      if (initial) setLoading(true);
+      try {
+        const response = await load(symbol, controller.signal, limit);
+        if (controller.signal.aborted) return;
+        setAlerts((current) => appendUniqueEntities(current, response.alerts, (item) => item.event_id));
+        setError(null);
+      } catch (reason) {
+        if (controller.signal.aborted) return;
+        setError(reason instanceof Error ? reason.message : "重要事件提醒暂不可用");
+      } finally {
+        inFlight = false;
+        if (!controller.signal.aborted && initial) setLoading(false);
+      }
+    };
+    const startTimer = () => {
+      stopTimer();
+      if (document.visibilityState !== "hidden") {
+        timer = window.setInterval(() => { void refresh(); }, 60_000);
+      }
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        stopTimer();
+        return;
+      }
+      void refresh();
+      startTimer();
+    };
     setError(null);
-    void load(symbol, controller.signal, limit).then((response) => {
-      if (controller.signal.aborted) return;
-      setAlerts(response.alerts);
-    }).catch((reason) => {
-      if (controller.signal.aborted) return;
-      setError(reason instanceof Error ? reason.message : "重要事件提醒暂不可用");
-    }).finally(() => {
-      if (!controller.signal.aborted) setLoading(false);
-    });
-    return () => controller.abort();
+    void refresh(true);
+    startTimer();
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      stopTimer();
+      controller.abort();
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
   }, [limit, load, symbol]);
 
   return { alerts, loading, error };

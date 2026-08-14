@@ -18,6 +18,12 @@ describe("site typography", () => {
     expect(css).toContain("--market-down: #2fcf91");
     expect(css).toContain("--status-warning: #e5b84b");
     expect(css).toContain("--status-live: #39c8dd");
+    expect(css).toContain("--risk-low: #e5b84b");
+    expect(css).toContain("--risk-medium: #f08c46");
+    expect(css).toContain("--risk-high: #f04f5f");
+    expect(css).toContain("--event-policy: #a78bfa");
+    expect(css).toContain("--event-capital: #e879f9");
+    expect(css).toContain("--event-rumor: #94a3b8");
   });
 
   it("raises the readable body and dense-label baselines", () => {

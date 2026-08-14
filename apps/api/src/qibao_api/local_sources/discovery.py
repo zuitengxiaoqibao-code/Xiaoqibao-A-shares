@@ -46,6 +46,7 @@ class LocalTerminalDiscoveryResult(BaseModel):
     scanned_at: datetime
     terminals: tuple[LocalTerminalStatus, ...]
     active_tdx_vipdoc: Path | None
+    settings: LocalSourceSettings | None = None
 
 
 def running_tdx_process_paths() -> tuple[Path, ...]:
@@ -116,6 +117,7 @@ class LocalTerminalDiscovery:
             scanned_at=self.clock(),
             terminals=tuple(terminals),
             active_tdx_vipdoc=active,
+            settings=settings,
         )
 
 

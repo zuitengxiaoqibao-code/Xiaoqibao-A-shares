@@ -7,6 +7,7 @@ type Options<T> = {
   intervalMs: number;
   enabled?: boolean;
   errorMessage: string;
+  mergeData?: (previous: T | null, incoming: T) => T;
 };
 
 export type QuantLiveResource<T> = {
@@ -24,6 +25,7 @@ export function useQuantLiveResource<T>({
   intervalMs,
   enabled = true,
   errorMessage,
+  mergeData,
 }: Options<T>): QuantLiveResource<T> {
   const [data, setData] = useState<T | null>(null);
   const [status, setStatus] = useState<QuantLiveStatus>(
@@ -37,6 +39,7 @@ export function useQuantLiveResource<T>({
   const previousLoaderRef = useRef(loader);
   const loaderVersionRef = useRef(0);
   const errorMessageRef = useRef(errorMessage);
+  const mergeDataRef = useRef(mergeData);
   const dataRef = useRef<T | null>(null);
   const inFlightRef = useRef<{
     version: number;
@@ -51,6 +54,7 @@ export function useQuantLiveResource<T>({
   }
   loaderRef.current = loader;
   errorMessageRef.current = errorMessage;
+  mergeDataRef.current = mergeData;
 
   useEffect(() => () => {
     mountedRef.current = false;
@@ -69,8 +73,12 @@ export function useQuantLiveResource<T>({
       try {
         const value = await loaderRef.current();
         if (!mountedRef.current || version !== loaderVersionRef.current) return;
-        dataRef.current = value;
-        setData(value);
+        const resolvedValue = mergeDataRef.current?.(dataRef.current, value) ?? value;
+        if (resolvedValue === null || resolvedValue === undefined) {
+          throw new Error("empty quant resource response");
+        }
+        dataRef.current = resolvedValue;
+        setData(resolvedValue);
         setError("");
         setLastSuccessAt(new Date());
         setStatus(document.hidden ? "paused" : "live");

@@ -1,6 +1,8 @@
 from datetime import date
 from decimal import Decimal
 
+from typing import Literal
+
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 
@@ -56,12 +58,14 @@ class TdxProfessionalRowView(BaseModel):
     values: dict[str, Decimal | str] = Field(default_factory=dict)
     fetched_at: AwareDatetime
     source: str = "tdx-local-rpc-professional"
+    semantic_status: Literal["semantic_unmapped", "verified"] = "semantic_unmapped"
 
 
 class TdxProfessionalResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     status: str
+    semantic_status: Literal["not_applicable", "detected_only", "verified"] = "not_applicable"
     rows: tuple[TdxProfessionalRowView, ...] = ()
     fetched_at: AwareDatetime | None = None
     source: str = "tdx-local-rpc-professional"

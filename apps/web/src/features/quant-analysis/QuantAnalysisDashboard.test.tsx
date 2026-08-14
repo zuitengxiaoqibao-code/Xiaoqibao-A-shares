@@ -200,7 +200,7 @@ describe("QuantAnalysisDashboard", () => {
       onSelectSymbol={onSelectSymbol}
     />);
 
-    fireEvent.change(await screen.findByRole("searchbox", { name: "查询量化分析标的" }), {
+    fireEvent.change(screen.getByRole("searchbox", { name: "查询量化分析标的" }), {
       target: { value: "贵州茅台" },
     });
     await waitFor(() => expect(search).toHaveBeenCalledWith("贵州茅台"));
@@ -274,6 +274,33 @@ describe("QuantAnalysisDashboard", () => {
     expect(control.querySelectorAll(".quant-instrument-layout > *")).toHaveLength(2);
   });
 
+  it("makes the selected target state and candidate switch context explicit", async () => {
+    render(<QuantAnalysisDashboard
+      loadBoard={async () => board}
+      loadTicks={async (symbol) => ticks(symbol)}
+      runBacktest={async (symbol) => backtest(symbol)}
+      selectedSymbol="002008"
+    />);
+
+    const control = await screen.findByRole("region", { name: "当前量化分析标的" });
+    expect(control.querySelector(".quant-instrument-state")).toHaveTextContent("标的已锁定");
+    expect(control.querySelector(".quant-candidate-context")).toHaveTextContent("首次涨停候选");
+    expect(control.querySelector(".quant-rule-snapshot")).toHaveTextContent("规则快照");
+  });
+
+  it("keeps compact target labels in stacked rows at narrow widths", async () => {
+    render(<QuantAnalysisDashboard
+      loadBoard={async () => board}
+      loadTicks={async (symbol) => ticks(symbol)}
+      runBacktest={async (symbol) => backtest(symbol)}
+      selectedSymbol="600419"
+    />);
+
+    const control = await screen.findByRole("region", { name: "当前量化分析标的" });
+    expect(control.querySelector(".quant-instrument-heading")).toHaveClass("stacked");
+    expect(control.querySelector(".quant-candidate-context")).toHaveClass("stacked");
+  });
+
   it("adds a detailed TDX-style event K-line workspace when the local timeline is available", async () => {
     render(<QuantAnalysisDashboard
       loadBoard={async () => board}
@@ -305,6 +332,68 @@ describe("QuantAnalysisDashboard", () => {
     expect(kronosPanel.compareDocumentPosition(strategyHeading))
       .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(screen.getByRole("region", { name: "高频 TICK 分时" })).toBeInTheDocument();
+  });
+
+  it("keeps the last ready strategy snapshot while an automatic candidate refresh is pending", async () => {
+    vi.useFakeTimers();
+    try {
+      const pendingDashboard: QuantStrategyDashboard = {
+        ...strategyDashboard,
+        status: "unavailable",
+        generated_at: "2026-07-31T14:00:05+08:00",
+        candidate_scan_at: null,
+        candidate_scan_age_seconds: null,
+        candidate_scan_state: "pending",
+        candidate_scan_phase: "computing_factors",
+        candidate_scan_processed: 1200,
+        candidate_scan_total: 5980,
+        trigger_evidence_at: null,
+        trigger_evidence_age_seconds: null,
+        metrics: {
+          ...strategyDashboard.metrics,
+          up_ratio: null,
+          strong_close_ratio: null,
+          factor_coverage_percent: "0",
+        },
+        regime: {
+          ...strategyDashboard.regime,
+          regime: null,
+          emotion_score: null,
+          coverage_percent: "0",
+          suitable_strategies: [],
+          avoid_strategies: [],
+          quality: "unavailable",
+        },
+        strategy_models: [],
+        candidates: [],
+        missing_data: ["candidate_scan_pending"],
+        sources: [],
+      };
+      const loadQuantStrategy = vi.fn()
+        .mockResolvedValueOnce(strategyDashboard)
+        .mockResolvedValueOnce(pendingDashboard);
+
+      render(<QuantAnalysisDashboard
+        loadBoard={async () => board}
+        loadTicks={async (symbol) => ticks(symbol)}
+        runBacktest={async (symbol) => backtest(symbol)}
+        loadQuantStrategy={loadQuantStrategy}
+      />);
+
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(screen.getByRole("region", { name: "市场风格评分" })).toHaveTextContent("76.0");
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+
+      expect(loadQuantStrategy).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole("region", { name: "市场风格评分" })).toHaveTextContent("76.0");
+      expect(screen.getByRole("progressbar", { name: "候选扫描后台预热" })).toHaveAttribute("aria-valuenow", "20");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps the four quadrants available when strategy loading fails", async () => {

@@ -68,3 +68,17 @@ def test_source_health_marks_all_recent_failures_unavailable(tmp_path: Path) -> 
     assert item["status"] == "unavailable"
     assert item["success_rate"] == 0.0
     assert item["last_error_code"] == "timeout"
+
+
+def test_source_health_snapshot_is_persisted_for_read_only_consumers(tmp_path: Path) -> None:
+    repository = OperationsRepository(tmp_path / "operations.sqlite3")
+    repository.append_source_attempt(event(status="ready", sequence=1))
+
+    generated_at = datetime(2026, 7, 17, 9, 0, tzinfo=UTC)
+    snapshot = repository.refresh_source_health_snapshot(20, generated_at=generated_at)
+    assert snapshot["generated_at"] == generated_at.isoformat()
+    assert repository.source_health_snapshot() == snapshot
+
+    repository.close()
+    reopened = OperationsRepository(tmp_path / "operations.sqlite3")
+    assert reopened.source_health_snapshot() == snapshot

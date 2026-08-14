@@ -80,6 +80,18 @@ def performance_metrics(
         average_win = sum(wins, Decimal("0")) / Decimal(len(wins))
         average_loss = sum(losses, Decimal("0")) / Decimal(len(losses))
         profit_loss_ratio = _quantize(average_win / average_loss)
+    expected_value = (
+        _quantize(sum(closed_results, Decimal("0")) / Decimal(len(closed_results)))
+        if closed_results else None
+    )
+    current_losing_streak = 0
+    max_consecutive_losses = 0
+    for value in closed_results:
+        if value < 0:
+            current_losing_streak += 1
+            max_consecutive_losses = max(max_consecutive_losses, current_losing_streak)
+        else:
+            current_losing_streak = 0
 
     average_equity = Decimal("0")
     if equity_curve:
@@ -97,12 +109,15 @@ def performance_metrics(
         profit_loss_ratio=profit_loss_ratio,
         turnover_rate=_quantize(turnover_rate),
         closed_trade_count=len(closed_results),
+        expected_value=expected_value,
+        max_consecutive_losses=max_consecutive_losses,
     )
 
 
 def market_regime_attribution(
     bars: list[DailyBar],
     equity_curve: list[EquityPoint],
+    trades: list[Trade] | None = None,
     *,
     lookback: int = 20,
     threshold: Decimal = Decimal("0.05"),
@@ -112,6 +127,7 @@ def market_regime_attribution(
     ordered_bars = sorted(bars, key=lambda item: item.trade_date)
     equity_by_date = {point.trade_date: point.equity for point in equity_curve}
     grouped: dict[str, list[Decimal]] = {"bull": [], "bear": [], "sideways": []}
+    regime_by_date: dict[object, str] = {}
     for index in range(lookback + 1, len(ordered_bars)):
         current = ordered_bars[index]
         previous = ordered_bars[index - 1]
@@ -125,18 +141,54 @@ def market_regime_attribution(
             else "bear" if trailing_return < -threshold
             else "sideways"
         )
+        regime_by_date[current.trade_date] = regime
         prior_equity = equity_by_date[previous.trade_date]
         if prior_equity > 0:
             grouped[regime].append(equity_by_date[current.trade_date] / prior_equity - Decimal("1"))
+    closed_by_regime: dict[str, list[Decimal]] = {"bull": [], "bear": [], "sideways": []}
+    open_cost: Decimal | None = None
+    for trade in trades or []:
+        if trade.side == "buy":
+            open_cost = trade.gross_amount + trade.fees
+        elif open_cost is not None:
+            regime = regime_by_date.get(trade.trade_date)
+            if regime is not None:
+                closed_by_regime[regime].append(trade.gross_amount - trade.fees - open_cost)
+            open_cost = None
     results = []
     for name in ("bull", "bear", "sideways"):
         compounded = Decimal("1")
         for value in grouped[name]:
             compounded *= Decimal("1") + value
+        closed = closed_by_regime[name]
+        wins = [value for value in closed if value > 0]
+        losses = [-value for value in closed if value < 0]
+        profit_loss_ratio = None
+        if wins and losses:
+            profit_loss_ratio = _quantize(
+                (sum(wins, Decimal("0")) / Decimal(len(wins)))
+                / (sum(losses, Decimal("0")) / Decimal(len(losses)))
+            )
+        streak = 0
+        max_streak = 0
+        for value in closed:
+            if value < 0:
+                streak += 1
+                max_streak = max(max_streak, streak)
+            else:
+                streak = 0
         results.append(MarketRegimeResult(
             name=name,
             bar_count=len(grouped[name]),
             total_return=_quantize(compounded - Decimal("1")),
+            closed_trade_count=len(closed),
+            win_rate=_ratio(len(wins), len(closed)) if closed else None,
+            expected_value=(
+                _quantize(sum(closed, Decimal("0")) / Decimal(len(closed)))
+                if closed else None
+            ),
+            profit_loss_ratio=profit_loss_ratio,
+            max_consecutive_losses=max_streak,
         ))
     return results
 

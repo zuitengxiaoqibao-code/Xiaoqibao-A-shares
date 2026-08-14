@@ -27,3 +27,9 @@ def test_backtest_accepts_parameterized_strategy_models() -> None:
 
     assert request.lookback_window == 30
     assert request.exit_window == 10
+    assert request.stamp_duty_rate == Decimal("0.0005")
+
+
+def test_backtest_rejects_negative_stamp_duty() -> None:
+    with pytest.raises(ValidationError):
+        BacktestRequest(stamp_duty_rate=Decimal("-0.0001"))

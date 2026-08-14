@@ -21,6 +21,16 @@ from qibao_api.a_shares.candidate_sentiment_repository import (
     CandidateSentimentStoreError,
 )
 from qibao_api.a_shares.candidate_sentiment_service import CandidateSentimentService
+from qibao_api.a_shares.company_research_ai_cache import (
+    CompanyResearchAIResultRepository,
+    CompanyResearchAIResultStoreError,
+)
+from qibao_api.a_shares.company_research_ai_tasks import CompanyResearchAITaskService
+from qibao_api.a_shares.company_research_versions import (
+    CompanyResearchVersionRepository,
+    CompanyResearchVersionStoreError,
+)
+from qibao_api.operations.shared_snapshots import SharedSnapshotRegistry
 from qibao_api.gongbu.fund_flow import FundFlowRepository
 from qibao_api.gongbu.stock_news_sources import CompositeStockNewsSource
 from qibao_api.gongbu.tdx_local_daily import LocalTdxMarketSentimentSource
@@ -137,6 +147,35 @@ async def test_history_symbol_reconciliation_can_be_deferred_and_cancelled() -> 
 
 
 @pytest.mark.asyncio
+async def test_sector_fund_flow_sampling_runs_off_request_path_and_uses_session_interval() -> None:
+    delays: list[float] = []
+    calls = 0
+
+    class Service:
+        async def sync(self):
+            nonlocal calls
+            calls += 1
+
+    async def controlled_sleep(delay: float) -> None:
+        delays.append(delay)
+        if len(delays) >= 2:
+            raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        await main_module._sector_fund_flow_sampling_loop(
+            Service(),
+            clock=lambda: datetime(2026, 8, 10, 2, 30, tzinfo=timezone.utc),
+            sleep=controlled_sleep,
+            initial_delay_seconds=5,
+            intraday_interval_seconds=60,
+            idle_interval_seconds=900,
+        )
+
+    assert calls == 1
+    assert delays == [5, 60]
+
+
+@pytest.mark.asyncio
 async def test_lifespan_does_not_wait_for_remote_universe_refresh(
     tmp_path, monkeypatch
 ) -> None:
@@ -225,6 +264,7 @@ async def test_lifespan_injects_guarded_production_sources_and_closes_compliance
 ) -> None:
     tdx_overview_calls = []
     market_review_calls = []
+    sector_sampling_calls = []
 
     class LocalOverviewSource:
         def __init__(self, **kwargs) -> None:
@@ -260,6 +300,10 @@ async def test_lifespan_injects_guarded_production_sources_and_closes_compliance
         def close(self) -> None:
             market_review_calls.append(("close",))
 
+    async def sector_sampling_loop(_service, **kwargs) -> None:
+        sector_sampling_calls.append(kwargs)
+        await asyncio.Event().wait()
+
     monkeypatch.setattr(main_module, "Settings", lambda: FakeSettings(tmp_path))
     monkeypatch.setenv("QIBAO_PORTABLE_ROOT", str(tmp_path))
     tdx_home = tmp_path / "preferred-tdx"
@@ -273,6 +317,11 @@ async def test_lifespan_injects_guarded_production_sources_and_closes_compliance
     ))
     monkeypatch.setattr(main_module, "LocalTdxOverviewSource", LocalOverviewSource)
     monkeypatch.setattr(main_module, "LocalMarketReviewSource", MarketReviewSource)
+    monkeypatch.setattr(
+        main_module,
+        "_sector_fund_flow_sampling_loop",
+        sector_sampling_loop,
+    )
     monkeypatch.setattr(
         main_module, "create_tdx_client", lambda: (_ for _ in ()).throw(RuntimeError("offline"))
     )
@@ -403,6 +452,7 @@ async def test_lifespan_injects_guarded_production_sources_and_closes_compliance
         assert application.state.market_overview_service.local_market_source is (
             application.state.local_tdx_overview_source
         )
+        assert application.state.market_overview_service.initial_refresh_delay_seconds == 1
         assert isinstance(
             application.state.candidate_sentiment_service,
             CandidateSentimentService,
@@ -441,11 +491,58 @@ async def test_lifespan_injects_guarded_production_sources_and_closes_compliance
         assert premarket_ai._client is application.state.decision_market_feed.client
         assert application.state.intraday_monitor.ai_gateway is premarket_ai
         assert application.state.decision_phase_runner.postclose.ai_gateway is premarket_ai
+        company_research_version_repository = (
+            application.state.company_research_version_repository
+        )
+        company_research_ai_result_repository = (
+            application.state.company_research_ai_result_repository
+        )
+        company_research_ai_task_service = (
+            application.state.company_research_ai_task_service
+        )
+        shared_snapshot_registry = application.state.shared_snapshot_registry
+        assert isinstance(shared_snapshot_registry, SharedSnapshotRegistry)
+        assert (
+            application.state.performance_store.shared_snapshot_registry
+            is shared_snapshot_registry
+        )
+        assert (
+            application.state.market_overview_service.shared_snapshot_registry
+            is shared_snapshot_registry
+        )
+        assert (
+            company_research_version_repository.shared_snapshot_registry
+            is shared_snapshot_registry
+        )
+        assert (
+            application.state.quant_strategy_service.shared_snapshot_registry
+            is shared_snapshot_registry
+        )
+        assert isinstance(
+            company_research_version_repository,
+            CompanyResearchVersionRepository,
+        )
+        assert isinstance(
+            company_research_ai_result_repository,
+            CompanyResearchAIResultRepository,
+        )
+        assert isinstance(
+            company_research_ai_task_service,
+            CompanyResearchAITaskService,
+        )
+        assert (
+            company_research_ai_task_service.result_repository
+            is company_research_ai_result_repository
+        )
 
     assert [call[0] for call in tdx_overview_calls] == ["init", "start", "close"]
     assert tdx_overview_calls[0][1]["fallback"] is not None
     assert tdx_overview_calls[0][1]["rpc"] is None
+    assert tdx_overview_calls[0][1]["initial_delay_seconds"] == 15
     assert [call[0] for call in market_review_calls] == ["init", "start", "close"]
+    assert market_review_calls[0][1]["initial_delay_seconds"] == 15
+    assert market_review_calls[0][1]["defer_cache_validation"] is True
+    assert sector_sampling_calls == [{"initial_delay_seconds": 30}]
 
     with pytest.raises(sqlite3.ProgrammingError, match="closed"):
         compliance.list_feature_source_history("realtime_quotes", "a_share")
@@ -463,6 +560,12 @@ async def test_lifespan_injects_guarded_production_sources_and_closes_compliance
         sentiment_repository.latest()
     with pytest.raises(CandidateSentimentStoreError, match="read failed") as caught:
         candidate_sentiment_repository.latest("a" * 64)
+    assert isinstance(caught.value.__cause__, sqlite3.ProgrammingError)
+    with pytest.raises(CompanyResearchVersionStoreError, match="read failed") as caught:
+        company_research_version_repository.latest("600519")
+    assert isinstance(caught.value.__cause__, sqlite3.ProgrammingError)
+    with pytest.raises(CompanyResearchAIResultStoreError, match="read failed") as caught:
+        company_research_ai_result_repository.get("research-v1", ("configured", "model"))
     assert isinstance(caught.value.__cause__, sqlite3.ProgrammingError)
 
 

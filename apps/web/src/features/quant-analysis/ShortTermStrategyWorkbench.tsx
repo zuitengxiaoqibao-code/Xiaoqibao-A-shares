@@ -4,6 +4,10 @@ import {
 } from "lucide-react";
 
 import { QuantChart } from "./QuantChart";
+import { CandidateFunnel } from "./CandidateFunnel";
+import { EvidenceLedger } from "../../shared/evidence/EvidenceLedger";
+import { FieldEvidenceDetails } from "../../shared/evidence/FieldEvidenceDetails";
+import { chartTheme } from "../../shared/visualization/chartTheme";
 import type { QuantRegimeMetrics, QuantStrategyCandidate, QuantStrategyDashboard } from "./types";
 
 type Props = {
@@ -13,12 +17,12 @@ type Props = {
 };
 
 const regimeColor: Record<string, string> = {
-  情绪主升: "#ff5c8a",
-  指数权重进攻: "#f4c76a",
-  轮动震荡: "#34d6ff",
-  冰点修复: "#52e0a4",
-  高位退潮: "#ff765f",
-  缩量混沌: "#778899",
+  情绪主升: chartTheme.eventColors.capital,
+  指数权重进攻: chartTheme.warningColor,
+  轮动震荡: chartTheme.liveColor,
+  冰点修复: chartTheme.eventColors.company,
+  高位退潮: chartTheme.riskMediumColor,
+  缩量混沌: chartTheme.unavailableColor,
 };
 
 const regimeOrder = [
@@ -76,12 +80,12 @@ function percent(value: string): string {
   return parsed === null ? "--" : `${(parsed * 100).toFixed(1)}%`;
 }
 
-function regimeGauge(dashboard: QuantStrategyDashboard): EChartsOption {
+export function regimeGauge(dashboard: QuantStrategyDashboard): EChartsOption {
   const regime = dashboard.regime.regime ?? "待判定";
   const regimeIndex = Math.max(0, regimeOrder.indexOf(regime));
   const value = (regimeIndex + 0.5) / regimeOrder.length * 100;
   const emotion = number(dashboard.regime.emotion_score);
-  const color = regimeColor[regime] ?? "#778899";
+  const color = regimeColor[regime] ?? chartTheme.unavailableColor;
   const segments = regimeOrder.map((name, index) => [
     (index + 1) / regimeOrder.length,
     name === regime ? regimeColor[name] : `${regimeColor[name]}55`,
@@ -99,10 +103,33 @@ function regimeGauge(dashboard: QuantStrategyDashboard): EChartsOption {
       progress: { show: false },
       pointer: { length: "58%", width: 4, itemStyle: { color } },
       axisTick: { show: false },
-      splitLine: { distance: -16, length: 7, lineStyle: { color: "#52687a", width: 1 } },
-      axisLabel: { distance: 18, color: "#60798b", fontSize: 12 },
+      splitLine: { distance: -16, length: 7, lineStyle: { color: chartTheme.mutedTextColor, width: 1 } },
+      axisLabel: {
+        distance: 18,
+        color: chartTheme.mutedTextColor,
+        fontSize: 13,
+        fontWeight: 700,
+        backgroundColor: chartTheme.tooltipBackgroundColor,
+        borderRadius: 2,
+        padding: [2, 4],
+        formatter: (axisValue: number) => axisValue === 0 || axisValue === 50 || axisValue === 100
+          ? `${axisValue}`
+          : "",
+      },
       anchor: { show: true, size: 8, itemStyle: { color } },
-      detail: { valueAnimation: false, offsetCenter: [0, "48%"], color, fontSize: 18, formatter: `${regime}\n情绪 ${emotion === null ? "--" : emotion.toFixed(1)}` },
+      detail: {
+        valueAnimation: false,
+        offsetCenter: [0, "43%"],
+        color,
+        fontSize: 18,
+        lineHeight: 28,
+        formatter: `{regime|${regime}}\n{label|情绪 }{score|${emotion === null ? "--" : emotion.toFixed(1)}}`,
+        rich: {
+          regime: { color, fontSize: 18, fontWeight: 700, lineHeight: 28 },
+          label: { color: chartTheme.mutedTextColor, fontSize: 13, fontWeight: 600, lineHeight: 28 },
+          score: { color: chartTheme.textColor, fontSize: 22, fontWeight: 800, lineHeight: 28 },
+        },
+      },
       title: { show: false },
       data: [{ value }],
     }],
@@ -117,11 +144,35 @@ function scoreTone(label: string, value: number | null): string {
 
 function statusLabel(status: QuantStrategyCandidate["status"]): string {
   return {
-    alert: "可提醒",
-    watch: "观察",
-    reject: "不提醒",
-    pending_trigger: "待盘中确认",
+    alert: "触发成立",
+    watch: "触发成立",
+    reject: "不具备条件",
+    pending_trigger: "等待确认",
   }[status];
+}
+
+type FunnelStageKey = NonNullable<QuantStrategyDashboard["candidate_funnel"]>["stages"][number]["key"];
+
+function stageCount(dashboard: QuantStrategyDashboard, key: FunnelStageKey): number | null {
+  return dashboard.candidate_funnel?.stages.find((item) => item.key === key)?.count ?? null;
+}
+
+function QuantEvidenceSummary({ dashboard }: { dashboard: QuantStrategyDashboard }) {
+  const universe = stageCount(dashboard, "universe");
+  const factorReady = stageCount(dashboard, "factor_ready");
+  const finalCandidates = stageCount(dashboard, "final_candidates");
+  const excluded = universe !== null && finalCandidates !== null ? Math.max(0, universe - finalCandidates) : null;
+  const coverage = number(dashboard.regime.coverage_percent);
+  return <section className="strategy-evidence-summary" role="region" aria-label="量化证据摘要">
+    <header><div><Database size={14} /><b>量化证据摘要</b></div><small>{dashboard.as_of} · 只统计真实返回样本</small></header>
+    <div>
+      <article><span>全市场样本</span><strong>{universe === null ? "--" : universe.toLocaleString("zh-CN")}</strong><small>扫描范围</small></article>
+      <article><span>因子有效样本</span><strong>{factorReady === null ? "--" : factorReady.toLocaleString("zh-CN")}</strong><small>历史与字段可计算</small></article>
+      <article><span>最终候选</span><strong>{finalCandidates === null ? "--" : finalCandidates.toLocaleString("zh-CN")}</strong><small>达到当前筛选口径</small></article>
+      <article><span>筛选淘汰</span><strong>{excluded === null ? "--" : excluded.toLocaleString("zh-CN")}</strong><small>不代表亏损预测</small></article>
+      <article><span>证据覆盖</span><strong>{coverage === null ? "--" : `${coverage.toFixed(0)}%`}</strong><small>{dashboard.status === "ready" ? "可用于当前结论" : "部分字段仍待补齐"}</small></article>
+    </div>
+  </section>;
 }
 
 function CandidateTag({ candidate }: { candidate: QuantStrategyCandidate }) {
@@ -146,6 +197,15 @@ function CandidateTag({ candidate }: { candidate: QuantStrategyCandidate }) {
       <span>当前建议仓位 <b>{percent(candidate.position)}</b></span>
       <span>触发后仓位上限 <b>{percent(candidate.planned_position)}</b></span>
     </div>
+    {(candidate.alert_gate?.checks.length ?? 0) > 0 && <section className="strategy-alert-gate" aria-label="严格提醒门槛" data-eligible={candidate.alert_gate!.eligible}>
+      <header><b>严格提醒门槛</b><span>{candidate.alert_gate!.eligible ? "全部通过" : `${candidate.alert_gate!.blockers.length} 项未通过`}</span></header>
+      <div>{candidate.alert_gate!.checks.map((check) => <span className={check.passed ? "passed" : "blocked"} key={check.key}><i>{check.passed ? "✓" : "×"}</i><b>{check.label}</b><small>{check.detail}</small></span>)}</div>
+    </section>}
+    {(candidate.signal_votes?.length ?? 0) > 0 && <div className="strategy-vote-engine" aria-label="信号投票仓位引擎">
+      <header><span>信号一致度 <b>{Number(candidate.vote_consensus ?? 0).toFixed(2)}</b></span><span>投票仓位 <b>{percent(candidate.vote_position ?? "0")}</b></span></header>
+      <div>{candidate.signal_votes!.map((item) => <span className={item.vote > 0 ? "long" : item.vote < 0 ? "short" : "neutral"} key={item.signal}><b>{item.vote > 0 ? "+1" : item.vote < 0 ? "-1" : "0"}</b>{item.signal}<small>{percent(item.evidence_value)}</small></span>)}</div>
+      <p>R(t) = Rmax × Σsⱼ / J · A 股长仓模式将负值截断为 0</p>
+    </div>}
     <div className="strategy-evidence-columns">
       <div><h4><Target size={13} />触发条件</h4>{candidate.buy_triggers.map((item) => <p key={item}>{item}</p>)}</div>
       <div><h4><ShieldAlert size={13} />失效条件</h4>{candidate.invalidation_rules.map((item) => <p key={item}>{item}</p>)}</div>
@@ -209,6 +269,11 @@ export function ShortTermStrategyWorkbench({ dashboard, loading, error }: Props)
         return <article className={value === null ? "missing" : "ready"} key={definition.key}><span>{definition.label}</span><strong>{value === null ? "--" : `${value.toFixed(definition.suffix === "x" ? 2 : 1)}${definition.suffix}`}</strong><small>{value === null ? "数据待补全" : definition.detail}</small></article>;
       })}</div>
     </section>
+
+    {dashboard.candidate_funnel && <CandidateFunnel funnel={dashboard.candidate_funnel} />}
+    <QuantEvidenceSummary dashboard={dashboard} />
+    {(dashboard.field_evidence?.length ?? 0) > 0 && <FieldEvidenceDetails entries={dashboard.field_evidence!} />}
+    {(dashboard.evidence_ledger?.length ?? 0) > 0 && <EvidenceLedger entries={dashboard.evidence_ledger!} />}
 
     <section className="strategy-recommendations">
       <header><div><Target size={15} /><h3>模型匹配候选</h3></div><small>StrategyScore = 风格×40 + 个股×30 + 触发×20 + 盈亏比×10 - 风险扣分</small></header>

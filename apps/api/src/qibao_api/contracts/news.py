@@ -16,6 +16,7 @@ from qibao_api.contracts.instruments import (
     validate_convertible_bond_code,
 )
 from qibao_api.contracts.market import AssetKind
+from qibao_api.contracts.evidence_ledger import EvidenceLedgerEntry
 
 
 NonBlank = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
@@ -73,6 +74,7 @@ class NormalizedNewsEvent(BaseModel):
     association_kind: AssociationKind = "macro"
     association_reasons: tuple[NonBlank, ...] = ()
     review_state: Literal["pending", "verified", "rejected"]
+    evidence_ledger: tuple[EvidenceLedgerEntry, ...] = ()
 
     @model_validator(mode="before")
     @classmethod

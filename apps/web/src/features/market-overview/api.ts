@@ -1,9 +1,10 @@
 import type { MarketIntervalReviewLoader, MarketIntervalReviewSnapshot, MarketOverviewLoader, MarketOverviewResponse } from "./types";
+import { coalescedFetch } from "../../shared/coalescedFetch";
 
 export const loadMarketOverview: MarketOverviewLoader = async (signal) => {
   let response: Response;
   try {
-    response = await fetch("/api/v1/a-shares/market-overview", { signal });
+    response = await coalescedFetch("/api/v1/a-shares/market-overview", { signal });
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") throw error;
     throw new Error("信息总览数据暂不可用，请检查本地 API 后重试。");
@@ -23,7 +24,7 @@ export const loadMarketOverview: MarketOverviewLoader = async (signal) => {
 export const loadMarketIntervalReview: MarketIntervalReviewLoader = async (startDate, endDate, signal) => {
   let response: Response;
   try {
-    response = await fetch(`/api/v1/a-shares/market-overview/interval?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`, { signal });
+    response = await coalescedFetch(`/api/v1/a-shares/market-overview/interval?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`, { signal });
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") throw error;
     throw new Error("区间统计数据暂不可用，请检查本地日线数据源。");

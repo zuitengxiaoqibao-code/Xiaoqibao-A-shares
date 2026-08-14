@@ -13,6 +13,8 @@ const anomaly = (id: string, minute: string): OverviewAnomaly => ({
   direction: "positive",
   themes: ["算力"],
   symbols: ["603629"],
+  credibility: "verified",
+  strength: "high",
 });
 
 
@@ -97,6 +99,17 @@ describe("AnomalyVoiceAnnouncer", () => {
 
     expect(created[0].pause).toHaveBeenCalledTimes(1);
     expect(URL.revokeObjectURL).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not speak pending or uncertain anomalies", async () => {
+    const synthesize = vi.fn().mockResolvedValue(new Blob(["audio"], { type: "audio/mpeg" }));
+    render(<AnomalyVoiceAnnouncer
+      anomalies={[{ ...anomaly("a1", "01"), credibility: "pending", direction: "uncertain" }]}
+      synthesize={synthesize}
+    />);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(synthesize).not.toHaveBeenCalled();
   });
 
   it("keeps market information visible when cloud synthesis fails", async () => {

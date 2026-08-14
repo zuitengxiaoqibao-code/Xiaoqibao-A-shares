@@ -18,6 +18,12 @@ const alertMeta = {
   verification_state: "multi_source_confirmed" as const,
   source_count: 2,
   urgency: "breaking" as const,
+  category: "industry_sector" as const,
+  strength: "medium" as const,
+  credibility: "multi_source_verified" as const,
+  duration: "unknown" as const,
+  price_reflection: "unknown" as const,
+  follow_up_indicators: ["观察板块成交额、涨停扩散和龙头持续性"],
 };
 
 
@@ -80,28 +86,30 @@ function denseTimeline(): StockTimelineResponse {
 
 
 describe("stockTimelineOption", () => {
-  it("uses A-share colors and chronological two-digit anchors instead of vertical Chinese labels", () => {
+  it("renders event headlines centered on vertical dashed lines without changing red-green candlesticks", () => {
     const option = stockTimelineOption(timeline(), "negative");
     const candle = (option.series as Array<Record<string, unknown>>)[0];
     expect(candle.itemStyle).toMatchObject({ color: "#f04f5f", color0: "#2fcf91" });
     const markLine = candle.markLine as { data: Array<Record<string, unknown>> };
     expect(markLine.data).toHaveLength(3);
     expect(markLine.data.map((item) => (item.lineStyle as { color: string }).color)).toEqual([
-      "#f04f5f", "#2fcf91", "#7d8993",
+      "#f6bd60", "#f6bd60", "#f6bd60",
     ]);
     expect(markLine.data.map((item) => (item.label as { formatter: string }).formatter)).toEqual([
-      "01", "02", "03",
+      "白\n酒\n消\n费", "业\n绩\n压\n力", "渠\n道\n调\n研",
     ]);
     expect(markLine.data.map((item) => item.name)).not.toContain("weekend");
-    expect(markLine.data.every((item) => !(item.label as { formatter: string }).formatter.includes("\n"))).toBe(true);
+    expect(markLine.data.every((item) => (item.lineStyle as { type: string }).type === "dashed")).toBe(true);
+    expect(markLine.data.every((item) => (item.label as { position: string }).position === "middle")).toBe(true);
+    expect(markLine.data.every((item) => (item.label as { rotate: number }).rotate === 0)).toBe(true);
     expect((markLine.data[1].lineStyle as { width: number }).width).toBe(2);
   });
 
-  it("uses compact annotation lanes when numbered anchors are close together", () => {
+  it("keeps every event title centered on its own line when anchors are close together", () => {
     const option = stockTimelineOption(timeline(), null);
     const candle = (option.series as Array<Record<string, unknown>>)[0];
     const markLine = candle.markLine as { data: Array<{ label: { offset: [number, number] } }> };
-    expect(markLine.data.map((item) => item.label.offset[1])).toEqual([0, 20, 40]);
+    expect(markLine.data.map((item) => item.label.offset[1])).toEqual([0, 0, 0]);
   });
 
   it("thins dense evidence labels while always keeping the selected event visible", () => {
@@ -111,7 +119,7 @@ describe("stockTimelineOption", () => {
 
     expect(markLine.data).toHaveLength(15);
     expect(markLine.data.map((item) => item.name)).toContain("dense-1");
-    expect(markLine.data.every((item) => /^\d{2}$/.test(item.label.formatter))).toBe(true);
+    expect(markLine.data.every((item) => item.label.formatter.includes("\n"))).toBe(true);
 
     const compact = stockTimelineOption(denseTimeline(), "dense-1", 3);
     const compactCandle = (compact.series as Array<Record<string, unknown>>)[0];
@@ -159,6 +167,12 @@ describe("StockEventKline", () => {
     expect(screen.getByRole("region", { name: "当前事件详情" })).toHaveTextContent("多源确认");
     expect(screen.getByRole("region", { name: "当前事件详情" })).toHaveTextContent("直接关联");
     expect(screen.getByRole("region", { name: "当前事件详情" })).toHaveTextContent("2 个来源");
+    expect(screen.getByRole("region", { name: "当前事件详情" })).toHaveTextContent("行业板块");
+    expect(screen.getByRole("region", { name: "当前事件详情" })).toHaveTextContent("影响强度：中");
+    expect(screen.getByRole("region", { name: "当前事件详情" })).toHaveTextContent("价格反映：待核验");
+    expect(screen.getByRole("region", { name: "当前事件详情" })).toHaveTextContent("后续观察：观察板块成交额、涨停扩散和龙头持续性");
+    expect(screen.getByRole("region", { name: "个股新闻与热点事件 K 线" })).toHaveTextContent("事件归属色不代表涨跌");
+    expect(screen.getByRole("region", { name: "个股新闻与热点事件 K 线" }).querySelectorAll("[data-event-category-legend]")).toHaveLength(8);
     expect(within(evidenceLog).getByText("机构发布渠道调研纪要").closest("button")).toHaveAttribute("aria-pressed", "true");
 
     fireEvent.click(screen.getByRole("button", { name: /^02 .*公司披露阶段性经营压力/ }));

@@ -14,11 +14,18 @@ const overview: MarketOverviewResponse = {
   limit_ecology: { limit_up_count: 78, limit_down_count: 6, broken_limit_up_count: 40, seal_rate_percent: "66.1" },
   liquidity: { total_amount_yi: "15862.96", baseline_amount_yi: "19444.39", relative_amount: "0.82" },
   market_data: { source: "tdx-local-rpc", quality: "ready", observed_at: "2026-07-29T10:30:00+08:00", quote_count: 5191, universe_count: 5207 },
+  field_evidence: [{
+    field_path: "sentiment.score", value: "76", source: "market-sentiment-cache", source_field: "score",
+    status: "live", trade_date: "2026-07-29", observed_at: "2026-07-29T10:30:00+08:00",
+    coverage_percent: "88", derived: true, formula: "a-share-sentiment-v2",
+    evidence_ids: ["sentiment-1"], limitations: [],
+  }],
   indices: [
     { instrument: "sh000001", name: "上证指数", value: "3823.73", change: "9.53", change_percent: "0.25", observed_at: "2026-07-29T10:30:00+08:00", source: "腾讯行情", quality: "ready" },
   ],
   minute_series: [
     { observed_at: "2026-07-29T09:30:00+08:00", price: "3800", volume: "100", amount: "1000" },
+    { observed_at: "2026-07-29T10:00:00+08:00", price: "3812", volume: "110", amount: "1150" },
     { observed_at: "2026-07-29T10:30:00+08:00", price: "3823.73", volume: "120", amount: "1300" },
   ],
   anomalies: [
@@ -70,6 +77,7 @@ const alertResponse: BreakingNewsAlertResponse = {
 describe("MarketOverviewView", () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
+    localStorage.clear();
     Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
   });
   afterEach(() => vi.useRealTimers());
@@ -149,12 +157,226 @@ describe("MarketOverviewView", () => {
     expect(screen.getByRole("region", { name: "A 股市场情绪与核心指数" })).toHaveTextContent("76");
     expect(screen.getByRole("region", { name: "A 股市场情绪与核心指数" })).toHaveTextContent("中性");
     expect(screen.getByRole("region", { name: "关键指标" })).toHaveTextContent("封板率");
+    expect(screen.getByRole("group", { name: "关键字段证据" })).toHaveTextContent("1 项实时");
     expect(screen.getByRole("navigation", { name: "市场功能筛选" })).toHaveTextContent("盘中异动");
     expect(screen.getByRole("region", { name: "上证指数分时与异动" })).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "分时事件脉冲轨道" })).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "当前异动摘要" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "异动记录" })).toHaveTextContent("01");
     expect(screen.getByRole("region", { name: "A 股关联资讯" })).toHaveTextContent("算力方向活跃");
     expect(screen.getByRole("region", { name: "A 股关联资讯" })).not.toHaveTextContent("海外商品期货波动");
     expect(screen.getByRole("region", { name: "热门板块与成分股" })).toHaveTextContent("脑科学");
     expect(screen.getByRole("status")).toHaveTextContent("部分数据可用");
+  });
+
+  it("groups collapsed evidence summaries into one compact responsive row", async () => {
+    const overviewWithEvidenceLedger: MarketOverviewResponse = {
+      ...overview,
+      review: {
+        as_of: "2026-07-29",
+        observed_at: "2026-07-29T10:30:00+08:00",
+        latest_trade_date: "2026-07-29",
+        source: "tdx-local-history",
+        quality: "partial",
+        universe_count: 5198,
+        history_ready_count: 5123,
+        watermark: {
+          dominant_trade_date: "2026-07-29",
+          latest_available_trade_date: "2026-07-29",
+          universe_count: 5198,
+          history_ready_count: 5123,
+          coverage_percent: "98.56",
+          fragmented_latest_count: 0,
+          missing_history_count: 75,
+          quality: "partial",
+          blockers: ["history_coverage_low"],
+        },
+        evidence_ledger: [{
+          source: "tdx-local-rpc",
+          operation: "market-overview",
+          status: "ready",
+          trade_date: "2026-07-29",
+          observed_at: "2026-07-29T10:30:00+08:00",
+          formula_version: null,
+          sample_count: 5191,
+          limitations: [],
+        }],
+        consecutive_limit_up: [],
+        first_limit_up: [],
+        new_high_100: [],
+        previous_limit_up: [],
+        volume_breakouts: [],
+        previous_high_breakouts: [],
+        low_position_volume: [],
+        dragon_tiger: [],
+        warnings: ["history_coverage_low"],
+        formula_version: "market-review-v1",
+      },
+    };
+
+    render(<MarketOverviewView load={() => Promise.resolve(overviewWithEvidenceLedger)} />);
+
+    const summaryRow = await screen.findByRole("group", { name: "数据真实性与证据摘要" });
+    expect(summaryRow).toHaveClass("overview-evidence-summary-row");
+    expect(summaryRow).toContainElement(screen.getByRole("group", { name: "关键字段证据" }));
+    expect(summaryRow).toContainElement(screen.getByRole("region", { name: "证据账本" }));
+  });
+
+  it("synchronizes the selected summary and numbered anomaly record without a top event rail", async () => {
+    const twoEvents = {
+      ...overview,
+      minute_series: [
+        ...overview.minute_series,
+        { observed_at: "2026-07-29T10:31:00+08:00", price: "3825", volume: "130", amount: "1400" },
+      ],
+      anomalies: [
+        ...overview.anomalies,
+        { anomaly_id: "a2", occurred_at: "2026-07-29T10:31:00+08:00", label: "医药生物", headline: "创新药方向出现已核验异动", direction: "negative" as const, themes: ["创新药"], symbols: ["600000"] },
+      ],
+    } satisfies MarketOverviewResponse;
+
+    render(<MarketOverviewView load={() => Promise.resolve(twoEvents)} />);
+
+    const anomalyPanel = await screen.findByRole("region", { name: "异动记录" });
+    fireEvent.click(within(anomalyPanel).getByRole("button", { name: /10:31 .*医药生物/ }));
+
+    expect(screen.getByRole("region", { name: "当前异动摘要" })).toHaveTextContent("创新药方向出现已核验异动");
+    expect(screen.getByRole("region", { name: "异动记录" }).querySelector('button[aria-pressed="true"]')).toHaveTextContent("02");
+    expect(screen.queryByRole("navigation", { name: "分时事件脉冲轨道" })).not.toBeInTheDocument();
+  });
+
+  it("keeps same-day anomaly events stable across price refreshes and only appends unseen event ids", async () => {
+    const changedExisting = {
+      ...overview,
+      observed_at: "2026-07-29T10:35:00+08:00",
+      minute_series: [
+        ...overview.minute_series,
+        { observed_at: "2026-07-29T10:35:00+08:00", price: "3830", volume: "150", amount: "1600" },
+      ],
+      anomalies: [
+        { ...overview.anomalies[0], label: "不应替换的刷新文字", headline: "不应覆盖原始异动摘要" },
+        { anomaly_id: "a2", occurred_at: "2026-07-29T10:35:00+08:00", label: "机器人", headline: "机器人新增异动", direction: "positive" as const, themes: ["机器人"], symbols: ["603629"] },
+      ],
+    } satisfies MarketOverviewResponse;
+    const load = vi.fn<() => Promise<MarketOverviewResponse>>()
+      .mockResolvedValueOnce(overview)
+      .mockResolvedValueOnce(changedExisting);
+
+    render(<MarketOverviewView load={load} />);
+    const anomalyPanel = await screen.findByRole("region", { name: "异动记录" });
+    expect(anomalyPanel).toHaveTextContent("光电共封装 CPO");
+    expect(anomalyPanel).toHaveTextContent("01");
+
+    await act(async () => vi.advanceTimersByTime(5000));
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByRole("region", { name: "异动记录" })).toHaveTextContent("机器人新增异动"));
+
+    const refreshedPanel = screen.getByRole("region", { name: "异动记录" });
+    expect(refreshedPanel).toHaveTextContent("光电共封装 CPO");
+    expect(refreshedPanel).not.toHaveTextContent("不应替换的刷新文字");
+    expect(refreshedPanel).not.toHaveTextContent("不应覆盖原始异动摘要");
+    expect(within(refreshedPanel).getByRole("button", { name: /10:00 .*光电共封装 CPO/ })).toHaveTextContent("01");
+    expect(within(refreshedPanel).getByRole("button", { name: /10:35 .*机器人/ })).toHaveTextContent("02");
+  });
+
+  it("resets the anomaly snapshot when the confirmed trading date changes", async () => {
+    const nextDay = {
+      ...overview,
+      as_of: "2026-07-30",
+      observed_at: "2026-07-30T09:31:00+08:00",
+      minute_series: [{ observed_at: "2026-07-30T09:31:00+08:00", price: "3840", volume: "10", amount: "100" }],
+      anomalies: [{ anomaly_id: "b1", occurred_at: "2026-07-30T09:31:00+08:00", label: "次日事件", headline: "新交易日异动", direction: "neutral" as const, themes: [], symbols: ["603629"] }],
+    } satisfies MarketOverviewResponse;
+    const load = vi.fn<() => Promise<MarketOverviewResponse>>()
+      .mockResolvedValueOnce(overview)
+      .mockResolvedValueOnce(nextDay);
+
+    render(<MarketOverviewView load={load} />);
+    await waitFor(() => expect(screen.getByRole("region", { name: "异动记录" })).toHaveTextContent("光电共封装 CPO"));
+    await act(async () => vi.advanceTimersByTime(5000));
+    await waitFor(() => expect(screen.getByRole("region", { name: "异动记录" })).toHaveTextContent("次日事件"));
+
+    const anomalyPanel = screen.getByRole("region", { name: "异动记录" });
+    expect(anomalyPanel).not.toHaveTextContent("光电共封装 CPO");
+    expect(anomalyPanel).toHaveTextContent("新交易日异动");
+  });
+
+  it("opens the regime workspace for an intraday snapshot without verified anomalies", async () => {
+    localStorage.clear();
+    const calmIntraday = {
+      ...overview,
+      anomalies: [],
+      market_data: { ...overview.market_data, phase: "intraday" as const, freshness: "live" as const },
+      regime_metrics: {
+        up_ratio: "52", zt_ratio: "1.2", dt_ratio: "0.2", median_ret: "0.3", amt_heat: "1.05",
+        strong_close_ratio: "48", weak_close_ratio: "24", limit_fail_ratio: "18", panic_ratio: "1.1",
+        amp_ratio: "6.2", net_positive_ratio: "53", large_amount_strong_close_ratio: "58",
+        factor_coverage_percent: "100",
+      },
+      regime: {
+        regime: "轮动震荡" as const,
+        emotion_score: "58", risk_score: "35", heat_score: "54", rotation_score: "66",
+        coverage_percent: "100", market_coef: "0.5", suitable_strategies: ["0轴低吸"],
+        avoid_strategies: ["追高"], reasons: ["市场涨跌均衡"], missing_factors: [],
+        rule_matched: true, quality: "ready" as const, formula_version: "regime-v2",
+      },
+    } satisfies MarketOverviewResponse;
+
+    render(<MarketOverviewView load={() => Promise.resolve(calmIntraday)} />);
+
+    expect(await screen.findByRole("region", { name: "A 股市场风格识别工作台" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "情绪周期" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("opens the review statistics workspace for a final post-close snapshot", async () => {
+    localStorage.clear();
+    const finalSnapshot = {
+      ...overview,
+      market_data: { ...overview.market_data, phase: "postclose" as const, freshness: "final" as const },
+    } satisfies MarketOverviewResponse;
+
+    render(<MarketOverviewView load={() => Promise.resolve(finalSnapshot)} />);
+
+    expect(await screen.findByRole("region", { name: "复盘统计大全专属工作区" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "复盘统计大全" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("does not replace the user's selected workspace during a background refresh", async () => {
+    localStorage.clear();
+    const calmIntraday = {
+      ...overview,
+      anomalies: [],
+      market_data: { ...overview.market_data, phase: "intraday" as const, freshness: "live" as const },
+    } satisfies MarketOverviewResponse;
+    const load = vi.fn<() => Promise<MarketOverviewResponse>>()
+      .mockResolvedValueOnce(calmIntraday)
+      .mockResolvedValueOnce({ ...calmIntraday, anomalies: overview.anomalies });
+
+    render(<MarketOverviewView load={load} />);
+    await screen.findByRole("region", { name: "情绪周期专属工作区" });
+    fireEvent.click(screen.getByRole("button", { name: "炸板" }));
+    expect(screen.getByRole("region", { name: "炸板专属工作区" })).toBeInTheDocument();
+
+    await act(async () => vi.advanceTimersByTime(5000));
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+
+    expect(screen.getByRole("button", { name: "炸板" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("region", { name: "炸板专属工作区" })).toBeInTheDocument();
+  });
+
+  it("restores the last explicitly selected workspace after leaving and returning", async () => {
+    const calmIntraday = {
+      ...overview,
+      anomalies: [],
+      market_data: { ...overview.market_data, phase: "intraday" as const, freshness: "live" as const },
+    } satisfies MarketOverviewResponse;
+    localStorage.setItem("qibao-market-overview-feature", "炸板");
+    render(<MarketOverviewView load={() => Promise.resolve(calmIntraday)} />);
+
+    expect(await screen.findByRole("region", { name: "炸板专属工作区" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "炸板" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "板块涨停" }));
+    expect(localStorage.getItem("qibao-market-overview-feature")).toBe("板块涨停");
   });
 
   it("shows the same-day cache immediately while the newest snapshot is still loading", async () => {
@@ -245,14 +467,15 @@ describe("MarketOverviewView", () => {
     expect(css).not.toMatch(/--overview-(?:bg|panel):\s*#f[0-9a-f]{5}\b/i);
   });
 
-  it("keeps ordinary workspace content content-sized instead of creating blank panels", () => {
+  it("keeps paired workspace panels equal-height without imposing a fixed minimum", () => {
     const css = readFileSync("src/features/market-overview/overview.css", "utf8");
     const rule = (selector: string) => {
       const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       return css.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
     };
 
-    expect(rule(".distinct-block-grid")).toContain("align-items: start");
+    expect(rule(".distinct-block-grid")).toContain("align-items: stretch");
+    expect(rule(".distinct-block")).toContain("height: 100%");
     expect(rule(".distinct-block")).not.toMatch(/min-height\s*:/);
     expect(rule(".distinct-block.size-tall")).not.toMatch(/min-height\s*:/);
     expect(rule(".distinct-block-body")).not.toMatch(/min-height\s*:/);
@@ -266,8 +489,9 @@ describe("MarketOverviewView", () => {
     render(<MarketOverviewView load={() => Promise.resolve(overview)} onOpenAShare={onOpenAShare} />);
     await screen.findByRole("button", { name: /脑科学.*4.24%/ });
 
-    fireEvent.click(screen.getByRole("button", { name: /10:00.*光电共封装 CPO/ }));
-    expect(screen.getByRole("button", { name: /10:00.*光电共封装 CPO/ })).toHaveAttribute("aria-pressed", "true");
+    const anomalyPanel = screen.getByRole("region", { name: "异动记录" });
+    fireEvent.click(within(anomalyPanel).getByRole("button", { name: /10:00.*光电共封装 CPO/ }));
+    expect(within(anomalyPanel).getByRole("button", { name: /10:00.*光电共封装 CPO/ })).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(screen.getByRole("button", { name: /旅游.*3.66%/ }));
     const stockTable = screen.getByRole("table", { name: "旅游成分股" });
     expect(within(stockTable).getByText("首旅酒店")).toBeInTheDocument();

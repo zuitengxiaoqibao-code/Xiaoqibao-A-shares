@@ -1,8 +1,9 @@
 import hashlib
+import json
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from collections import defaultdict
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from typing import Callable
@@ -11,18 +12,24 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from qibao_api.a_shares.market_regime import assess_market_regime
+from qibao_api.a_shares.unified_events import UnifiedEventProjectionService
 from qibao_api.a_shares.market_sentiment import FORMULA_VERSION
+from qibao_api.contracts.field_evidence import FieldEvidence
 from qibao_api.contracts.market_overview import (
     MarketOverviewResponse,
     OverviewAnomaly,
     OverviewBreadth,
+    OverviewDataScope,
     OverviewLimitEcology,
+    OverviewLargeOrderFlow,
     OverviewLiquidity,
     OverviewLiveFeedItem,
     OverviewMarketDataStatus,
+    OverviewOfficialEvent,
     OverviewRegimeAssessment,
     OverviewRegimeMetrics,
     OverviewSector,
+    OverviewSectorFundFlowPoint,
     OverviewSectorStock,
     OverviewSentiment,
 )
@@ -45,11 +52,18 @@ class MarketOverviewService:
         clock: Callable[[], datetime],
         local_market_source=None,
         market_review_source=None,
+        fund_flow_repository=None,
+        sector_fund_flow_repository=None,
+        official_calendar_source=None,
         trading_calendar=None,
         cache_seconds: int = 5,
         cache_path: Path | None = None,
         defer_initial_refresh: bool = False,
+        initial_refresh_delay_seconds: float = 0,
+        shared_snapshot_registry=None,
     ) -> None:
+        if initial_refresh_delay_seconds < 0:
+            raise ValueError("initial_refresh_delay_seconds must not be negative")
         self.sentiment_repository = sentiment_repository
         self.news_repository = news_repository
         self.first_limit_up_repository = first_limit_up_repository
@@ -57,10 +71,17 @@ class MarketOverviewService:
         self.clock = clock
         self.local_market_source = local_market_source
         self.market_review_source = market_review_source
+        self.fund_flow_repository = fund_flow_repository
+        self.sector_fund_flow_repository = sector_fund_flow_repository
+        self.official_calendar_source = official_calendar_source
+        self._official_calendar_cached_at: datetime | None = None
+        self._official_calendar_events: tuple[OverviewOfficialEvent, ...] = ()
         self.trading_calendar = trading_calendar
         self.cache_ttl = timedelta(seconds=cache_seconds)
         self.cache_path = cache_path
         self.defer_initial_refresh = defer_initial_refresh and cache_path is not None
+        self.initial_refresh_delay_seconds = initial_refresh_delay_seconds
+        self.shared_snapshot_registry = shared_snapshot_registry
         self._lock = threading.RLock()
         self._cached_at: datetime | None = None
         self._cached: MarketOverviewResponse | None = None
@@ -69,9 +90,14 @@ class MarketOverviewService:
             ThreadPoolExecutor(max_workers=1, thread_name_prefix="market-overview")
             if self.defer_initial_refresh else None
         )
+        self._initial_refresh_timer: threading.Timer | None = None
+        self._initial_refresh_delay_consumed = not (
+            self.defer_initial_refresh and initial_refresh_delay_seconds > 0
+        )
         self._closed = False
 
     def current(self, now: datetime) -> MarketOverviewResponse:
+        started_at = datetime.now(timezone.utc)
         if now.tzinfo is None or now.utcoffset() is None:
             raise ValueError("overview cutoff must include timezone")
         with self._lock:
@@ -80,6 +106,9 @@ class MarketOverviewService:
                 and self._cached_at is not None
                 and now - self._cached_at < self.cache_ttl
             ):
+                self._record_shared_snapshots(
+                    self._cached, reused=True, started_at=started_at
+                )
                 return self._cached
             if self._cached is None and self.cache_path is not None:
                 cached = self._read_cache(now)
@@ -88,14 +117,23 @@ class MarketOverviewService:
                     self._cached_at = now
                     if self.defer_initial_refresh:
                         self._schedule_refresh_locked(now)
+                    self._record_shared_snapshots(
+                        cached, reused=True, started_at=started_at
+                    )
                     return cached
             if self._cached is not None and self.defer_initial_refresh:
                 self._schedule_refresh_locked(now)
+                self._record_shared_snapshots(
+                    self._cached, reused=True, started_at=started_at
+                )
                 return self._cached
             response = self._build(now)
             self._cached = response
             self._cached_at = now
             self._write_cache(response)
+            self._record_shared_snapshots(
+                response, reused=False, started_at=started_at
+            )
             return response
 
     def close(self) -> None:
@@ -104,6 +142,10 @@ class MarketOverviewService:
             return
         with self._lock:
             self._closed = True
+            timer = self._initial_refresh_timer
+            self._initial_refresh_timer = None
+            if timer is not None:
+                timer.cancel()
             if self._refresh_future is not None:
                 self._refresh_future.cancel()
         executor.shutdown(wait=False, cancel_futures=True)
@@ -112,13 +154,37 @@ class MarketOverviewService:
     def _schedule_refresh_locked(self, now: datetime) -> None:
         if self._closed or self._refresh_executor is None:
             return
+        if not self._initial_refresh_delay_consumed:
+            if self._initial_refresh_timer is None:
+                timer = threading.Timer(
+                    self.initial_refresh_delay_seconds,
+                    self._submit_initial_refresh,
+                    args=(now,),
+                )
+                timer.daemon = True
+                self._initial_refresh_timer = timer
+                timer.start()
+            return
         if self._refresh_future is not None and not self._refresh_future.done():
             return
         self._refresh_future = self._refresh_executor.submit(
             self._refresh_cached_snapshot, now
         )
 
+    def _submit_initial_refresh(self, now: datetime) -> None:
+        with self._lock:
+            self._initial_refresh_timer = None
+            self._initial_refresh_delay_consumed = True
+            if self._closed or self._refresh_executor is None:
+                return
+            if self._refresh_future is not None and not self._refresh_future.done():
+                return
+            self._refresh_future = self._refresh_executor.submit(
+                self._refresh_cached_snapshot, now
+            )
+
     def _refresh_cached_snapshot(self, now: datetime) -> None:
+        started_at = datetime.now(timezone.utc)
         try:
             response = self._build(now)
         except Exception:
@@ -136,6 +202,74 @@ class MarketOverviewService:
             self._cached = response
             self._cached_at = now
             self._write_cache(response)
+            self._record_shared_snapshots(
+                response, reused=False, started_at=started_at
+            )
+
+    def _record_shared_snapshots(
+        self,
+        response: MarketOverviewResponse,
+        *,
+        reused: bool,
+        started_at: datetime,
+    ) -> None:
+        registry = self.shared_snapshot_registry
+        if registry is None:
+            return
+        payload = response.model_dump(mode="json")
+        projections = {
+            "market_cross_section": {
+                key: payload[key]
+                for key in (
+                    "breadth", "liquidity", "regime_metrics", "regime",
+                    "indices", "market_stocks", "data_scope",
+                )
+            },
+            "limit_events": {
+                key: payload[key]
+                for key in ("limit_ecology", "anomalies")
+            },
+            "sector_strength": {
+                key: payload[key]
+                for key in ("sectors", "sector_stocks")
+            },
+            "stock_fund_flow": {
+                key: payload[key]
+                for key in ("large_order_flows", "sector_fund_flow")
+            },
+        }
+        observed_at = response.market_data.observed_at or response.observed_at
+        quote_count = response.market_data.quote_count
+        universe_count = response.market_data.universe_count
+        coverage = (
+            round(quote_count / universe_count * 100, 2)
+            if universe_count > 0 else None
+        )
+        latency_ms = max(
+            0,
+            round((datetime.now(timezone.utc) - started_at).total_seconds() * 1000),
+        )
+        try:
+            for kind, projection in projections.items():
+                encoded = json.dumps(
+                    projection,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+                registry.record(
+                    kind,
+                    content_hash=hashlib.sha256(encoded).hexdigest(),
+                    trade_date=response.as_of,
+                    observed_at=observed_at,
+                    coverage_percent=coverage,
+                    freshness=response.market_data.freshness,
+                    source=response.market_data.source,
+                    reused=reused,
+                    latency_ms=latency_ms,
+                )
+        except Exception:
+            return
 
     def _read_cache(self, now: datetime) -> MarketOverviewResponse | None:
         if self.cache_path is None or not self.cache_path.exists():
@@ -146,6 +280,20 @@ class MarketOverviewService:
             )
         except (OSError, ValueError):
             return None
+        if self.market_review_source is not None and hasattr(
+            self.market_review_source, "cache_is_stale"
+        ):
+            try:
+                if self.market_review_source.cache_is_stale():
+                    response = response.model_copy(update={
+                        "review": None,
+                        "warnings": tuple(dict.fromkeys((
+                            *response.warnings,
+                            "market_review_cache_stale",
+                        ))),
+                    })
+            except (OSError, RuntimeError, ValueError):
+                pass
         return self._with_metadata(response, now=now, source="market-overview-cache")
 
     def _write_cache(self, response: MarketOverviewResponse) -> None:
@@ -321,7 +469,19 @@ class MarketOverviewService:
             warnings.append("news_events_unavailable")
         events = [event for event in events if self._event_symbols(event)]
         live_feed = self._live_feed(events[:30])
-        anomalies = self._anomalies(events, minute_series)
+        try:
+            interpretations = self.news_repository.interpretations_for_events(
+                tuple(item.event_id for item in events), cutoff=now,
+            )
+        except (AttributeError, OSError, ValueError):
+            interpretations = ()
+        event_projections = {
+            item.event_id: item
+            for item in UnifiedEventProjectionService().project(
+                events, interpretations, cutoff=now
+            )
+        }
+        anomalies = self._anomalies(events, minute_series, event_projections)
 
         try:
             scan = self.first_limit_up_repository.latest_scan(as_of=as_of)
@@ -365,7 +525,66 @@ class MarketOverviewService:
             except (OSError, RuntimeError, ValueError):
                 warnings.append("market_review_unavailable")
 
+        if (
+            review is not None
+            and review.latest_trade_date is not None
+            and review.latest_trade_date < as_of
+            and review.quality != "unavailable"
+            and market_data.freshness in {"live", "final"}
+        ):
+            review = review.model_copy(update={
+                "quality": "stale",
+                "warnings": tuple(dict.fromkeys((*review.warnings, "market_review_stale"))),
+            })
+            warnings.append("market_review_stale")
+
+        large_order_flows = self._large_order_flows(
+            market_stocks, as_of=as_of, cutoff=now,
+        )
+        if large_order_flows:
+            sources.append("eastmoney-fund-flow-cache")
+        sector_fund_flow, sector_flow_sample_count, sector_flow_snapshot_count = (
+            self._sector_fund_flow(cutoff=now)
+        )
+        if sector_fund_flow:
+            sources.append("eastmoney-sector-fund-flow-cache")
+        official_events = self._official_events(now)
+        if official_events:
+            sources.append("tdx-local-ipo-calendar")
+
+        data_scope = OverviewDataScope(
+            market_aggregate=(
+                "full_a_share_market"
+                if market_data.quote_count > 0 and breadth.valid_count > 0
+                else "unavailable"
+            ),
+            market_quote_count=market_data.quote_count,
+            market_universe_count=market_data.universe_count,
+            stock_sample="representative" if market_stocks else "none",
+            stock_sample_count=len(market_stocks),
+            sector_sample=(
+                "strong_sector" if local_market is not None and sectors
+                else "news_linked" if sectors
+                else "none"
+            ),
+            sector_sample_count=len(sectors),
+            large_order_sample_count=len(large_order_flows),
+            sector_fund_flow_sample_count=sector_flow_sample_count,
+            sector_fund_flow_snapshot_count=sector_flow_snapshot_count,
+        )
+
         status = "ready" if indices and minute_series else "partial"
+        field_evidence = self._field_evidence(
+            snapshot=snapshot,
+            local_market=local_market,
+            market_data=market_data,
+            sentiment=sentiment,
+            breadth=breadth,
+            limit_ecology=limit_ecology,
+            liquidity=liquidity,
+            regime=regime,
+            as_of=as_of,
+        )
         return MarketOverviewResponse(
             status=status,
             as_of=as_of,
@@ -382,6 +601,7 @@ class MarketOverviewService:
             regime_metrics=regime_metrics,
             regime=regime,
             market_data=market_data,
+            data_scope=data_scope,
             indices=indices,
             minute_series=minute_series,
             anomalies=anomalies,
@@ -389,10 +609,263 @@ class MarketOverviewService:
             sectors=sectors,
             sector_stocks=stocks_by_sector,
             market_stocks=market_stocks,
+            large_order_flows=large_order_flows,
+            sector_fund_flow=sector_fund_flow,
+            official_events=official_events,
+            field_evidence=field_evidence,
             review=review,
             warnings=tuple(dict.fromkeys(warnings)),
             sources=tuple(dict.fromkeys(sources)),
         )
+
+    @staticmethod
+    def _field_evidence(
+        *, snapshot, local_market, market_data, sentiment, breadth,
+        limit_ecology, liquidity, regime, as_of,
+    ) -> tuple[FieldEvidence, ...]:
+        market_observed_at = market_data.observed_at
+        market_source = market_data.source
+        freshness_status = {
+            "live": "live",
+            "final": "postclose",
+            "previous_close": "cached",
+            "stale": "stale",
+        }.get(market_data.freshness, "missing")
+        market_coverage = (
+            Decimal(market_data.quote_count) / Decimal(market_data.universe_count) * HUNDRED
+            if market_data.universe_count > 0 else None
+        )
+        if market_coverage is not None:
+            market_coverage = market_coverage.quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
+        market_limitations = (
+            () if freshness_status != "missing"
+            else ("tdx_local_market_unavailable",)
+        )
+
+        def market_field(path: str, source_field: str, value) -> FieldEvidence:
+            return FieldEvidence(
+                field_path=path,
+                value=value if freshness_status != "missing" else None,
+                source=market_source if freshness_status != "missing" else "unavailable",
+                source_field=source_field,
+                status=freshness_status,
+                trade_date=(market_observed_at.astimezone(CHINA_TZ).date() if market_observed_at else None),
+                observed_at=market_observed_at,
+                coverage_percent=market_coverage,
+                limitations=market_limitations,
+            )
+
+        sentiment_ids = snapshot.source_snapshot_ids if snapshot is not None else ()
+        sentiment_formula = snapshot.formula_version if snapshot is not None else FORMULA_VERSION
+        sentiment_status = (
+            "missing" if snapshot is None
+            else "live" if snapshot.freshness == "current" and snapshot.trading_date == as_of
+            else "cached"
+        )
+        sentiment_limitations = () if snapshot is not None else ("market_sentiment_unavailable",)
+        entries: list[FieldEvidence] = [
+            FieldEvidence(
+                field_path="sentiment.score",
+                value=sentiment.score,
+                source="market-sentiment-cache" if snapshot is not None else "unavailable",
+                source_field="score",
+                status=sentiment_status,
+                trade_date=snapshot.trading_date if snapshot is not None else None,
+                observed_at=sentiment.observed_at if snapshot is not None else None,
+                coverage_percent=sentiment.coverage_percent,
+                derived=True,
+                formula=sentiment_formula,
+                evidence_ids=sentiment_ids,
+                limitations=sentiment_limitations,
+            ),
+        ]
+        for path, source_field, value in (
+            ("breadth.rising_count", "rising_count", breadth.rising_count),
+            ("breadth.falling_count", "falling_count", breadth.falling_count),
+            ("breadth.valid_count", "valid_count", breadth.valid_count),
+            ("limit_ecology.limit_up_count", "limit_up_count", limit_ecology.limit_up_count),
+            ("limit_ecology.limit_down_count", "limit_down_count", limit_ecology.limit_down_count),
+            ("limit_ecology.broken_limit_up_count", "broken_limit_up_count", limit_ecology.broken_limit_up_count),
+            ("liquidity.total_amount_yi", "total_amount_yi", liquidity.total_amount_yi),
+        ):
+            entries.append(market_field(path, source_field, value))
+
+        relative_source = snapshot.observed_at if snapshot is not None else None
+        entries.append(FieldEvidence(
+            field_path="liquidity.relative_amount",
+            value=liquidity.relative_amount,
+            source="market-sentiment-cache" if liquidity.relative_amount is not None else "unavailable",
+            source_field="activity.relative_amount",
+            status=("derived" if liquidity.relative_amount is not None else "missing"),
+            trade_date=snapshot.trading_date if snapshot is not None else None,
+            observed_at=relative_source,
+            coverage_percent=sentiment.coverage_percent if liquidity.relative_amount is not None else None,
+            derived=liquidity.relative_amount is not None,
+            formula="当日全市场成交额 / 20日平均成交额" if liquidity.relative_amount is not None else None,
+            evidence_ids=sentiment_ids,
+            limitations=() if liquidity.relative_amount is not None else ("20_day_amount_baseline_unavailable",),
+        ))
+        for path, value in (
+            ("regime.emotion_score", regime.emotion_score),
+            ("regime.risk_score", regime.risk_score),
+            ("regime.heat_score", regime.heat_score),
+            ("regime.rotation_score", regime.rotation_score),
+        ):
+            entries.append(FieldEvidence(
+                field_path=path,
+                value=value,
+                source=market_source if value is not None else "unavailable",
+                source_field=None,
+                status="derived" if value is not None else "missing",
+                trade_date=(market_observed_at.astimezone(CHINA_TZ).date() if market_observed_at else None),
+                observed_at=market_observed_at if value is not None else None,
+                coverage_percent=regime.coverage_percent if value is not None else None,
+                derived=value is not None,
+                formula=regime.formula_version if value is not None else None,
+                limitations=() if value is not None else ("tdx_local_market_unavailable",),
+            ))
+        return tuple(entries)
+
+    def _large_order_flows(
+        self,
+        market_stocks,
+        *,
+        as_of,
+        cutoff: datetime,
+    ) -> tuple[OverviewLargeOrderFlow, ...]:
+        if self.fund_flow_repository is None:
+            return ()
+        records: list[OverviewLargeOrderFlow] = []
+        for stock in market_stocks:
+            try:
+                snapshot = self.fund_flow_repository.latest(
+                    stock.symbol, as_of, cutoff=cutoff,
+                )
+            except (OSError, RuntimeError, ValueError):
+                continue
+            if snapshot is None:
+                continue
+            main_net_yi = (snapshot.latest_main_net / Decimal("100000000")).quantize(
+                TWO_PLACES, rounding=ROUND_HALF_UP,
+            )
+            large_net_yi = (snapshot.latest_large_net / Decimal("100000000")).quantize(
+                TWO_PLACES, rounding=ROUND_HALF_UP,
+            )
+            super_net_yi = (snapshot.latest_super_net / Decimal("100000000")).quantize(
+                TWO_PLACES, rounding=ROUND_HALF_UP,
+            )
+            direction = (
+                "inflow" if main_net_yi > 0
+                else "outflow" if main_net_yi < 0
+                else "balanced"
+            )
+            records.append(OverviewLargeOrderFlow(
+                symbol=stock.symbol,
+                name=stock.name,
+                latest_trade_date=snapshot.latest_trade_date,
+                observed_at=snapshot.observed_at,
+                main_net_yi=main_net_yi,
+                large_net_yi=large_net_yi,
+                super_net_yi=super_net_yi,
+                direction=direction,
+                source=snapshot.source,
+                quality=("ready" if snapshot.latest_trade_date == as_of else "stale"),
+            ))
+        return tuple(sorted(
+            records,
+            key=lambda item: abs(item.main_net_yi),
+            reverse=True,
+        ))
+
+    def _sector_fund_flow(
+        self,
+        *,
+        cutoff: datetime,
+    ) -> tuple[tuple[OverviewSectorFundFlowPoint, ...], int, int]:
+        if self.sector_fund_flow_repository is None:
+            return (), 0, 0
+        try:
+            snapshots = self.sector_fund_flow_repository.history(limit=60)
+        except (OSError, RuntimeError, ValueError):
+            return (), 0, 0
+        if not snapshots:
+            return (), 0, 0
+
+        latest = snapshots[-1]
+        tracked = tuple(sorted(
+            latest.items,
+            key=lambda item: abs(item.main_net_yi),
+            reverse=True,
+        )[:12])
+        tracked_codes = {item.sector_code for item in tracked}
+        snapshot_quality = (
+            "stale"
+            if cutoff.astimezone(timezone.utc)
+            - latest.observed_at.astimezone(timezone.utc) > LIVE_MAX_AGE
+            else "ready"
+        )
+        points_by_code: dict[str, list[OverviewSectorFundFlowPoint]] = defaultdict(list)
+        for snapshot in snapshots:
+            for item in snapshot.items:
+                if item.sector_code not in tracked_codes:
+                    continue
+                points_by_code[item.sector_code].append(OverviewSectorFundFlowPoint(
+                    sector_code=item.sector_code,
+                    sector_name=item.sector_name,
+                    observed_at=snapshot.observed_at,
+                    main_net_yi=item.main_net_yi,
+                    large_net_yi=item.large_net_yi,
+                    super_net_yi=item.super_net_yi,
+                    source=snapshot.source,
+                    quality=snapshot_quality,
+                ))
+        points = tuple(
+            point
+            for tracked_item in tracked
+            for point in points_by_code.get(tracked_item.sector_code, ())
+        )
+        return points, len(points_by_code), len(snapshots)
+
+    def _official_events(self, cutoff: datetime) -> tuple[OverviewOfficialEvent, ...]:
+        if self.official_calendar_source is None:
+            return ()
+        if (
+            self._official_calendar_cached_at is not None
+            and cutoff - self._official_calendar_cached_at < timedelta(hours=1)
+        ):
+            return self._official_calendar_events
+        try:
+            source_events = self.official_calendar_source.fetch()
+        except (OSError, RuntimeError, ValueError):
+            return self._official_calendar_events
+        converted: list[OverviewOfficialEvent] = []
+        date_fields = (
+            ("subscription", "subscription_date"),
+            ("allotment", "allotment_date"),
+            ("listing", "listing_date"),
+        )
+        for item in source_events:
+            for event_type, field in date_fields:
+                event_date = getattr(item, field, None)
+                if event_date is None:
+                    continue
+                converted.append(OverviewOfficialEvent(
+                    event_id=f"{item.code}-{event_type}-{event_date.isoformat()}",
+                    event_date=event_date,
+                    event_type=event_type,
+                    code=item.code,
+                    name=item.name,
+                    kind=item.kind,
+                    observed_at=item.fetched_at,
+                    source=item.source,
+                    quality="ready",
+                ))
+        self._official_calendar_cached_at = cutoff
+        self._official_calendar_events = tuple(sorted(
+            converted,
+            key=lambda event: (event.event_date, event.code, event.event_type),
+        ))
+        return self._official_calendar_events
 
     def _market_phase(self, local_now: datetime) -> str:
         if self.trading_calendar is not None:
@@ -516,7 +989,10 @@ class MarketOverviewService:
         ) for event in events)
 
     @classmethod
-    def _anomalies(cls, events, minute_series) -> tuple[OverviewAnomaly, ...]:
+    def _anomalies(
+        cls, events, minute_series, event_projections=None,
+    ) -> tuple[OverviewAnomaly, ...]:
+        event_projections = event_projections or {}
         minute_timestamps = tuple(
             point.observed_at.timestamp() for point in minute_series
         )
@@ -537,16 +1013,24 @@ class MarketOverviewService:
             labels = tuple(dict.fromkeys((*event.industries, *event.themes)))
             if not labels:
                 continue
+            projection = event_projections.get(event.event_id)
             values.append(OverviewAnomaly(
                 anomaly_id=event.event_id,
                 occurred_at=event.occurred_at,
                 label=labels[0],
                 headline=event.headline,
                 direction=(
-                    "neutral" if event.review_state == "verified" else "uncertain"
+                    projection.direction if projection is not None
+                    else "neutral" if event.review_state == "verified" else "uncertain"
                 ),
                 themes=labels[:6],
                 symbols=cls._event_symbols(event)[:8],
+                category=(projection.category if projection is not None else None),
+                strength=(projection.strength if projection is not None else "unknown"),
+                credibility=(
+                    projection.credibility if projection is not None
+                    else "verified" if event.review_state == "verified" else "pending"
+                ),
             ))
         return tuple(values[:15])
 

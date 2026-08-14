@@ -54,6 +54,8 @@ def test_performance_metrics_use_closed_trades_and_equity_returns() -> None:
     assert metrics.closed_trade_count == 2
     assert metrics.win_rate == Decimal("0.5000")
     assert metrics.profit_loss_ratio == Decimal("1.9412")
+    assert metrics.expected_value == Decimal("48.0000")
+    assert metrics.max_consecutive_losses == 1
     assert metrics.turnover_rate == Decimal("41.2470")
     assert metrics.annualized_volatility == Decimal("1.7928")
     assert metrics.annualized_return > 0
@@ -82,6 +84,31 @@ def test_performance_metrics_do_not_invent_infinite_risk_ratios() -> None:
     assert metrics.annualized_volatility == Decimal("0.0000")
     assert metrics.sharpe_ratio is None
     assert metrics.calmar_ratio is None
+    assert metrics.expected_value is None
+    assert metrics.max_consecutive_losses == 0
+
+
+def test_performance_metrics_counts_the_longest_losing_sequence() -> None:
+    start = date(2026, 1, 1)
+    points = [
+        EquityPoint(trade_date=start + timedelta(days=index), equity=Decimal("100"),
+                    cash=Decimal("100"), shares=0, market_value=0)
+        for index in range(8)
+    ]
+    trades = []
+    for index, sell_amount in enumerate(("900", "800", "1200", "700")):
+        trades.extend([
+            Trade(side="buy", signal_date=start, trade_date=start + timedelta(days=index * 2),
+                  price=Decimal("10"), shares=100, gross_amount=Decimal("1000"), fees=Decimal("0")),
+            Trade(side="sell", signal_date=start, trade_date=start + timedelta(days=index * 2 + 1),
+                  price=Decimal(sell_amount) / 100, shares=100,
+                  gross_amount=Decimal(sell_amount), fees=Decimal("0")),
+        ])
+
+    metrics = performance_metrics(points, trades)
+
+    assert metrics.max_consecutive_losses == 2
+    assert metrics.expected_value == Decimal("-100.0000")
 
 
 def test_market_regime_attribution_uses_only_trailing_prices() -> None:

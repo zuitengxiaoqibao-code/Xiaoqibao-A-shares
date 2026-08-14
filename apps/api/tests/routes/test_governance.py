@@ -126,7 +126,8 @@ def test_xingbu_status_exposes_research_risk_limits(tmp_path) -> None:
     assert "recent_rejections" not in response.json()
     assert response.json()["overall_level"] in {"low", "medium", "high", "unavailable"}
     assert {item["id"] for item in response.json()["dimensions"]} >= {
-        "market_sentiment", "data_freshness", "evidence_coverage", "news_events"
+        "market_sentiment", "stock_specific", "data_freshness", "evidence_coverage",
+        "news_events", "strategy_execution"
     }
     assert isinstance(response.json()["alerts"], list)
 

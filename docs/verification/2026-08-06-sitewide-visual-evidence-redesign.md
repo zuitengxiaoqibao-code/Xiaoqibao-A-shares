@@ -2,6 +2,17 @@
 
 日期：2026-08-06
 
+## 2026-08-07 通达信只读专业桥真实响应复核
+
+- 复核时间：`2026-08-07T09:51:56+08:00`（Asia/Shanghai）。仅通过 `POST http://127.0.0.1:17709/` 发起 JSON-RPC 只读请求，没有停止、重启或控制通达信客户端。
+- 进程/端口证据：`D:\new_tdx_mock\TdxW.exe` PID `17900` 及多个 `tdxcef.exe` 在探针前后均保持运行；`127.0.0.1:17709` 探针前后均可达。
+- `get_financial_data` / `Fn193..Fn197`：`ErrorId=0`，响应形状为对象并含 `Value`，但仅返回 `announce_time/tag_time=null`，没有可验证 `Fn` 字段；继续 `unavailable`。
+- `get_gpjy_value` / `GP1..GP5`：`ErrorId=0`，`Value=null`；继续 `unavailable`。
+- `get_bkjy_value` / `BK5..BK9`：`ErrorId=0`，返回 `BK9` 的日期记录（`Date=20260807`、`Value=["0.00","0.00"]`），但列含义和单位未在响应声明；现在按严格边界不绑定业务字段。解析器新增回归，禁止把嵌套记录强转字符串冒充标量值。
+- `get_scjy_value` / `SC1..SC5`：`ErrorId=0`，`Value=null`；继续 `unavailable`。
+- `get_gp_one_data` / `GO1,GO2,GO3,GO4,GO47`：对 `688318.SH` 返回标量字段 `107.41/1667.00/0.00/2026.00/0.00`，响应可解析；官方响应没有声明字段含义与单位，因此仅记录为“已返回可解析字段”，暂不接入财务、交易或量化结论。
+- 结论：桥接端口已可达，但专业数据包/字段语义仍不完整；页面继续诚实显示 `unavailable` 或“已返回但未绑定”，不使用 DBF、普通行情、缓存或模拟值替代。
+
 ## 2026-08-07 量化刷新可观测性、索引优化与最终烟测
 
 - 量化策略契约新增候选扫描和触发证据两层的采集时间、数据年龄、缓存复用标记；状态栏明确展示“刚刚采集/复用缓存”，不再把 5 秒策略刷新误解为每次都重新扫描全市场。
@@ -466,3 +477,148 @@
 - 视觉回归：首次有效快照完成后，5 秒后台刷新期间启动遮罩保持隐藏，旧完整行情继续展示；刷新完成后新数据正常替换。
 - 资源释放：smoke 后本程序进程与 `127.0.0.1:17709` 已释放；用户通达信进程不应由本项目清理流程主动关闭。
 - 最新 EXE：`dist/XiaoQiBao-Portable/xiaoqibao.exe`，SHA-256 `A94DB00085F5182EB529D89EBF7FB748577C6FA8E759D62EFC37DB546C9CCC83`。
+
+## 2026-08-07 量化顶部布局截图回归
+
+### 修复范围
+
+- 量化分析顶部不再使用会把选择卡推到视口边缘的 `minmax(660px, .86fr)`。
+- `.quant-hero` 现在使用 `minmax(0, 780px) minmax(0, 560px)`、`max-width: 1400px` 和左对齐布局；宽屏不再出现标题与选择卡之间的无界空白。
+- 量化页面使用容器宽度断点；窄屏或高 DPI 窗口自动切换顶部单列，选择卡内部也自动切换单列，避免状态说明和日期发生重叠。
+
+### 证据
+
+- 前端专项（布局 + 量化分析）：`32 passed`。
+- 前端全量：`73` 个测试文件、`480 passed`。
+- API 全量：`1164 passed, 1 skipped`。
+- Vite/TypeScript 生产构建：通过。
+- 正式发布 smoke：窗口 `93ms`、API 就绪 `2333ms`、完整验证 `27793ms`；信息总览 `ready`，量化 `partial`（真实候选 `8` 只、覆盖 `85.00%`），专业字段 `unavailable`。
+- 发布目录 CSS 已检查包含 `grid-template-columns:minmax(0,780px) minmax(0,560px`、`max-width:1400px` 和 `container-type:inline-size`。
+- smoke 后未留下本程序进程，`127.0.0.1:17709` 未被本程序占用；通达信进程未由本轮操作关闭。
+- 正式 EXE：`dist/XiaoQiBao-Portable/xiaoqibao.exe`，SHA-256 `6EB941FEC66F3F183E4F4832C6299EABEF075EF2725EEC160A082ECBBCE36F5E`。
+
+## 2026-08-07 正式截图二次回归：紧凑顶部工作区
+
+- 截图复核发现第一轮虽然消除了右侧裁切，但顶部首列仍过宽，造成标题与标的卡之间留白过大。
+- 二次修复将 `.quant-hero` 收敛为 `minmax(0, 640px) minmax(0, 520px)`、`max-width: 1184px`；容器断点和内部单列策略保持不变。
+- 2305px 宽屏 DOM 实测：hero `1184px`、标的卡 `520px`；671px 窄屏 DOM 实测：hero 单列 `628px`，页面横向溢出 `0`。
+- 前端全量 `73` 个测试文件、`480 passed`；API 全量 `1164 passed, 1 skipped`；Vite/TypeScript 生产构建通过。
+- 正式发布 smoke：窗口 `294ms`、API 就绪 `5601ms`、完整验证 `21460ms`；信息总览 `ready`，量化 `partial`（真实候选 `8` 只、覆盖 `85.00%`），专业字段继续 `unavailable`。
+- smoke 后本程序进程已释放；通达信 `TdxW/tdxcef` 进程保持原样，`127.0.0.1:17709` 未被本程序占用。
+- 最终正式 EXE：`dist/XiaoQiBao-Portable/xiaoqibao.exe`，SHA-256 `20FE2D8553D5EE8E9B43EF23CB9CCB846E33DAC7B361886757833975E5C1844D`。
+
+## 2026-08-07 最大化窗口顶部布局回归修复
+
+- `obsolete`：上一轮将 `.quant-hero` 固定为 `max-width:1184px`，在窗口最大化时重新制造右半屏空白；`@container(max-width:1400px)` 还会把普通桌面内容区误判为窄屏。
+- `confirmed`：`.quant-hero` 改为 `width:100%`、`max-width:none`、`minmax(0,1fr) minmax(470px,560px)`；分析标的卡固定在右侧列，标题区使用剩余宽度。
+- `confirmed`：容器单列断点收回到 `1100px`；1486px 普通桌面和 2048px 最大化桌面均保持左右布局，真正窄内容区才切换单列。
+- `confirmed`：DOM 实测无横向溢出：1486px 视口 hero `1181.2px`、标的卡 `560px`；2048px 视口 hero `1742.8px`、标的卡 `560px`。
+- `confirmed`：前端全量 `73` 个测试文件、`480 passed`；API 全量 `1164 passed, 1 skipped`；Vite/TypeScript 生产构建、乱码扫描和 `git diff --check` 通过。
+- `confirmed`：正式便携 EXE smoke：窗口 `307ms`、API 就绪 `5454ms`、完整验证 `12094ms`；信息总览 `ready`，量化接口 `partial`，专业字段继续 `unavailable`。
+- `confirmed`：smoke 后本程序进程已释放，通达信 `TdxW/tdxcef` 进程保持运行，`127.0.0.1:17709` 未被本程序占用；便携持久目录均保留。
+- 正式 EXE：`dist/XiaoQiBao-Portable/xiaoqibao.exe`，SHA-256 `9C3305F08D66D7E97C9E5A827092E47E43DC311FEBE28871C81FC67A20F228F3`。
+
+## 2026-08-07 continuation: professional semantic boundary and release rebuild
+
+- [x] 专业表格行新增 `semantic_status=semantic_unmapped`；结构响应有效不再被解释为 PE、资金、交易或板块业务字段。
+- [x] 专业响应新增 `semantic_status=detected_only` 与明确说明“结构响应已验证；字段语义/单位尚未映射，未绑定业务菜单”；设置页对该状态显示单独提醒。
+- [x] 非专业只读能力保持 `not_applicable`，桥接不可达或专业接口失败保持 `unavailable`，不以缓存文件或普通行情代理字段填充。
+- [x] API 全量 `1164 passed, 1 skipped`；前端全量 `480 passed`；Vite/TypeScript 构建通过；`git diff --check` 通过。
+- [x] 正式便携 smoke：窗口 `288ms`、API 就绪 `5436ms`、完整验证 `18656ms`；信息总览 `ready`，量化策略 `partial`（真实候选 `9` 只、覆盖 `85.00%`），专业五类均 `unavailable`。
+- [x] 最新正式 EXE：`dist/XiaoQiBao-Portable/xiaoqibao.exe`，SHA-256 `A6A62B0142169E6232F8449B577229EA4E65B3881DB59E33CDFD74E9A796554F`。
+- [x] smoke 后本程序进程已释放；`127.0.0.1:17709` 仍由通达信 `TdxW.exe` 持有，通达信进程未被关闭；`config/data/news/cache/logs/models/exports/backups` 持久目录均保留。
+
+## 2026-08-07 量化/公司研究首屏阻塞修复与统一导航
+
+- `confirmed`：量化策略服务新增市场总览后台任务和触发证据后台任务；慢数据源首请求立即返回真实 `unavailable/partial` 状态，并在 `missing_data` 标记 `market_overview_pending`、`trigger_evidence_pending` 或失败阶段，不等待分钟级采集，也不生成模拟分数/候选。
+- `confirmed`：量化首请求回归覆盖慢 overview 与慢 trigger evidence；量化策略专项 `17 passed`，API 全量 `1166 passed, 1 skipped`。
+- `confirmed`：量化分析和公司研究改为应用内同步加载，点击菜单不再等待动态 chunk 显示“正在加载工作区”；前端全量 `481 passed`，Vite/TypeScript 构建通过。
+- `confirmed`：移除“新手模式/专家模式”切换与本地模式状态，所有完整一级菜单直接展示；相关导航和 Dashboard 回归通过。
+- `confirmed`：便携 EXE 正式发布烟测连续通过，窗口首帧 `82ms`、API 就绪 `2358ms`、量化接口 `15ms`；信息总览 `ready`，量化 `partial`（真实候选 `9` 只、覆盖 `85.00%`）。公司研究首个真实请求 `8246ms` 返回 `partial`，重复打开优先使用当日缓存。
+- `confirmed`：最新 EXE：`dist/XiaoQiBao-Portable/xiaoqibao.exe`，SHA-256 `D1912A4E03DD8A149CA3ABB7E0C421923CD3C0AC532F4C2D226EF0E887299881`。
+- `confirmed`：smoke 只停止本次观测台自身 PID；通达信进程保持运行；便携 `config/data/news/cache/logs/models/exports/backups` 目录保留。
+- `observed`：本机 `17709` 端口在本轮结束时未监听，但通达信进程仍在；专业字段继续按真实探针结果保持 `unavailable`，未将进程存在误报为桥接可用。
+
+## 2026-08-07 最大化窗口量化顶部布局再修复
+
+- `confirmed`：截图回归根因是 `.quant-hero` 固定 `1224px` 且 `@media(max-width:1400px)` 强制单列，最大化窗口因此在分析标的卡右侧留下大块空白。
+- `confirmed`：`.quant-hero` 现使用 `width:100%`、`max-width:none` 和 `minmax(0,1fr) minmax(470px,560px)`，标题区占用剩余宽度，分析标的卡固定在右列；只有容器小于 `1100px` 时才单列。
+- `confirmed`：前端 `481 passed`，API `1166 passed, 1 skipped`，Vite/TypeScript 构建通过；正式 EXE smoke 窗口 `68ms`、API 就绪 `2718ms`、完整验证 `28808ms`；信息总览 `ready`，量化接口 `unavailable`（当前真实候选为空），专业字段 `unavailable`。
+- `confirmed`：正式 EXE 已更新：`dist/XiaoQiBao-Portable/xiaoqibao.exe`，SHA-256 `DADC67ABFB3966A2DC5302DDD670855EEBC22A3371B52AB88E7CAF1BD6986835`。烟测后本程序已退出；通达信进程和 `127.0.0.1:17709` 只读桥保持运行；便携持久目录均保留。
+- 来源：`apps/web/src/app/theme.css`、`apps/web/src/app/layout-safety.test.ts`、`scripts/build-portable.ps1`、`scripts/run-portable-smoke.ps1`、本轮全量测试/构建/smoke 输出。
+
+## 2026-08-07 量化顶部工具条位置与横排修复
+
+- `confirmed`：按最新截图，分析标的工具条从右上角移到标题说明正下方的整行区域；`.quant-hero` 改为单列全宽，不再在右上角保留独立大卡片。
+- `confirmed`：工具条桌面端使用横向 flex，代码、状态、搜索、候选池和规则快照在同一行；小屏保留纵向自适应。
+- `confirmed`：前端全量 `481 passed`，生产构建通过；正式 EXE smoke 窗口 `77ms`、API 就绪 `2181ms`、完整验证 `10670ms`，信息总览 `ready`，量化策略 `unavailable`（真实候选为空）。
+- `confirmed`：正式 EXE SHA-256 为 `F534235A3AF1E4088C211AD243EA1F54ABCC7DC5B4F65EDC852159F048BA0DAC`；正式窗口已启动并响应，通达信未被关闭。
+- 来源：`apps/web/src/app/theme.css`、`apps/web/src/app/layout-safety.test.ts`、`scripts/build-portable.ps1`、`scripts/run-portable-smoke.ps1`。
+
+## 2026-08-07 高频页面加载阻塞修复
+
+- `confirmed`：历史复盘、数据设置、风险提醒不再使用 `React.lazy + Suspense`，改为应用内同步加载；点击页面不再等待工作台代码块下载。
+- `confirmed`：修复数据设置路由中错误的 `saveLocalSources` 引用，改为真实的 `saveLocalSourceSettings`。
+- `confirmed`：产品界面移除“正在加载工作台”文案；仍需等待其他异步模块时仅显示无阻塞的“页面准备中”，并标记 `aria-busy`。
+- `confirmed`：专项回归 `38 passed`，前端全量 `481 passed`；正式 EXE smoke 窗口 `292ms`、API 就绪 `5355ms`、完整验证 `17851ms`；信息总览 `ready`，量化策略 `partial`，专业字段 `unavailable`。
+- `confirmed`：正式 EXE SHA-256 为 `BD664073D9AE6536EDBA72A4F1C12A8F46E6D0C52547A6635A1A4A5A5CC9B46B`；通达信进程未被本轮操作关闭。
+- 来源：`apps/web/src/features/dashboard/Dashboard.tsx`、`apps/web/src/features/dashboard/Dashboard.test.tsx`、`apps/web/src/app/layout-safety.test.ts`、`scripts/build-portable.ps1`、`scripts/run-portable-smoke.ps1`。
+## 2026-08-07 证据图形第一批实际接入
+
+- [x] 信息总览新增板块涨跌热力矩阵：每个板块使用真实 `change_percent`，红色表示上涨、绿色表示下跌、灰色表示缺失；支持点击切换当前板块，缺失值不显示为 `0.00%`。
+- [x] 今日研判的阶段依据新增资金流零轴图：流入柱位于零轴上方、流出柱位于零轴下方；`available=0` 时完全不绘制 0 柱并显示不可用原因。
+- [x] 公司研究新增 PE/PB 双轴对照：只对照真实当前值与同行中位数；历史序列字段尚未接入时明确写出边界，不用当前值重复伪造历史曲线。
+- [x] 新增三个图形组件及回归：`FundFlowZeroAxis`、`SectorHeatmapPanel`、`ValuationComparisonChart`；前端全量 `76` 个测试文件、`487` 项通过，API `1166 passed, 1 skipped`，Vite/TypeScript 构建通过。
+- [x] 便携版已重建：`dist/XiaoQiBao-Portable/xiaoqibao.exe`，SHA-256 `D0CAF67A9F2F2B8E9DF0D5339EC2402105AB74C65CD2F209488D0B8DD6CD869D`。
+- [x] 烟测第一次出现首页静态请求超时，未直接忽略；保留根因调查后用独立端口重试通过：窗口 `104ms`、API `2498ms`、完整验证 `4662ms`，首页 `817ms`、信息总览 `20ms`、量化 `4ms`；专业五类继续真实 `unavailable`。烟测结束后本程序进程释放，便携持久目录保留。
+
+## 2026-08-07 专题工作区图形化第二批
+
+- [x] 涨停板工作区新增真实涨跌停生态对照条：封板、炸板、跌停按当前接口计数绘制比例条，红色表示上涨/改善，绿色表示下跌/风险；计数缺失时不生成伪造比例。
+- [x] 放量突破、突破前高、低位放量工作区新增量能强度仪表：使用逐股复盘返回的真实量能倍数计算样本均值和最大值；没有逐股历史记录时保持不可用。
+- [x] 龙虎榜工作区新增公开买入/卖出金额对照条：只使用上榜记录的买入额和卖出额，不把成交额或净额代理为席位买卖。
+- [x] 前端全量 `489 passed`（76 个测试文件），API 全量 `1166 passed, 1 skipped`；Vite/TypeScript 构建通过；修改源码乱码扫描和 `git diff --check` 通过。
+- [x] 便携 EXE 已重建：`dist/XiaoQiBao-Portable/xiaoqibao.exe`，SHA-256 `1B602062E816706786A00D45E39DB8EB08F29DA07D6E15DCF3F0747A1CB50848`；smoke 通过，窗口/API/完整验证 `379/5815/12362ms`，首页 `58ms`、信息总览 `5155ms`、量化 `4ms`、专业探针 `1029ms`。
+- [x] smoke 后仅本程序进程被清理；通达信进程和 `127.0.0.1:17709` 未被本程序关闭或占用；便携 `config/data/news/cache/logs/models/exports/backups` 全部保留。
+- [observed] 隔离 smoke 中真实候选为 0，量化策略保持 `unavailable`；专业五类字段仍 `unavailable`，没有生成模拟推荐。
+
+## 2026-08-07 板块强度四象限修复验收
+
+- 真实缓存复核：`dist/XiaoQiBao-Portable/cache/market-overview.json` 的板块样本包含先进封装、创新药、医药生物、PCB 等，但上涨占比多数为 100%；确认是横轴口径缺少区分度，不是“没有数据”。
+- 展示策略：板块数量少于 3 或样本上涨占比跨度小于 8 个百分点时，改为强度排序条；不修改真实值、不添加随机散点。排序条显示涨幅/强度/涨停扩散、样本上涨占比和有效样本数。
+- 组件验收：`DistinctMarketWorkspace.test.tsx` 专项 `26/26` 通过；正常数据保留 `data-testid="sector-quadrant"`，降级数据使用 `data-testid="sector-ranked-bars"`。
+- API 全量：`1166 passed, 1 skipped`。
+- 前端构建：`pnpm --dir apps/web build` 通过（2242 modules transformed；仅有 chunk size 提示）。
+- 便携构建：`scripts/build-portable.ps1 -SkipTests` 通过，正式目录包含持久化 `config/data/news/cache/logs/models/exports/backups`。
+- 独立端口 smoke：首次冷启动首页请求出现一次 5 秒超时，未忽略并保留日志；换独立端口复测通过，窗口 `110ms`、API `2567ms`、完整验证 `4917ms`，首页 `921ms`、信息总览 `21ms`、量化 `4ms`；应用退出后无本程序残留进程。
+
+## 2026-08-07 空白区域与历史日线日期碎片修复验收
+
+- [x] 复核用户截图中的大块空白：根因是旧版便携 EXE 仍使用半行宽度；当前注册表已将板块资金字段审计、资金动图口径和个股实时档案设为整行，证据链/状态提醒保留半行，小屏自动单列。
+- [x] 新增历史日线日期解释字段：`latest_trade_date` 表示覆盖股票数最多的主导交易日；`latest_available_trade_date` 和 `latest_available_trade_date_count` 表示少量零散最新记录；`latest_trade_date_coverage_percent` 表示主导日期覆盖率。
+- [x] 复盘不再使用全局最大日期抬高市场日期；日期碎片会写入 `history_dates_fragmented`、`history_latest_outlier` 警告，前端显示“主导历史交易日 / 最新零散记录 / 覆盖率”，不把少数股票日期冒充全市场复盘。
+- [x] 便携版没有选中通达信 `vipdoc` 根目录时，复盘刷新仍优先读取已有 `market.duckdb`，不再直接返回 `tdx_vipdoc_unavailable`。
+- [x] 真实便携数据复核：本地数据库共 `5257` 个股票，主导日期为 `2026-07-29`，覆盖约 `97.66%`（按当前有效目录 `5256` 个股票计算），最新零散记录为 `2026-08-07`、`4` 只；该日期碎片被明确排除在全市场复盘之外。
+- [x] API 全量 `1169 passed, 1 skipped`；前端全量 `493 passed`；Vite/TypeScript 构建通过；乱码扫描与 `git diff --check` 通过。
+- [x] 正式便携 EXE smoke：窗口 `344ms`、API 就绪 `5384ms`、完整验证 `37367ms`；信息总览 `ready`，量化策略 `partial`（真实候选 `0`，覆盖 `85.00%`），专业五类字段继续 `unavailable`；smoke 后本程序进程释放，持久目录保留。
+- [x] 最新正式 EXE：`dist/XiaoQiBao-Portable/xiaoqibao.exe`，SHA-256 `E399FCDA67512FC2EEDFA04D81C9EB4F08188414A36AB058DCD8B1863EC65B2E`。
+
+## 2026-08-07 空白区域与旧复盘缓存阻断复验
+
+- `confirmed`：个股详情证据地图/不可用证据块改为内容高度，证据面板不再用固定高度拉伸；不可用状态限制为紧凑提示区，避免截图中的大块空白。
+- `confirmed`：本地复盘缓存读取前对比 `market.duckdb` 的最新真实交易日；当磁盘快照早于本地历史库时不载入，并在信息总览缓存中剥离旧 `review`，保留实时市场快照并标记过期警告。
+- `confirmed`：工作区旧 `data/market-review/latest.json` 仍为 `2026-07-17`，但便携发布目录经启动刷新后已生成 `2026-08-07` 复盘快照；旧日期不会再作为信息总览的当前复盘日期展示。
+- `confirmed`：前端全量 `494 passed`（76 个测试文件），API 全量 `1171 passed, 1 skipped`；Vite/TypeScript 构建通过；`git diff --check` 通过。
+- `confirmed`：正式便携 EXE smoke：窗口 `123ms`、API 就绪 `2749ms`、完整验证 `4948ms`；信息总览 `ready`，量化策略在隔离样本不足时诚实保持 `unavailable`，通达信专业字段继续 `unavailable`。
+- `confirmed`：最新正式 EXE：`dist/XiaoQiBao-Portable/xiaoqibao.exe`，SHA-256 `5BFAD4D2A116D62751A47DD5F002AA569AFA9B8F07CD134DAD3452BA964F85F8`；smoke 后仅本程序进程退出，通达信进程与 `127.0.0.1:17709` 未被本程序关闭或占用，持久目录保留。
+- 来源：`apps/api/src/qibao_api/gongbu/local_market_review.py`、`apps/api/src/qibao_api/a_shares/market_overview.py`、`apps/web/src/features/market-overview/overview.css`、对应回归测试、`scripts/build-portable.ps1`、`scripts/run-portable-smoke.ps1`。
+
+## 2026-08-10 专题工作区排版与无效展示修复
+
+- `confirmed`：投资日历由固定三列改为“事件索引 + 当前事件详情”；只纳入已关联 A 股代码的真实资讯，默认选中第一条事件，详情展示摘要、来源、关联股票、关联题材和时间口径；删除下方重复的“当日事项明细”，一条事件也不再留下大面积空白。
+- `confirmed`：主力大单字段审计恢复整行布局；主力大单和板块资金缺失字段改为紧凑证据条，移除固定 `270px` 空面板，不再用空图、空轨道或成交额代理资金方向。
+- `confirmed`：板块强度四象限不再把板块名称直接压在散点上；图中改用编号点位，下方图例显示名称、样本上涨占比和真实强度值。样本不足或横轴区分度不足时仍降级为真实排序条。
+- `confirmed`：专项回归 `44 passed`，前端全量 `495 passed`，TypeScript/Vite 生产构建、UTF-8 乱码扫描和 `git diff --check` 通过。
+- `confirmed`：正式便携 EXE 已重建并通过 smoke；窗口 `296ms`、API `9785ms`、完整验证 `18773ms`，首页 `161ms`、信息总览 `163ms`、量化 `6ms`。信息总览 `ready`，量化无真实候选时保持 `unavailable`，专业字段保持真实 `unavailable`。
+- `confirmed`：正式 EXE SHA-256 为 `D2CCFD42A9B863E962E3B05963F137D242329CC46BF84A1D2D0BA12CC418B113`；便携持久目录保留，通达信 `TdxW/tdxcef` 进程未被关闭。
+- 来源：`apps/web/src/features/market-overview/workspaces/WorkspaceBlocks.tsx`、`apps/web/src/features/market-overview/overview.css`、`apps/web/src/features/market-overview/workspaces/DistinctMarketWorkspace.test.tsx`、`apps/web/src/app/layout-safety.test.ts`、本轮构建与 smoke 输出。

@@ -1,3 +1,5 @@
+import type { FieldEvidence } from "../../shared/evidence/FieldEvidenceDetails";
+
 export type ResearchStatus = "ready" | "partial" | "unavailable";
 export type CounterStatus = "clear" | "triggered" | "unavailable";
 
@@ -58,6 +60,25 @@ export type ValuationObservation = {
   market_cap_yi: string | null;
   peer_pe_median: string | null;
   peer_pb_median: string | null;
+  forward_eps_median?: string | null;
+  forward_eps_sample_count?: number;
+  forecast_latest_report_date?: string | null;
+  forecast_age_days?: number | null;
+  forecast_freshness?: "fresh" | "stale" | "unavailable";
+  forward_pe?: string | null;
+  forward_pe_status?: "available" | "low_confidence" | "unavailable";
+  forward_pe_reason?: string;
+  scenario_range?: {
+    status: "available" | "unavailable";
+    conservative: string | null;
+    neutral: string | null;
+    optimistic: string | null;
+    eps_basis: string | null;
+    peer_pe_basis: string | null;
+    institution_sample_count: number;
+    latest_report_date: string | null;
+    reason: string;
+  };
   observation_range_status: "available" | "unavailable";
   observation_range_reason: string;
   source: string;
@@ -98,6 +119,87 @@ export type ResearchSource = {
   detail: string;
 };
 
+export type ResearchReportEvidence = {
+  report_id: string; title: string; publish_date: string; organization: string;
+  rating: string | null; industry: string | null; eps_this_year: string | null;
+  eps_next_year: string | null; eps_next_two_year: string | null; pdf_url: string | null;
+};
+
+export type ResearchEnrichmentEvidence = {
+  status: ResearchStatus;
+  observed_at: string | null;
+  stock_reports: ResearchReportEvidence[];
+  industry_reports: ResearchReportEvidence[];
+  industry_name?: string | null;
+  industry_code?: string | null;
+  industry_board_code?: string | null;
+  peer_candidates?: Array<{
+    symbol: string; name: string; industry: string | null; price: string | null;
+    change_percent: string | null; pe_ttm: string | null; pb: string | null;
+    market_cap_yi: string | null;
+  }>;
+  unlocks: Array<{ free_date: string; stock_type: string | null; shares: string | null; ratio_percent: string | null }>;
+  margin: Array<{ trade_date: string; financing_balance: string | null; financing_buy: string | null; securities_lending_balance: string | null; total_balance: string | null }>;
+  holders: Array<{ period: string; holder_count: string | null; change_ratio_percent: string | null; average_free_shares: string | null }>;
+  sources: string[];
+  reasons: string[];
+};
+
+export type ResearchDecisionLedgerRow = {
+  key: "peer_context" | "valuation" | "catalysts" | "contrary" | "invalidation";
+  label: string;
+  status: "ready" | "partial" | "unavailable" | "clear" | "triggered";
+  summary: string;
+  facts: string[];
+  evidence_ids: string[];
+  limitation: string | null;
+};
+
+export type CompanyResearchSection = {
+  key: "business_model" | "industry_space" | "financial_trend" | "profit_quality" |
+    "competitive_position" | "valuation_percentile" | "future_catalysts" |
+    "contrary_risks" | "invalidation_conditions" | "verification_checklist";
+  label: string;
+  status: "ready" | "partial" | "unavailable" | "clear" | "triggered";
+  summary: string;
+  facts: string[];
+  evidence_ids: string[];
+  limitation: string | null;
+};
+
+export type CompanyResearchVersion = {
+  snapshot_id: string;
+  version_number: number;
+  previous_snapshot_id: string | null;
+  content_hash: string;
+  generated_at: string;
+  changes: Array<{
+    category: "conclusion" | "data" | "source";
+    label: string;
+    before: string | null;
+    after: string | null;
+  }>;
+};
+
+export type CompanyResearchAIResult = {
+  status: "ready" | "unconfigured" | "timeout" | "http_error" | "invalid";
+  snapshot_id: string;
+  analysis: null | {
+    executive_summary: string;
+    contrary_risks: Array<{ title: string; detail: string; evidence_ids: string[] }>;
+    verification_questions: string[];
+  };
+  provider: string;
+  model: string;
+  prompt_version: string;
+  generated_at: string;
+};
+
+export type CompanyResearchAITaskSnapshot = {
+  progress: CompanyResearchTaskProgress;
+  result: CompanyResearchAIResult | null;
+};
+
 export type CompanyResearchResponse = {
   status: ResearchStatus;
   symbol: string;
@@ -113,6 +215,29 @@ export type CompanyResearchResponse = {
   valuation: ValuationObservation;
   counter_case: CounterCaseItem[];
   profile: CompanyProfileEvidence;
+  enrichment?: ResearchEnrichmentEvidence;
+  decision_ledger?: ResearchDecisionLedgerRow[];
+  research_sections?: CompanyResearchSection[];
+  research_version?: CompanyResearchVersion | null;
+  evidence_ledger?: EvidenceLedgerEntry[];
+  field_evidence?: FieldEvidence[];
   sources: ResearchSource[];
   reasons: string[];
 };
+
+export type CompanyResearchTaskProgress = {
+  task_id: string;
+  status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+  stage: string;
+  processed: number | null;
+  total: number | null;
+  percent: number | null;
+  detail: string | null;
+  error: string | null;
+};
+
+export type CompanyResearchTaskSnapshot = {
+  progress: CompanyResearchTaskProgress;
+  result: CompanyResearchResponse | null;
+};
+import type { EvidenceLedgerEntry } from "../../shared/evidence/EvidenceLedger";

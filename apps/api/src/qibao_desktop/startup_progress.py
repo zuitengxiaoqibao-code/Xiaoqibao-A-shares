@@ -11,6 +11,7 @@ class StartupProgress:
     percent: int
     step: str
     detail: str
+    elapsed_ms: int | None = None
 
 
 _STAGE_PROGRESS: dict[str, tuple[int, str, str]] = {
@@ -38,6 +39,7 @@ _STAGE_PROGRESS: dict[str, tuple[int, str, str]] = {
     "lifespan-ready": (41, "本地 API 服务已完成初始化", "正在打开首页资源"),
 }
 _STAGE_PATTERN = re.compile(r"\bstage=(?P<stage>[a-z0-9-]+)\b")
+_ELAPSED_PATTERN = re.compile(r"\belapsed_ms=(?P<elapsed>[0-9]+)\b")
 _LOG_TAIL_BYTES = 64 * 1024
 
 
@@ -51,11 +53,16 @@ def read_startup_progress(log_path: Path) -> StartupProgress | None:
     except OSError:
         return None
     latest: StartupProgress | None = None
-    for match in _STAGE_PATTERN.finditer(text):
+    for line in text.splitlines():
+        match = _STAGE_PATTERN.search(line)
+        if match is None:
+            continue
         stage = match.group("stage")
         values = _STAGE_PROGRESS.get(stage)
         if values is None:
             continue
         percent, step, detail = values
-        latest = StartupProgress(stage, percent, step, detail)
+        elapsed_match = _ELAPSED_PATTERN.search(line)
+        elapsed_ms = int(elapsed_match.group("elapsed")) if elapsed_match else None
+        latest = StartupProgress(stage, percent, step, detail, elapsed_ms)
     return latest

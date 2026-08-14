@@ -201,6 +201,7 @@ def test_put_saves_valid_paths_and_requires_restart(tmp_path: Path) -> None:
     payload = {
         "auto_discovery": False,
         "tdx_install_paths": [str(root)],
+        "tdx_archive_paths": [str(root / "T0002")],
         "ths_install_paths": [],
         "tdx_rpc_enabled": False,
         "tdx_rpc_url": None,
@@ -213,6 +214,7 @@ def test_put_saves_valid_paths_and_requires_restart(tmp_path: Path) -> None:
     saved = subject.get("/api/v1/settings/data-sources").json()
     assert saved["settings_state"] == "ready"
     assert saved["settings"]["tdx_install_paths"] == [str(root)]
+    assert saved["settings"]["tdx_archive_paths"] == [str(root / "T0002")]
 
 
 def test_put_rejects_invalid_manual_tdx_directory(tmp_path: Path) -> None:
@@ -300,6 +302,11 @@ def test_enabled_tdx_rpc_reports_unavailable_when_bridge_cannot_connect(
             return None
 
     monkeypatch.setattr("qibao_api.routes.settings.TdxJsonRpcClient", FakeRpc)
+    # Keep this unit test independent from a real user-owned TDX process.
+    monkeypatch.setattr(
+        "qibao_api.routes.settings.running_tdx_process_paths",
+        lambda: (),
+    )
     response = client(tmp_path).put("/api/v1/settings/data-sources", json={
         "auto_discovery": True,
         "tdx_install_paths": [],
@@ -324,6 +331,20 @@ def test_tdx_rpc_reports_client_process_separately_from_bridge(
         "qibao_api.routes.settings.running_tdx_process_paths",
         lambda: (executable,),
     )
+
+    class UnreachableRpc:
+        def __init__(self, endpoint: str) -> None:
+            self.endpoint = endpoint
+
+        def available(self) -> bool:
+            return False
+
+        def close(self) -> None:
+            return None
+
+    # The test asserts client/process state independently from bridge state;
+    # do not let a user's live 17709 listener change the expected result.
+    monkeypatch.setattr("qibao_api.routes.settings.TdxJsonRpcClient", UnreachableRpc)
 
     response = client(tmp_path).put("/api/v1/settings/data-sources", json={
         "auto_discovery": True,

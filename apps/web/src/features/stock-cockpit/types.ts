@@ -1,5 +1,6 @@
 import type { CandidateBoard } from "../a-shares/types";
 import type { Advice, DecisionPhase, PhaseExecution } from "../decision-workbench/types";
+import type { FieldEvidence } from "../../shared/evidence/FieldEvidenceDetails";
 
 export type AShareInstrument = {
   symbol: string;
@@ -7,6 +8,12 @@ export type AShareInstrument = {
   exchange: "sh" | "sz" | "bj";
   observed_at: string;
   quote_quality: "ready" | "stale" | "unavailable";
+  short_name?: string | null;
+  historical_names?: string[];
+  search_aliases?: string[];
+  industry?: string | null;
+  sectors?: string[];
+  trading_status?: "active" | "suspended" | "delisted" | "unknown";
 };
 
 export type InstrumentSearchResponse = {
@@ -14,6 +21,12 @@ export type InstrumentSearchResponse = {
   items: AShareInstrument[];
   server_time: string;
   source_status: "ready" | "unavailable";
+};
+
+export type InstrumentDirectoryResponse = {
+  items: AShareInstrument[];
+  observed_at: string | null;
+  count: number;
 };
 
 export type CockpitSection = {
@@ -87,6 +100,7 @@ export type StockCockpitSnapshot = {
   current_advice: Advice[];
   sections: Record<string, CockpitSection>;
   phases: Record<DecisionPhase, StockPhaseHistory>;
+  field_evidence?: FieldEvidence[];
 };
 
 export type DecisionVersion = {

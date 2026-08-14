@@ -1,12 +1,23 @@
+import { shanghaiDay } from "./tradingDayContext";
+import { recordPerfEvent } from "./performance/perfLedger";
+
 const CACHE_PREFIX = "qibao.daily-snapshot.v1";
 const MAX_SCOPE_ENTRIES = 12;
 export const DAILY_SNAPSHOT_UPDATED_EVENT = "qibao:daily-snapshot-updated";
 
 type CacheEnvelope<T> = {
+  schemaVersion?: number;
   symbol: string;
   day: string;
   cachedAt: string;
+  sourceCutoff?: string | null;
+  completeness?: "complete" | "partial";
   value: T;
+};
+
+type SnapshotWriteOptions = {
+  sourceCutoff?: string | null;
+  completeness?: "complete" | "partial";
 };
 
 export type DailySnapshotHit<T> = {
@@ -14,23 +25,17 @@ export type DailySnapshotHit<T> = {
   cachedAt: string;
 };
 
+export type DailySnapshotMetadata = {
+  sourceCutoff: string | null;
+  completeness: "complete" | "partial";
+  day: string;
+};
+
 export type DailySnapshotListItem<T> = DailySnapshotHit<T> & {
   symbol: string;
 };
 
-const shanghaiDateFormatter = new Intl.DateTimeFormat("en-CA", {
-  timeZone: "Asia/Shanghai",
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-});
-
-export function shanghaiDay(value: Date): string {
-  const parts = Object.fromEntries(
-    shanghaiDateFormatter.formatToParts(value).map((part) => [part.type, part.value]),
-  );
-  return `${parts.year}-${parts.month}-${parts.day}`;
-}
+export { shanghaiDay } from "./tradingDayContext";
 
 function scopePrefix(scope: string): string {
   return `${CACHE_PREFIX}.${scope}.`;
@@ -38,6 +43,24 @@ function scopePrefix(scope: string): string {
 
 function cacheKey(scope: string, day: string, symbol: string): string {
   return `${scopePrefix(scope)}${day}.${symbol}`;
+}
+
+function readEnvelope<T>(scope: string, symbol: string, now: Date): CacheEnvelope<T> | null {
+  const day = shanghaiDay(now);
+  try {
+    removeOtherDays(scope, day);
+    const raw = localStorage.getItem(cacheKey(scope, day, symbol));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as CacheEnvelope<T>;
+    const valueSymbol = (parsed?.value as { symbol?: unknown } | null)?.symbol;
+    if (
+      parsed?.symbol !== symbol || parsed.day !== day || typeof parsed.cachedAt !== "string" ||
+      parsed.completeness === "partial" || valueSymbol !== symbol
+    ) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
 }
 
 function scopeKeys(scope: string): string[] {
@@ -82,23 +105,43 @@ export function readDailySnapshot<T>(
     removeOtherDays(scope, day);
     const key = cacheKey(scope, day, symbol);
     const raw = localStorage.getItem(key);
-    if (!raw) return null;
+    if (!raw) {
+      recordPerfEvent({ domain: scope, phase: "cache-read", durationMs: 0, cacheHit: false, status: "miss", observedAt: now.toISOString() });
+      return null;
+    }
     const parsed = JSON.parse(raw) as CacheEnvelope<T>;
     const valueSymbol = (parsed?.value as { symbol?: unknown } | null)?.symbol;
     if (
       parsed?.symbol !== symbol
       || parsed.day !== day
       || typeof parsed.cachedAt !== "string"
+      || parsed.completeness === "partial"
       || valueSymbol !== symbol
     ) {
       localStorage.removeItem(key);
       return null;
     }
+    recordPerfEvent({ domain: scope, phase: "cache-read", durationMs: 0, cacheHit: true, status: "ready", observedAt: now.toISOString() });
     return { value: parsed.value, cachedAt: parsed.cachedAt };
   } catch {
+    recordPerfEvent({ domain: scope, phase: "cache-read", durationMs: 0, cacheHit: false, status: "error", observedAt: now.toISOString() });
     localStorage.removeItem(cacheKey(scope, day, symbol));
     return null;
   }
+}
+
+export function readDailySnapshotMetadata(
+  scope: string,
+  symbol: string,
+  now = new Date(),
+): DailySnapshotMetadata | null {
+  const envelope = readEnvelope<unknown>(scope, symbol, now);
+  if (!envelope) return null;
+  return {
+    sourceCutoff: envelope.sourceCutoff ?? null,
+    completeness: envelope.completeness ?? "complete",
+    day: envelope.day,
+  };
 }
 
 export function listDailySnapshots<T>(
@@ -118,6 +161,7 @@ export function listDailySnapshots<T>(
         || parsed.day !== day
         || typeof parsed.symbol !== "string"
         || typeof parsed.cachedAt !== "string"
+        || parsed.completeness === "partial"
         || valueSymbol !== parsed.symbol
         || !Number.isFinite(Date.parse(parsed.cachedAt))
       ) {
@@ -137,13 +181,33 @@ export function writeDailySnapshot<T>(
   symbol: string,
   value: T,
   now = new Date(),
+  options: SnapshotWriteOptions = {},
 ): DailySnapshotHit<T> {
   const day = shanghaiDay(now);
   const cachedAt = now.toISOString();
-  const envelope: CacheEnvelope<T> = { symbol, day, cachedAt, value };
+  const completeness = options.completeness ?? "complete";
+  const envelope: CacheEnvelope<T> = {
+    schemaVersion: 2,
+    symbol,
+    day,
+    cachedAt,
+    sourceCutoff: options.sourceCutoff ?? null,
+    completeness,
+    value,
+  };
   try {
     removeOtherDays(scope, day);
-    localStorage.setItem(cacheKey(scope, day, symbol), JSON.stringify(envelope));
+    const key = cacheKey(scope, day, symbol);
+    if (completeness === "partial") {
+      const current = localStorage.getItem(key);
+      if (current) {
+        const parsed = JSON.parse(current) as CacheEnvelope<T>;
+        if ((parsed.completeness ?? "complete") === "complete") {
+          return { value: parsed.value, cachedAt: parsed.cachedAt };
+        }
+      }
+    }
+    localStorage.setItem(key, JSON.stringify(envelope));
     trimScope(scope);
     window.dispatchEvent(new CustomEvent(DAILY_SNAPSHOT_UPDATED_EVENT, { detail: { scope, symbol } }));
   } catch {

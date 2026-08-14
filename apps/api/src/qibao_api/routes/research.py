@@ -24,6 +24,8 @@ from qibao_api.contracts.instruments import AShareCode, validate_a_share_code
 from qibao_api.contracts.market import DataQuality
 from qibao_api.contracts.candidate_sentiment import CandidateSentimentBatch
 from qibao_api.contracts.company_research import CompanyResearchResponse
+from qibao_api.contracts.company_research_task import CompanyResearchTaskSnapshot
+from qibao_api.contracts.company_research_ai_task import CompanyResearchAITaskSnapshot
 from qibao_api.contracts.research import ResearchCard
 from qibao_api.contracts.stock_timeline import StockTimelineResponse
 from qibao_api.dependencies import (
@@ -35,6 +37,8 @@ from qibao_api.dependencies import (
     get_a_share_universe_source,
     get_candidate_sentiment_service,
     get_company_research_service,
+    get_company_research_task_service,
+    get_company_research_ai_task_service,
     get_compliance_repository,
     get_poll_state_repository,
     get_pipeline,
@@ -70,6 +74,14 @@ class AShareUniverseSyncResponse(BaseModel):
     count: int
     observed_at: datetime
     source: str
+
+
+class AShareDirectoryResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    items: tuple[AShareSearchItem, ...]
+    observed_at: datetime | None
+    count: int
 
 
 class CandidateSentimentBatchRequest(BaseModel):
@@ -130,6 +142,25 @@ async def sync_universe(
     return AShareUniverseSyncResponse(
         status="ready", count=len(instruments), observed_at=observed_at,
         source=str(getattr(source, "last_source", "eastmoney-a-share-universe")),
+    )
+
+
+@router.get("/directory", response_model=AShareDirectoryResponse)
+def instrument_directory_snapshot(
+    directory: Annotated[AShareInstrumentDirectory, Depends(get_a_share_instrument_directory)],
+) -> AShareDirectoryResponse:
+    snapshot = getattr(directory, "snapshot", None)
+    if callable(snapshot):
+        items = snapshot()
+    else:
+        # Keep lightweight test and plugin directory adapters compatible with
+        # the read-only endpoint while production uses the indexed snapshot.
+        items = tuple(getattr(directory, "items", {}).values())
+    latest = getattr(directory, "latest_observed_at", lambda: None)()
+    return AShareDirectoryResponse(
+        items=tuple(AShareSearchItem(**item.model_dump()) for item in items),
+        observed_at=latest,
+        count=len(items),
     )
 
 
@@ -443,6 +474,45 @@ async def company_research(
                 "message": "公司研究数据暂不可用，请稍后重试",
             },
         ) from error
+
+
+@router.post("/{symbol}/company-research/tasks", response_model=CompanyResearchTaskSnapshot)
+async def start_company_research_task(
+    symbol: Annotated[AShareCode, Path()],
+    service: Annotated[object, Depends(get_company_research_task_service)],
+    as_of: date | None = None,
+) -> CompanyResearchTaskSnapshot:
+    return service.start(symbol, _research_date(as_of))
+
+
+@router.get("/company-research/tasks/{task_id}", response_model=CompanyResearchTaskSnapshot)
+async def company_research_task(
+    task_id: str,
+    service: Annotated[object, Depends(get_company_research_task_service)],
+) -> CompanyResearchTaskSnapshot:
+    snapshot = service.snapshot(task_id)
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail="公司研究任务不存在或已过期")
+    return snapshot
+
+
+@router.post("/company-research/versions/{snapshot_id}/ai/tasks", response_model=CompanyResearchAITaskSnapshot)
+async def start_company_research_ai_task(
+    snapshot_id: str,
+    service: Annotated[object, Depends(get_company_research_ai_task_service)],
+) -> CompanyResearchAITaskSnapshot:
+    return service.start(snapshot_id)
+
+
+@router.get("/company-research/ai/tasks/{task_id}", response_model=CompanyResearchAITaskSnapshot)
+async def company_research_ai_task(
+    task_id: str,
+    service: Annotated[object, Depends(get_company_research_ai_task_service)],
+) -> CompanyResearchAITaskSnapshot:
+    snapshot = service.snapshot(task_id)
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail="公司研究 AI 任务不存在或已过期")
+    return snapshot
 
 @router.get("/{symbol}/snapshot", response_model=ResearchCard)
 async def snapshot(

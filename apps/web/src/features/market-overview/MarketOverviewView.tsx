@@ -3,14 +3,16 @@ import { Activity, AlertTriangle, CalendarDays, Clock3, Database, RefreshCw, Sea
 
 import { MarketTemperatureGauge } from "./MarketTemperatureGauge";
 import { MarketRegimeDashboard } from "./MarketRegimeDashboard";
+import { MarketDataWatermarkCenter } from "./MarketDataWatermarkCenter";
 import { OverviewFeatureRail } from "./OverviewFeatureRail";
-import { OverviewMinuteChart } from "./OverviewMinuteChart";
+import { numberedAnomalies, OverviewMinuteChart } from "./OverviewMinuteChart";
 import { OverviewTables } from "./OverviewTables";
 import type { MarketIntervalReviewLoader, MarketOverviewLoader, MarketOverviewResponse, OverviewIndexQuote } from "./types";
 import { TerminalPageHeader } from "../../shared/terminal/TerminalPrimitives";
 import { BreakingNewsStrip } from "../news-alerts/BreakingNewsStrip";
 import type { BreakingNewsAlertLoader } from "../news-alerts/types";
 import { useBreakingNewsAlerts } from "../news-alerts/useBreakingNewsAlerts";
+import { safeStorageGet, safeStorageSet } from "../../shared/safeLocalStorage";
 import { AnomalyVoiceAnnouncer } from "../speech/AnomalyVoiceAnnouncer";
 import type { SpeechSynthesizer } from "../speech/types";
 import { isAShareSymbol } from "../instrument-selection/SelectedInstrumentProvider";
@@ -18,6 +20,11 @@ import { DistinctMarketWorkspace } from "./workspaces/DistinctMarketWorkspace";
 import { HomepageStartupOverlay } from "./HomepageStartupOverlay";
 import { isMarketOverviewSnapshotCurrent, readMarketOverviewCache, writeMarketOverviewCache } from "./marketOverviewCache";
 import { MetricBand } from "../../shared/visualization/VisualPrimitives";
+import { EvidenceLedger } from "../../shared/evidence/EvidenceLedger";
+import { FieldEvidenceDetails } from "../../shared/evidence/FieldEvidenceDetails";
+import { SectorHeatmapPanel } from "../../shared/visualization/SectorHeatmapPanel";
+import { featureDisplayLabel, featureMeta } from "./featureCatalog";
+import { appendUniqueEntities, mergeEntitySnapshot, resolveIncrementalResponse } from "../../shared/incrementalResource";
 import "./overview.css";
 
 const expectedIndices = [
@@ -79,10 +86,46 @@ function keepAShareInformation(response: MarketOverviewResponse): MarketOverview
   return { ...response, live_feed: liveFeed, anomalies };
 }
 
-export function MarketOverviewView({ load, loadAlerts, onOpenAShare, synthesizeSpeech, loadIntervalReview }: {
+export function mergeStableAnomalySnapshot(
+  current: MarketOverviewResponse | null,
+  incoming: MarketOverviewResponse,
+): MarketOverviewResponse {
+  return resolveIncrementalResponse(current, incoming, {
+    tradeDate: (value) => value.as_of,
+    observedAt: (value) => value.observed_at,
+    isEmpty: (value) => value.market_data.quote_count === 0 && value.market_stocks.length === 0 && value.indices.length === 0,
+    merge: (previous, next) => ({
+      ...next,
+      anomalies: appendUniqueEntities(previous.anomalies, next.anomalies, (item) => item.anomaly_id),
+      live_feed: appendUniqueEntities(previous.live_feed, next.live_feed, (item) => item.event_id),
+      minute_series: mergeEntitySnapshot(previous.minute_series, next.minute_series, (item) => item.observed_at),
+      market_stocks: mergeEntitySnapshot(previous.market_stocks, next.market_stocks, (item) => item.symbol),
+    }),
+  });
+}
+
+function defaultWorkspaceForSnapshot(response: MarketOverviewResponse): string {
+  const { phase, freshness } = response.market_data;
+  if (phase === "premarket" || freshness === "previous_close") return "开盘啦";
+  if (phase === "postclose" || phase === "closed" || freshness === "final") return "复盘统计大全";
+  if (phase === "intraday") return response.anomalies.length > 0 ? "盘中异动" : "情绪周期";
+  if (freshness === "stale" || freshness === "unavailable") return "情绪周期";
+  return response.anomalies.length > 0 ? "盘中异动" : "情绪周期";
+}
+
+const MARKET_OVERVIEW_FEATURE_KEY = "qibao-market-overview-feature";
+
+function storedWorkspace(): string | null {
+  const stored = safeStorageGet(MARKET_OVERVIEW_FEATURE_KEY, "");
+  return featureMeta[stored as keyof typeof featureMeta] ? stored : null;
+}
+
+export function MarketOverviewView({ load, loadAlerts, onOpenAShare, onOpenCompanyResearch, onOpenQuantAnalysis, synthesizeSpeech, loadIntervalReview }: {
   load: MarketOverviewLoader;
   loadAlerts?: BreakingNewsAlertLoader;
   onOpenAShare?: (symbol: string) => void;
+  onOpenCompanyResearch?: (symbol: string) => void;
+  onOpenQuantAnalysis?: (symbol: string) => void;
   synthesizeSpeech?: SpeechSynthesizer;
   loadIntervalReview?: MarketIntervalReviewLoader;
 }) {
@@ -95,11 +138,14 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, synthesizeS
   const [usingCache, setUsingCache] = useState(() => Boolean(initialCache));
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [visible, setVisible] = useState(document.visibilityState !== "hidden");
-  const [activeFeature, setActiveFeature] = useState("盘中异动");
+  const [storedFeature] = useState(storedWorkspace);
+  const [activeFeature, setActiveFeature] = useState(storedFeature ?? "盘中异动");
   const [selectedAnomalyId, setSelectedAnomalyId] = useState<string | null>(null);
   const [selectedSectorId, setSelectedSectorId] = useState<string | null>(null);
   const [searchSymbol, setSearchSymbol] = useState("");
   const requestRef = useRef<AbortController | null>(null);
+  const hasAppliedDefaultFeatureRef = useRef(Boolean(storedFeature));
+  const userSelectedFeatureRef = useRef(Boolean(storedFeature));
   const dataRef = useRef<MarketOverviewResponse | null>(data);
   dataRef.current = data;
   const alertState = useBreakingNewsAlerts(loadAlerts, undefined, 6);
@@ -112,10 +158,11 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, synthesizeS
     if (requestRef.current !== null) return;
     const controller = new AbortController();
     requestRef.current = controller;
-    setLoading(true);
+    if (dataRef.current === null) setLoading(true);
     try {
-      const next = keepAShareInformation(await load(controller.signal));
+      const incoming = keepAShareInformation(await load(controller.signal));
       if (controller.signal.aborted) return;
+      const next = mergeStableAnomalySnapshot(dataRef.current, incoming);
       setData(next);
       if (next.status !== "unavailable" && next.market_data.quality !== "unavailable") {
         setHasCompletedInitialLoad(true);
@@ -166,11 +213,33 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, synthesizeS
     return () => window.clearInterval(timer);
   }, [autoRefresh, refresh, visible]);
 
+  useEffect(() => {
+    if (
+      hasAppliedDefaultFeatureRef.current
+      || userSelectedFeatureRef.current
+      || !data
+      || data.status === "unavailable"
+      || data.market_data.quality === "unavailable"
+    ) return;
+    setActiveFeature(defaultWorkspaceForSnapshot(data));
+    hasAppliedDefaultFeatureRef.current = true;
+  }, [data]);
+
+  const selectFeature = (feature: string) => {
+    userSelectedFeatureRef.current = true;
+    hasAppliedDefaultFeatureRef.current = true;
+    setActiveFeature(feature);
+    safeStorageSet(MARKET_OVERVIEW_FEATURE_KEY, feature);
+  };
+
   const focusedRegion = anomalyFeatures.has(activeFeature)
     ? "anomalies"
     : feedFeatures.has(activeFeature) ? "feed" : "sectors";
   const slots = useMemo(() => indexSlots(data?.indices ?? []), [data?.indices]);
+  const numberedAnomalyItems = useMemo(() => numberedAnomalies(data?.anomalies ?? []), [data?.anomalies]);
   const selectedAnomaly = data?.anomalies.find((item) => item.anomaly_id === selectedAnomalyId) ?? null;
+  const effectiveSelectedAnomaly = selectedAnomaly ?? numberedAnomalyItems[0]?.event ?? null;
+  const effectiveSelectedAnomalyId = effectiveSelectedAnomaly?.anomaly_id ?? null;
   const marketData = data?.market_data;
   const freshness = marketData?.freshness && marketData.freshness !== "unknown"
     ? marketData.freshness
@@ -295,34 +364,44 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, synthesizeS
       </aside>
     </section>
 
+    {data?.review?.watermark && <MarketDataWatermarkCenter watermark={data.review.watermark} />}
+    {((data?.field_evidence?.length ?? 0) > 0 || (data?.review?.evidence_ledger?.length ?? 0) > 0) && <div className="overview-evidence-summary-row" role="group" aria-label="数据真实性与证据摘要">
+      {(data?.field_evidence?.length ?? 0) > 0 && <FieldEvidenceDetails entries={data!.field_evidence!} />}
+      {(data?.review?.evidence_ledger?.length ?? 0) > 0 && <EvidenceLedger entries={data!.review!.evidence_ledger!} />}
+    </div>}
+
     {loadAlerts && <BreakingNewsStrip {...aShareAlertState} onOpenAShare={onOpenAShare} />}
 
-    <OverviewFeatureRail active={activeFeature} onSelect={setActiveFeature} />
+    <OverviewFeatureRail active={activeFeature} onSelect={selectFeature} />
 
     <div className="overview-toolbar">
       <button type="button" aria-label="立即刷新" disabled={loading} onClick={() => void refresh()}><RefreshCw size={14} className={loading ? "spinning" : ""} />刷新</button>
       <label><input type="checkbox" checked={autoRefresh} onChange={(event) => setAutoRefresh(event.target.checked)} />自动刷新</label>
       <span>间隔 <b>5</b> 秒</span>
-      <span>当前筛选 <strong>{activeFeature}</strong></span>
+      <span>当前筛选 <strong>{featureDisplayLabel(activeFeature)}</strong></span>
       {!visible && <span className="overview-paused">页面隐藏，刷新已暂停</span>}
       {data && <time dateTime={data.observed_at}>最新观测 {timeLabel(data.observed_at, true)}{usingCache && cacheTimestamp ? ` · 缓存 ${timeLabel(cacheTimestamp, true)}` : ""}</time>}
     </div>
 
     {activeFeature === "盘中异动" && <><section className="overview-workspace">
       <section className={`overview-chart-panel ${focusedRegion === "anomalies" ? "focused" : ""}`} aria-label="上证指数分时与异动">
-        <header><div><b>上证指数分时</b><span>价格 / 成交量 / 题材事件钉扎</span></div>{selectedAnomaly && <strong>{selectedAnomaly.label}</strong>}</header>
-        <div className="overview-chart-shell"><OverviewMinuteChart points={data?.minute_series ?? []} anomalies={data?.anomalies ?? []} selectedAnomalyId={selectedAnomalyId} /></div>
+        <header><div><b>上证指数分时</b><span>价格 / 成交量 / 稳定事件标记</span></div>{effectiveSelectedAnomaly && <strong>{effectiveSelectedAnomaly.label}</strong>}</header>
+        {effectiveSelectedAnomaly && <section className="overview-selected-anomaly" aria-label="当前异动摘要" data-direction={effectiveSelectedAnomaly.direction}>
+          <div><small>{timeLabel(effectiveSelectedAnomaly.occurred_at)} · {effectiveSelectedAnomaly.direction === "positive" ? "正向异动" : effectiveSelectedAnomaly.direction === "negative" ? "负向异动" : effectiveSelectedAnomaly.direction === "uncertain" ? "影响待核验" : "中性异动"}</small><strong>{effectiveSelectedAnomaly.headline}</strong></div>
+          <div>{effectiveSelectedAnomaly.themes.length ? effectiveSelectedAnomaly.themes.slice(0, 3).map((theme) => <em key={theme}>{theme}</em>) : <em>无题材标签</em>}</div>
+        </section>}
+        <div className="overview-chart-shell"><OverviewMinuteChart points={data?.minute_series ?? []} anomalies={data?.anomalies ?? []} selectedAnomalyId={effectiveSelectedAnomalyId} /></div>
       </section>
 
       <section className={`overview-anomaly-panel ${focusedRegion === "anomalies" ? "focused" : ""}`} aria-label="异动记录">
         <header><b>异动记录</b><span>{data?.anomalies.length ?? 0} 条</span></header>
         <div className="overview-anomaly-list">{(data?.anomalies.length ?? 0) === 0
           ? <p className="overview-empty">暂无已验证异动</p>
-          : data?.anomalies.map((item) => <button
-            key={item.anomaly_id} type="button" aria-pressed={selectedAnomalyId === item.anomaly_id}
+          : numberedAnomalyItems.map(({ event: item, number }) => <button
+            key={item.anomaly_id} type="button" aria-pressed={effectiveSelectedAnomalyId === item.anomaly_id}
             aria-label={`${timeLabel(item.occurred_at)} ${item.label}`}
             onClick={() => setSelectedAnomalyId(item.anomaly_id)}
-          ><time>{timeLabel(item.occurred_at)}</time><span><b>{item.label}</b><small>{item.headline}</small></span></button>)}</div>
+          ><span className="overview-anomaly-number" data-direction={item.direction}>{number}</span><time>{timeLabel(item.occurred_at)}</time><span><b>{item.label}</b><small>{item.headline}</small></span></button>)}</div>
       </section>
 
       <section className={`overview-feed-panel ${focusedRegion === "feed" ? "focused" : ""}`} aria-label="A 股关联资讯">
@@ -338,6 +417,7 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, synthesizeS
     </section>
 
     <div className={focusedRegion === "sectors" ? "overview-tables-focused" : ""}>
+      <SectorHeatmapPanel sectors={data?.sectors ?? []} selectedSectorId={selectedSectorId} onSelectSector={setSelectedSectorId} />
       <OverviewTables sectors={data?.sectors ?? []} sectorStocks={data?.sector_stocks ?? {}} selectedSectorId={selectedSectorId} onSelectSector={setSelectedSectorId} onOpenAShare={onOpenAShare} />
     </div></>}
 
@@ -345,7 +425,7 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, synthesizeS
       ? <MarketRegimeDashboard metrics={data.regime_metrics} regime={data.regime} />
       : activeFeature === "异动语音播报" && synthesizeSpeech
         ? <AnomalyVoiceAnnouncer anomalies={data?.anomalies ?? []} synthesize={synthesizeSpeech} />
-        : activeFeature !== "盘中异动" && data && <DistinctMarketWorkspace feature={activeFeature} data={data} onOpenAShare={onOpenAShare} loadIntervalReview={loadIntervalReview} />}
+        : activeFeature !== "盘中异动" && data && <DistinctMarketWorkspace feature={activeFeature} data={data} onOpenAShare={onOpenAShare} onOpenCompanyResearch={onOpenCompanyResearch} onOpenQuantAnalysis={onOpenQuantAnalysis} loadIntervalReview={loadIntervalReview} />}
 
     <footer className="overview-footnote">
       <span>来源：{data?.sources.join(" / ") || "等待数据"}</span>

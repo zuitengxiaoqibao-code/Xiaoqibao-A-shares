@@ -7,6 +7,7 @@ from qibao_api.contracts.stock_timeline import (
     StockTimelineResponse,
 )
 from qibao_api.a_shares.news_alerts import BreakingNewsAlertService
+from qibao_api.a_shares.unified_events import UnifiedEventProjectionService
 
 
 CHINA_TZ = ZoneInfo("Asia/Shanghai")
@@ -64,6 +65,15 @@ class StockTimelineService:
         )
         alerts = {item.event_id: item for item in alert_response.alerts}
         candidates = [event for event in candidates if event.event_id in alerts]
+        interpretations = self.news_repository.interpretations_for_events(
+            tuple(item.event_id for item in candidates), cutoff=cutoff,
+        )
+        projections = {
+            item.event_id: item
+            for item in UnifiedEventProjectionService().project(
+                candidates, interpretations, cutoff=cutoff
+            )
+        }
 
         events = tuple(
             self._event_payload(
@@ -74,6 +84,7 @@ class StockTimelineService:
                     else None
                 ),
                 alert=alerts[event.event_id],
+                projection=projections[event.event_id],
             )
             for event in candidates
         )
@@ -104,7 +115,7 @@ class StockTimelineService:
         local_date = event.occurred_at.astimezone(CHINA_TZ).date()
         linked = (AssetKind.A_SHARE, symbol) in event.affected_instruments
         return (
-            event.event_type == "market_news"
+            event.event_type in {"market_news", "market_announcement", "company_announcement", "announcement"}
             and event.review_state == "verified"
             and linked
             and event.occurred_at <= cutoff
@@ -112,7 +123,7 @@ class StockTimelineService:
         )
 
     @staticmethod
-    def _event_payload(event, *, mapped_trade_date, alert):
+    def _event_payload(event, *, mapped_trade_date, alert, projection):
         citation = event.citations[0]
         label = next(iter(event.themes), None) or next(
             iter(event.industries), None
@@ -135,4 +146,13 @@ class StockTimelineService:
             verification_state=alert.verification_state,
             source_count=alert.source_count,
             urgency=alert.urgency,
+            category=projection.category,
+            strength=projection.strength,
+            credibility=(
+                "multi_source_verified" if alert.source_count > 1
+                else projection.credibility
+            ),
+            duration=projection.duration,
+            price_reflection=projection.price_reflection,
+            follow_up_indicators=projection.follow_up_indicators,
         )

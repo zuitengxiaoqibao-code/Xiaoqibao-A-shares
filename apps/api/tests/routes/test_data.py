@@ -4,11 +4,19 @@ import pytest
 from fastapi.testclient import TestClient
 
 from qibao_api.contracts.bars import DataSourceState, SyncReport
-from qibao_api.contracts.history_sync import HistoryCoverageSummary, HistorySyncJob
+from qibao_api.contracts.history_sync import (
+    HistoryCoverageGap,
+    HistoryCoverageSummary,
+    HistoryRepairCenter,
+    HistorySyncJob,
+)
+from qibao_api.contracts.tdx_import import TdxImportJob, TdxImportScan
 from qibao_api.dependencies import (
     get_full_market_history_service,
     get_history_sync_executor,
     get_market_data_service,
+    get_tdx_import_executor,
+    get_tdx_import_service,
 )
 from qibao_api.main import app
 
@@ -98,6 +106,21 @@ class RecordingFullMarketHistoryService:
             target_date_count=7,
         )
 
+    def repair_center(self, target_date, *, offset, limit):
+        return HistoryRepairCenter(
+            coverage=self.coverage(target_date),
+            current_job=self.current,
+            gaps=(HistoryCoverageGap(
+                symbol="600001",
+                bar_count=120,
+                latest_trade_date=date(2026, 7, 23),
+                gap_kind="insufficient_history",
+            ),),
+            total_gap_count=1,
+            offset=offset,
+            limit=limit,
+        )
+
     def pause(self, job_id: str) -> HistorySyncJob:
         self.pause_calls.append(job_id)
         return make_history_job(state="paused")
@@ -118,6 +141,55 @@ class RecordingExecutor:
     def submit(self, function, *args):
         self.submissions.append((function, args))
         return object()
+
+
+def make_tdx_import_job(state: str = "pending") -> TdxImportJob:
+    observed_at = datetime(2026, 8, 13, 8, 0, tzinfo=timezone.utc)
+    return TdxImportJob(
+        job_id="tdx-import-test", state=state, stage="queued", paths=("D:/tdx/vipdoc",),
+        total_files=10, processed_files=2, imported_rows=50, replaced_rows=0,
+        skipped_rows=3, failed_files=0, current_file="sh600000.day",
+        latest_trade_date="2026-08-13", percent=20, created_at=observed_at,
+        updated_at=observed_at,
+    )
+
+
+class RecordingTdxImportService:
+    def __init__(self) -> None:
+        self.current = make_tdx_import_job("completed")
+        self.create_calls = []
+        self.run_calls = []
+
+    def scan(self, paths):
+        return TdxImportScan(
+            scanned_paths=tuple(str(item) for item in paths), day_files=10,
+            archive_files=1, readable_files=9, latest_trade_date="2026-08-13",
+        )
+
+    def current_job(self):
+        return self.current
+
+    def create_job(self, paths):
+        self.create_calls.append(tuple(paths))
+        self.current = make_tdx_import_job()
+        return self.current
+
+    def run(self, job_id):
+        self.run_calls.append(job_id)
+
+    def pause(self, job_id):
+        self.current = make_tdx_import_job("paused")
+        return self.current
+
+    def resume(self, job_id):
+        self.current = make_tdx_import_job()
+        return self.current
+
+
+def make_tdx_import_client(service, executor):
+    app.dependency_overrides[get_tdx_import_service] = lambda: service
+    app.dependency_overrides[get_tdx_import_executor] = lambda: executor
+    return TestClient(app)
 
 
 def make_client() -> TestClient:
@@ -145,6 +217,42 @@ def test_sync_endpoint_returns_actual_source() -> None:
     assert response.status_code == 200
     assert response.json()["source"] == "baidu"
     assert response.json()["written_rows"] == 20
+
+
+def test_tdx_import_scan_returns_real_file_counts() -> None:
+    service = RecordingTdxImportService()
+    with make_tdx_import_client(service, RecordingExecutor()) as client:
+        response = client.post("/api/v1/a-shares/tdx-import/scan", json={"paths": ["D:/tdx/vipdoc"]})
+
+    assert response.status_code == 200
+    assert response.json()["readable_files"] == 9
+    assert response.json()["latest_trade_date"] == "2026-08-13"
+
+
+def test_tdx_import_start_submits_background_job() -> None:
+    service = RecordingTdxImportService()
+    executor = RecordingExecutor()
+    with make_tdx_import_client(service, executor) as client:
+        response = client.post("/api/v1/a-shares/tdx-import/start", json={"paths": ["D:/tdx/vipdoc"]})
+
+    assert response.status_code == 202
+    assert response.json()["job_id"] == "tdx-import-test"
+    assert executor.submissions[0][1] == ("tdx-import-test",)
+
+
+def test_tdx_import_current_pause_and_resume_are_exposed() -> None:
+    service = RecordingTdxImportService()
+    executor = RecordingExecutor()
+    with make_tdx_import_client(service, executor) as client:
+        current = client.get("/api/v1/a-shares/tdx-import/current")
+        paused = client.post("/api/v1/a-shares/tdx-import/tdx-import-test/pause")
+        resumed = client.post("/api/v1/a-shares/tdx-import/tdx-import-test/resume")
+
+    assert current.status_code == 200
+    assert current.json()["state"] == "completed"
+    assert paused.json()["state"] == "paused"
+    assert resumed.status_code == 202
+    assert executor.submissions[-1][1] == ("tdx-import-test",)
 
 
 def test_history_endpoint_returns_empty_list_before_sync() -> None:
@@ -221,6 +329,35 @@ def test_history_coverage_route_returns_verified_counts() -> None:
     assert response.json()["universe_count"] == 5980
     assert response.json()["eligible_count"] == 13
     assert response.json()["target_date_count"] == 7
+
+
+def test_history_repair_center_route_is_read_only_and_paginated() -> None:
+    service = RecordingFullMarketHistoryService()
+
+    with make_history_client(service, RecordingExecutor()) as client:
+        response = client.get(
+            "/api/v1/a-shares/history-sync/repair-center"
+            "?target_date=2026-07-24&offset=0&limit=50"
+        )
+
+    assert response.status_code == 200
+    assert response.json()["total_gap_count"] == 1
+    assert response.json()["gaps"][0]["gap_kind"] == "insufficient_history"
+    assert service.run_calls == []
+
+
+def test_history_quality_route_is_read_only() -> None:
+    service = RecordingFullMarketHistoryService()
+    service.quality_report = lambda *, limit: {
+        "status": "partial", "limit": limit,
+    }
+
+    with make_history_client(service, RecordingExecutor()) as client:
+        response = client.get("/api/v1/a-shares/history-sync/quality?limit=90")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "partial", "limit": 90}
+    assert service.run_calls == []
 
 
 def test_pause_history_sync_route_requests_a_safe_stop() -> None:

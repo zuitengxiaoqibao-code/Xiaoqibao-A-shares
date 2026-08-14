@@ -44,6 +44,17 @@ describe("NewsIntelligenceView", () => {
     expect(screen.getByText("A股 600000")).toBeInTheDocument();
   });
 
+  it("renders the event graph above the cards and opens the evidence drawer", async () => {
+    render(<NewsIntelligenceView loadBundle={() => Promise.resolve(bundle)} syncNews={() => Promise.resolve({ fetched: 0 })} createCorrection={() => Promise.resolve()} />);
+
+    await screen.findByRole("heading", { name: "先进制造专项政策发布" });
+    const graph = screen.getByRole("region", { name: "新闻事件关系图" });
+    const cards = screen.getByRole("region", { name: "新闻卡片流" });
+    expect(graph.compareDocumentPosition(cards) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /先进制造专项政策发布/ }));
+    expect(screen.getByRole("dialog", { name: "事件证据" })).toBeInTheDocument();
+  });
+
   it("filters compact news cards by evidence-based categories", async () => {
     const categorized: NewsIntelligenceBundle = {
       ...bundle,

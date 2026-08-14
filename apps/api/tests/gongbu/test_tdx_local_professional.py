@@ -44,7 +44,26 @@ def test_parse_professional_rows_preserves_explicit_values_and_missing_fields() 
     assert len(result) == 1
     assert result[0].symbol == "600000"
     assert result[0].values == {"Fn193": Decimal("12.5"), "Fn195": Decimal("0")}
+    assert result[0].semantic_status == "semantic_unmapped"
     assert result[0].source == "tdx-local-rpc-professional"
+
+
+def test_parse_professional_rows_rejects_nested_records_instead_of_stringifying() -> None:
+    with pytest.raises(TdxProfessionalDataUnavailable):
+        parse_tdx_professional_rows(
+            {
+                "ErrorId": "0",
+                "Value": {
+                    "880660.SH": {
+                        "BK9": [
+                            {"Date": "20260807", "Value": ["0.00", "0.00"]}
+                        ]
+                    }
+                },
+            },
+            method="get_bkjy_value",
+            fetched_at=NOW,
+        )
 
 
 def test_professional_source_sends_table_list_and_never_field_list() -> None:

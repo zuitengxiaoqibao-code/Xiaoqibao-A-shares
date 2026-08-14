@@ -13,6 +13,14 @@ type Props = {
 };
 
 type Tab = "today" | "pool";
+type CandidateFilter = "all" | "qualified" | "pullback" | "no_buy";
+
+const filterNames: Record<CandidateFilter, string> = {
+  all: "全部股票",
+  qualified: "规则合格",
+  pullback: "回撤窗口",
+  no_buy: "涨停日禁买",
+};
 
 const sourceNames: Record<string, string> = {
   "local-daily-bars": "本地日线",
@@ -168,6 +176,7 @@ function Detail({ candidate }: { candidate: FirstLimitUpCandidate }) {
 export function FirstLimitUpView({ load, refresh }: Props) {
   const [board, setBoard] = useState<FirstLimitUpBoard | null>(null);
   const [tab, setTab] = useState<Tab>("today");
+  const [filter, setFilter] = useState<CandidateFilter>("all");
   const [selected, setSelected] = useState<string | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [refreshing, setRefreshing] = useState(false);
@@ -180,13 +189,32 @@ export function FirstLimitUpView({ load, refresh }: Props) {
     return () => { active = false; };
   }, [load]);
 
-  const entries = useMemo(() => tab === "today" ? board?.today ?? [] : board?.pool ?? [], [board, tab]);
+  const sourceEntries = useMemo(() => tab === "today" ? board?.today ?? [] : board?.pool ?? [], [board, tab]);
+  const entries = useMemo(() => sourceEntries.filter((candidate) => {
+    if (filter === "qualified") return candidate.selection_status === "qualified";
+    if (filter === "pullback") return candidate.stage === "pullback_window";
+    if (filter === "no_buy") return candidate.action === "no_buy";
+    return true;
+  }), [filter, sourceEntries]);
   useEffect(() => {
     if (!entries.length) { setSelected(null); return; }
     if (!selected || !entries.some((item) => item.symbol === selected)) setSelected(entries[0].symbol);
   }, [entries, selected]);
   const selectedCandidate = entries.find((item) => item.symbol === selected) ?? null;
   const priorityCandidate = board && [...board.today, ...board.pool].find((item) => item.symbol === board.priority_symbol);
+  const listTitle = filter === "all"
+    ? tab === "today" ? "本次已识别涨停" : "历史观察分组"
+    : filterNames[filter];
+
+  function selectSummaryFilter(nextTab: Tab, nextFilter: CandidateFilter) {
+    setTab(nextTab);
+    setFilter(nextFilter);
+  }
+
+  function selectTab(nextTab: Tab) {
+    setTab(nextTab);
+    setFilter("all");
+  }
 
   async function refreshBoard() {
     setRefreshing(true); setError("");
@@ -200,9 +228,16 @@ export function FirstLimitUpView({ load, refresh }: Props) {
     {error && <div className="first-limit-up-error" role="alert"><ShieldAlert size={17} /><span>{error}</span></div>}
     {board?.missing_data.length ? <div className="first-limit-up-missing" role="status"><AlertTriangle size={16} /><span>部分数据待验证：{board.missing_data.map(missingDataLabel).join(" / ")}</span></div> : null}
     {board && !board.coverage_complete && <div className="first-limit-up-coverage-warning" role="status"><AlertTriangle size={18} /><div><b>当前仅为部分市场结果</b><p>日线仍在补全；这里只展示本次扫描实际识别结果，不使用其他批次候选补位。</p></div><strong>{board.scan_coverage_count.toLocaleString("zh-CN")} / {board.universe_count.toLocaleString("zh-CN")}</strong><small>具备 250 日历史：{board.history_eligible_count.toLocaleString("zh-CN")} 只</small></div>}
-    <section className="first-limit-up-summary" aria-label="首次涨停摘要"><div><span>已识别涨停</span><strong>{board?.scanned_count ?? "--"} 只</strong><small>本次扫描，包含未通过项</small></div><div><span>规则合格</span><strong>{board?.qualified_count ?? "--"} 只</strong><small>PE 正数且不超过 50</small></div><div><span>回撤窗口</span><strong>{board?.pullback_window_count ?? "--"} 只</strong><small>回撤 5%–20% 且横盘</small></div><div className="warning"><span>涨停日禁买</span><strong>{board?.no_buy_count ?? "--"} 只</strong><small>只记录，不买入</small></div><div><span>数据来源</span><strong>{board?.sources.map(sourceLabel).join(" / ") || "暂无"}</strong><small>用于本次盘后筛选</small></div><div><span>优先观察项</span><strong>{priorityCandidate ? `${priorityCandidate.symbol} · ${priorityCandidate.name}` : board?.priority_symbol ?? "暂无"}</strong><small>综合规则排序，非收益概率</small></div></section>
-    <div className="first-limit-up-tabs" role="tablist" aria-label="首次涨停分组"><button role="tab" aria-selected={tab === "today"} type="button" onClick={() => setTab("today")}>识别结果</button><button role="tab" aria-selected={tab === "pool"} type="button" onClick={() => setTab("pool")}>回撤池</button></div>
-    <div className="first-limit-up-layout"><section className="first-limit-up-list"><header><div><p className="eyebrow">POOL / {tab === "today" ? "DETECTED" : "PULLBACK"}</p><h2>{tab === "today" ? "本次已识别涨停" : "历史观察分组"}</h2></div><span>{entries.length.toString().padStart(2, "0")}</span></header>{state === "loading" && <div className="first-limit-up-empty" role="status" aria-busy="true"><LoaderCircle className="spin" size={22} /><b>正在读取收盘筛选...</b></div>}{state === "error" && <div className="first-limit-up-empty danger"><ShieldAlert size={22} /><b>筛选数据暂不可用</b></div>}{state === "ready" && !entries.length && <div className="first-limit-up-empty"><Database size={25} /><b>{tab === "today" ? "本次没有识别到涨停记录" : "回撤池尚未形成"}</b><p>先同步覆盖足够的日线历史，盘后扫描会持续把识别结果和规则证据保留下来。</p></div>}{state === "ready" && entries.length > 0 && <div className="first-limit-up-rows">{entries.map((candidate) => <CandidateRow key={`${candidate.symbol}-${candidate.limit_up_date}`} candidate={candidate} selected={candidate.symbol === selected} onSelect={() => setSelected(candidate.symbol)} />)}</div>}<footer>当前规则 · 收盘后更新 · 不构成投资建议</footer></section>{selectedCandidate ? <Detail candidate={selectedCandidate} /> : <section className="first-limit-up-detail first-limit-up-detail-empty"><Database size={30} /><b>选择一只股票查看证据</b><p>列表记录可能包含待验证项，点击后查看证据。</p></section>}</div>
+    <section className="first-limit-up-summary" aria-label="首次涨停摘要">
+      <button type="button" className="first-limit-up-summary-filter" aria-pressed={tab === "today" && filter === "all"} aria-label={`筛选已识别涨停股票，共 ${board?.scanned_count ?? 0} 只`} onClick={() => selectSummaryFilter("today", "all")}><span>已识别涨停</span><strong>{board?.scanned_count ?? "--"} 只</strong><small>点击查看本次全部明细</small></button>
+      <button type="button" className="first-limit-up-summary-filter" aria-pressed={tab === "today" && filter === "qualified"} aria-label={`筛选规则合格股票，共 ${board?.qualified_count ?? 0} 只`} onClick={() => selectSummaryFilter("today", "qualified")}><span>规则合格</span><strong>{board?.qualified_count ?? "--"} 只</strong><small>点击查看通过规则的股票</small></button>
+      <button type="button" className="first-limit-up-summary-filter" aria-pressed={tab === "pool" && filter === "pullback"} aria-label={`筛选回撤窗口股票，共 ${board?.pullback_window_count ?? 0} 只`} onClick={() => selectSummaryFilter("pool", "pullback")}><span>回撤窗口</span><strong>{board?.pullback_window_count ?? "--"} 只</strong><small>点击查看 5%–20% 回撤明细</small></button>
+      <button type="button" className="first-limit-up-summary-filter warning" aria-pressed={tab === "today" && filter === "no_buy"} aria-label={`筛选涨停日禁买股票，共 ${board?.no_buy_count ?? 0} 只`} onClick={() => selectSummaryFilter("today", "no_buy")}><span>涨停日禁买</span><strong>{board?.no_buy_count ?? "--"} 只</strong><small>点击查看禁买原因与证据</small></button>
+      <div><span>数据来源</span><strong>{board?.sources.map(sourceLabel).join(" / ") || "暂无"}</strong><small>用于本次盘后筛选</small></div>
+      <div><span>优先观察项</span><strong>{priorityCandidate ? `${priorityCandidate.symbol} · ${priorityCandidate.name}` : board?.priority_symbol ?? "暂无"}</strong><small>综合规则排序，非收益概率</small></div>
+    </section>
+    <div className="first-limit-up-tabs" role="tablist" aria-label="首次涨停分组"><button role="tab" aria-selected={tab === "today"} type="button" onClick={() => selectTab("today")}>识别结果</button><button role="tab" aria-selected={tab === "pool"} type="button" onClick={() => selectTab("pool")}>回撤池</button></div>
+    <div className="first-limit-up-layout"><section className="first-limit-up-list" aria-label="首次涨停候选列表"><header><div><p className="eyebrow">POOL / {tab === "today" ? "DETECTED" : "PULLBACK"}</p><h2>{listTitle} · {entries.length} 只</h2></div><div className="first-limit-up-list-actions"><span>{entries.length.toString().padStart(2, "0")}</span>{filter !== "all" && <button type="button" onClick={() => setFilter("all")} aria-label="查看当前分组全部股票">查看全部</button>}</div></header>{state === "loading" && <div className="first-limit-up-empty" role="status" aria-busy="true"><LoaderCircle className="spin" size={22} /><b>正在读取收盘筛选...</b></div>}{state === "error" && <div className="first-limit-up-empty danger"><ShieldAlert size={22} /><b>筛选数据暂不可用</b></div>}{state === "ready" && !entries.length && <div className="first-limit-up-empty"><Database size={25} /><b>{filter === "all" ? tab === "today" ? "本次没有识别到涨停记录" : "回撤池尚未形成" : `当前没有${filterNames[filter]}股票`}</b><p>{filter === "all" ? "先同步覆盖足够的日线历史，盘后扫描会持续把识别结果和规则证据保留下来。" : "该数字为零或当前真实明细为空；可点击“查看全部”返回当前分组。"}</p></div>}{state === "ready" && entries.length > 0 && <div className="first-limit-up-rows">{entries.map((candidate) => <CandidateRow key={`${candidate.symbol}-${candidate.limit_up_date}`} candidate={candidate} selected={candidate.symbol === selected} onSelect={() => setSelected(candidate.symbol)} />)}</div>}<footer>当前筛选：{filter === "all" ? "全部股票" : filterNames[filter]} · 收盘后更新 · 不构成投资建议</footer></section>{selectedCandidate ? <Detail candidate={selectedCandidate} /> : <section className="first-limit-up-detail first-limit-up-detail-empty"><Database size={30} /><b>{filter === "all" ? "选择一只股票查看证据" : `没有可展示的${filterNames[filter]}明细`}</b><p>{filter === "all" ? "列表记录可能包含待验证项，点击后查看证据。" : "当前筛选没有匹配股票，可查看全部或切换其他统计项。"}</p></section>}</div>
     <section className="first-limit-up-rules"><header><Info size={16} /><div><b>新手规则速览</b><span>先看红色提醒，再看绿色窗口</span></div></header><div><p><strong>1</strong>涨停当天坚决不买。</p><p><strong>2</strong>PE 必须为正且 ≤ 50。</p><p><strong>3</strong>周线、月线都要处于底部附近。</p><p><strong>4</strong>涨停后回撤 5%–20%，横盘后才进入分批观察。</p></div></section>
   </main>;
 }

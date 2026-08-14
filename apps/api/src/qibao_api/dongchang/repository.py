@@ -64,8 +64,100 @@ class AuditFindingRepository:
                             for position, snapshot_id in enumerate(finding.input_snapshot_ids)
                         ],
                     )
+                if audit_input.source_observations:
+                    self.connection.executemany(
+                        """INSERT INTO audit_source_observations(
+                           audit_run_id, asset, symbol, as_of, field, value, source, evidence_link
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                        [
+                            (
+                                audit_input.audit_run_id,
+                                item.asset.value,
+                                item.symbol,
+                                item.as_of.isoformat(),
+                                item.field,
+                                item.value,
+                                item.source,
+                                item.evidence_link,
+                            )
+                            for item in audit_input.source_observations
+                        ],
+                    )
         except sqlite3.IntegrityError as error:
             raise ValueError(f"audit run {audit_input.audit_run_id!r} already exists") from error
+
+    def append_source_observations(self, audit_input: AuditInput) -> None:
+        """Persist raw source candidates as immutable, local diagnostic rows."""
+        if not audit_input.source_observations:
+            return
+        with self._lock, self.connection:
+            self.connection.executemany(
+                """INSERT INTO audit_source_observations(
+                   audit_run_id, asset, symbol, as_of, field, value, source, evidence_link
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                [
+                    (
+                        audit_input.audit_run_id,
+                        item.asset.value,
+                        item.symbol,
+                        item.as_of.isoformat(),
+                        item.field,
+                        item.value,
+                        item.source,
+                        item.evidence_link,
+                    )
+                    for item in audit_input.source_observations
+                ],
+            )
+
+    def source_conflict_summary(
+        self, *, asset: AssetKind | str, symbol: str | None = None, field: str | None = None,
+    ) -> dict:
+        """Return a redacted, deterministic view of conflicting field candidates."""
+        asset = AssetKind(asset)
+        clauses = ["asset = ?"]
+        params: list[object] = [asset.value]
+        if symbol:
+            clauses.append("symbol = ?")
+            params.append(symbol)
+        if field:
+            clauses.append("field = ?")
+            params.append(field)
+        query = "SELECT * FROM audit_source_observations WHERE " + " AND ".join(clauses)
+        query += " ORDER BY symbol, field, as_of, sequence"
+        with self._lock:
+            rows = self.connection.execute(query, params).fetchall()
+        grouped: dict[tuple[str, str, str], list[sqlite3.Row]] = {}
+        for row in rows:
+            grouped.setdefault((row["symbol"], row["field"], row["as_of"]), []).append(row)
+        conflicts: list[dict] = []
+        priority = {"local-tdx": 0, "tdx": 0, "mootdx": 0, "tencent": 1, "eastmoney": 2, "baidu": 3}
+        for (group_symbol, group_field, as_of), candidates in sorted(grouped.items()):
+            values = {row["value"] for row in candidates}
+            if len(values) <= 1:
+                continue
+            ordered = sorted(candidates, key=lambda row: (priority.get(row["source"], 99), row["source"], row["sequence"]))
+            selected = ordered[0]
+            conflicts.append({
+                "symbol": group_symbol,
+                "field": group_field,
+                "as_of": as_of,
+                "candidate_sources": sorted({row["source"] for row in candidates}),
+                "selected_source": selected["source"],
+                "selection_reason": "source_priority_then_freshness",
+                "candidate_count": len(candidates),
+                "affects_conclusion": True,
+                "candidates": [
+                    {
+                        "source": row["source"],
+                        "value": row["value"],
+                        "observed_at": row["as_of"],
+                        "evidence_link": row["evidence_link"],
+                    }
+                    for row in ordered
+                ],
+            })
+        return {"state": "ready", "conflict_count": len(conflicts), "conflicts": conflicts}
 
     def _append_finding(self, finding: AuditFinding) -> None:
         values = (

@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import threading
 from datetime import datetime, timezone
@@ -22,6 +23,12 @@ class AShareInstrument(BaseModel):
     exchange: Literal["sh", "sz", "bj"]
     observed_at: AwareDatetime
     quote_quality: Literal["ready", "stale", "unavailable"]
+    short_name: str | None = None
+    historical_names: tuple[str, ...] = ()
+    search_aliases: tuple[str, ...] = ()
+    industry: str | None = None
+    sectors: tuple[str, ...] = ()
+    trading_status: Literal["active", "suspended", "delisted", "unknown"] = "unknown"
 
     @field_validator("observed_at")
     @classmethod
@@ -51,7 +58,13 @@ class AShareInstrumentDirectory:
                 name TEXT NOT NULL,
                 exchange TEXT NOT NULL,
                 observed_at TEXT NOT NULL,
-                quote_quality TEXT NOT NULL
+                quote_quality TEXT NOT NULL,
+                short_name TEXT,
+                historical_names TEXT NOT NULL DEFAULT '[]',
+                search_aliases TEXT NOT NULL DEFAULT '[]',
+                industry TEXT,
+                sectors TEXT NOT NULL DEFAULT '[]',
+                trading_status TEXT NOT NULL DEFAULT 'unknown'
             )
             """
         )
@@ -68,19 +81,55 @@ class AShareInstrumentDirectory:
                 name TEXT NOT NULL,
                 exchange TEXT NOT NULL,
                 observed_at TEXT NOT NULL,
-                quote_quality TEXT NOT NULL
+                quote_quality TEXT NOT NULL,
+                short_name TEXT,
+                historical_names TEXT NOT NULL DEFAULT '[]',
+                search_aliases TEXT NOT NULL DEFAULT '[]',
+                industry TEXT,
+                sectors TEXT NOT NULL DEFAULT '[]',
+                trading_status TEXT NOT NULL DEFAULT 'unknown'
             )
             """
         )
+        self._migrate_metadata_columns("a_share_instrument_observations")
+        self._migrate_metadata_columns("a_share_active_universe")
         self._connection.commit()
+
+    def _migrate_metadata_columns(self, table: str) -> None:
+        existing = {
+            row[1] for row in self._connection.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        definitions = {
+            "short_name": "TEXT",
+            "historical_names": "TEXT NOT NULL DEFAULT '[]'",
+            "search_aliases": "TEXT NOT NULL DEFAULT '[]'",
+            "industry": "TEXT",
+            "sectors": "TEXT NOT NULL DEFAULT '[]'",
+            "trading_status": "TEXT NOT NULL DEFAULT 'unknown'",
+        }
+        for name, definition in definitions.items():
+            if name not in existing:
+                self._connection.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+
+    @staticmethod
+    def _metadata(instrument: AShareInstrument) -> tuple[object, ...]:
+        return (
+            instrument.short_name,
+            json.dumps(instrument.historical_names, ensure_ascii=False),
+            json.dumps(instrument.search_aliases, ensure_ascii=False),
+            instrument.industry,
+            json.dumps(instrument.sectors, ensure_ascii=False),
+            instrument.trading_status,
+        )
 
     def observe(self, instrument: AShareInstrument) -> None:
         with self._lock:
             self._connection.execute(
                 """
                 INSERT INTO a_share_instrument_observations
-                    (symbol, name, exchange, observed_at, quote_quality)
-                VALUES (?, ?, ?, ?, ?)
+                    (symbol, name, exchange, observed_at, quote_quality, short_name,
+                     historical_names, search_aliases, industry, sectors, trading_status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     instrument.symbol,
@@ -88,6 +137,7 @@ class AShareInstrumentDirectory:
                     instrument.exchange,
                     instrument.observed_at.isoformat(),
                     instrument.quote_quality,
+                    *self._metadata(instrument),
                 ),
             )
             self._connection.commit()
@@ -98,8 +148,9 @@ class AShareInstrumentDirectory:
             self._connection.executemany(
                 """
                 INSERT INTO a_share_instrument_observations
-                    (symbol, name, exchange, observed_at, quote_quality)
-                VALUES (?, ?, ?, ?, ?)
+                    (symbol, name, exchange, observed_at, quote_quality, short_name,
+                     historical_names, search_aliases, industry, sectors, trading_status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -108,6 +159,7 @@ class AShareInstrumentDirectory:
                         instrument.exchange,
                         instrument.observed_at.isoformat(),
                         instrument.quote_quality,
+                        *self._metadata(instrument),
                     )
                     for instrument in instruments
                 ],
@@ -116,8 +168,9 @@ class AShareInstrumentDirectory:
             self._connection.executemany(
                 """
                 INSERT INTO a_share_active_universe
-                    (symbol, name, exchange, observed_at, quote_quality)
-                VALUES (?, ?, ?, ?, ?)
+                    (symbol, name, exchange, observed_at, quote_quality, short_name,
+                     historical_names, search_aliases, industry, sectors, trading_status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -126,6 +179,7 @@ class AShareInstrumentDirectory:
                         instrument.exchange,
                         instrument.observed_at.isoformat(),
                         instrument.quote_quality,
+                        *self._metadata(instrument),
                     )
                     for instrument in active_instruments.values()
                 ],
@@ -145,7 +199,8 @@ class AShareInstrumentDirectory:
         with self._lock:
             row = self._connection.execute(
                 """
-                SELECT symbol, name, exchange, observed_at, quote_quality
+                SELECT symbol, name, exchange, observed_at, quote_quality, short_name,
+                       historical_names, search_aliases, industry, sectors, trading_status
                 FROM a_share_instrument_observations
                 WHERE symbol = ? AND (? IS NULL OR observed_at <= ?)
                 ORDER BY observed_at DESC, id DESC
@@ -162,17 +217,31 @@ class AShareInstrumentDirectory:
         if limit < 1:
             raise ValueError("limit must be positive")
         rows = self._active_rows() if self._active_count() else self._all_rows()
-        matches = [item for item in rows if normalized in item.symbol or normalized in item.name.casefold()]
+        def terms(item: AShareInstrument) -> tuple[str, ...]:
+            return (
+                item.symbol, item.name, item.short_name or "", *item.historical_names,
+                *item.search_aliases,
+            )
+
+        matches = [
+            item for item in rows
+            if any(normalized in value.casefold() for value in terms(item) if value)
+        ]
         return tuple(
             sorted(
                 matches,
                 key=lambda item: (
                     item.symbol != normalized,
+                    item.name.casefold() != normalized,
                     not item.name.casefold().startswith(normalized),
                     item.symbol,
                 ),
             )[:limit]
         )
+
+    def snapshot(self) -> tuple[AShareInstrument, ...]:
+        """Return the current local read model without invoking any network source."""
+        return self._active_rows() if self._active_count() else self._all_rows()
 
     def latest_observed_at(self) -> datetime | None:
         with self._lock:
@@ -210,7 +279,8 @@ class AShareInstrumentDirectory:
         with self._lock:
             rows = self._connection.execute(
                 """
-                SELECT symbol, name, exchange, observed_at, quote_quality
+                SELECT symbol, name, exchange, observed_at, quote_quality, short_name,
+                       historical_names, search_aliases, industry, sectors, trading_status
                 FROM (
                     SELECT *, row_number() OVER (
                         PARTITION BY symbol ORDER BY observed_at DESC, id DESC
@@ -233,7 +303,8 @@ class AShareInstrumentDirectory:
         with self._lock:
             rows = self._connection.execute(
                 """
-                SELECT symbol, name, exchange, observed_at, quote_quality
+                SELECT symbol, name, exchange, observed_at, quote_quality, short_name,
+                       historical_names, search_aliases, industry, sectors, trading_status
                 FROM a_share_active_universe ORDER BY symbol
                 """
             ).fetchall()
@@ -243,7 +314,8 @@ class AShareInstrumentDirectory:
         with self._lock:
             row = self._connection.execute(
                 """
-                SELECT symbol, name, exchange, observed_at, quote_quality
+                SELECT symbol, name, exchange, observed_at, quote_quality, short_name,
+                       historical_names, search_aliases, industry, sectors, trading_status
                 FROM a_share_active_universe WHERE symbol = ?
                 """,
                 (symbol,),
@@ -258,6 +330,12 @@ class AShareInstrumentDirectory:
             exchange=row[2],
             observed_at=datetime.fromisoformat(row[3]),
             quote_quality=row[4],
+            short_name=row[5],
+            historical_names=tuple(json.loads(row[6] or "[]")),
+            search_aliases=tuple(json.loads(row[7] or "[]")),
+            industry=row[8],
+            sectors=tuple(json.loads(row[9] or "[]")),
+            trading_status=row[10] or "unknown",
         )
 
     def close(self) -> None:

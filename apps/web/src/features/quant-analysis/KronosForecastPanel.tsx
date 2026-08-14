@@ -2,6 +2,7 @@ import type { EChartsOption } from "echarts";
 import { AlertTriangle, Cpu, Database, ShieldAlert } from "lucide-react";
 
 import { QuantChart } from "./QuantChart";
+import { chartTheme } from "../../shared/visualization/chartTheme";
 import type { KronosForecastResponse } from "./types";
 
 type Props = {
@@ -10,11 +11,11 @@ type Props = {
   error: string;
 };
 
-const gridColor = "rgba(74, 105, 135, .22)";
-const axisColor = "#63758a";
-const gold = "#f4c76a";
-const cyan = "#34d6ff";
-const magenta = "#ff5c8a";
+const gridColor = chartTheme.gridColor;
+const axisColor = chartTheme.mutedTextColor;
+const gold = chartTheme.warningColor;
+const cyan = chartTheme.liveColor;
+const magenta = chartTheme.eventColors.risk;
 
 function number(value: string | null | undefined): number | null {
   if (!value) return null;
@@ -44,9 +45,9 @@ function chartOption(forecast: KronosForecastResponse): EChartsOption {
   const points = forecast.points;
   return {
     animation: false,
-    textStyle: { color: "#aab9ca", fontFamily: "JetBrains Mono, Consolas, monospace" },
+    textStyle: { color: chartTheme.textColor, fontFamily: chartTheme.fontFamily },
     grid: { left: 54, right: 24, top: 28, bottom: 38 },
-    tooltip: { trigger: "axis", backgroundColor: "#071018", borderColor: gold, textStyle: { color: "#d8e6f1" } },
+    tooltip: { trigger: "axis", backgroundColor: chartTheme.tooltipBackgroundColor, borderColor: gold, textStyle: { color: chartTheme.textColor } },
     legend: { top: 0, right: 6, textStyle: { color: axisColor }, data: ["中位路径", "下界", "上界"] },
     xAxis: { type: "category", data: points.map((point) => point.trade_date), axisLine: { lineStyle: { color: gridColor } }, axisLabel: { color: axisColor, hideOverlap: true } },
     yAxis: { type: "value", scale: true, splitLine: { lineStyle: { color: gridColor } }, axisLabel: { color: axisColor } },

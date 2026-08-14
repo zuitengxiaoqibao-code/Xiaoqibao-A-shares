@@ -19,6 +19,10 @@ const pendingStrategy = {
   candidate_scan_age_seconds: null,
   trigger_evidence_cached: false,
   trigger_evidence_age_seconds: null,
+  refresh_state: "pending",
+  snapshot_source: "disk",
+  snapshot_at: "2026-08-07T02:59:00.000Z",
+  regime: { coverage_percent: "85", quality: "partial" },
 } as unknown as QuantStrategyDashboard;
 
 describe("QuantLiveStatusBar candidate scan progress", () => {
@@ -46,6 +50,8 @@ describe("QuantLiveStatusBar candidate scan progress", () => {
     );
 
     expect(screen.getByText(/后台预热中 · 首次扫描不会阻塞页面/)).toBeInTheDocument();
+    expect(screen.getByText(/保留同日快照 · 1分钟前/)).toBeInTheDocument();
+    expect(screen.getByText("证据覆盖 85% · partial")).toBeInTheDocument();
     const progress = screen.getByRole("progressbar", { name: "候选扫描后台预热" });
     expect(progress).toHaveAttribute("aria-busy", "true");
     expect(progress).not.toHaveAttribute("aria-valuenow");

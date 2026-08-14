@@ -4,7 +4,7 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, suppress
-from datetime import datetime, time as datetime_time, timedelta, timezone
+from datetime import date, datetime, time as datetime_time, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -12,7 +12,6 @@ import httpx
 from fastapi import FastAPI, Request
 
 from qibao_api.a_shares.diagnosis import AShareDiagnosisService
-from qibao_api.a_shares.company_research import CompanyResearchService
 from qibao_api.a_shares.cockpit import StockDecisionCockpitService
 from qibao_api.a_shares.assessment_ai import ReloadableAssessmentGateway
 from qibao_api.a_shares.fundamentals import TdxFinanceSource
@@ -31,6 +30,10 @@ from qibao_api.a_shares.quant_strategy import (
     ArchivedTriggerEvidenceSource,
     QuantStrategyService,
 )
+from qibao_api.a_shares.quant_strategy_snapshot import QuantStrategySnapshotStore
+from qibao_api.a_shares.quant_shadow_ledger import QuantShadowLedgerStore
+from qibao_api.a_shares.decision_journal import DecisionJournalStore
+from qibao_api.a_shares.portfolio_risk import PortfolioRiskService, PortfolioRiskStore
 from qibao_api.a_shares.candidate_sentiment import CandidateSentimentEvaluator
 from qibao_api.a_shares.candidate_sentiment_repository import (
     CandidateSentimentRepository,
@@ -48,11 +51,12 @@ from qibao_api.a_shares.preparation import AStockPreparationService
 from qibao_api.a_shares.stock_timeline import StockTimelineService
 from qibao_api.a_shares.news_alerts import BreakingNewsAlertService
 from qibao_api.gongbu.baidu_history import BaiduHistorySource
-from qibao_api.gongbu.sina_financials import SinaFinancialHistorySource
-from qibao_api.gongbu.tdx_company_profile import TdxCompanyProfileSource
 from qibao_api.gongbu.data_service import FallbackHistorySource, MarketDataService
 from qibao_api.gongbu.full_market_history import FullMarketHistoryService
 from qibao_api.gongbu.history_sync_repository import HistorySyncRepository
+from qibao_api.gongbu.tdx_import_repository import TdxImportRepository
+from qibao_api.gongbu.tdx_local_import import TdxLocalImportService
+from qibao_api.gongbu.tdx_auto_import import TdxAutoImportMonitor
 from qibao_api.gongbu.tdx_client import create_tdx_client
 from qibao_api.gongbu.tdx_history import TdxHistorySource
 from qibao_api.gongbu.tdx_local_overview import (
@@ -114,6 +118,12 @@ from qibao_api.gongbu.fund_flow import (
     FundFlowRepository,
     FundFlowService,
 )
+from qibao_api.gongbu.sector_fund_flow import (
+    EastmoneySectorFundFlowSource,
+    SectorFundFlowRepository,
+    SectorFundFlowService,
+)
+from qibao_api.gongbu.research_enrichment import ResearchEnrichmentRepository
 from qibao_api.gongbu.stock_classification import (
     EastmoneyStockClassificationSource,
     StockClassificationRepository,
@@ -140,6 +150,7 @@ from qibao_api.routes.settings import router as settings_router
 from qibao_api.routes.market_sentiment import router as market_sentiment_router
 from qibao_api.routes.market_overview import router as market_overview_router
 from qibao_api.routes.quant_strategy import router as quant_strategy_router
+from qibao_api.routes.portfolio_risk import router as portfolio_risk_router
 from qibao_api.routes.first_limit_up import router as first_limit_up_router
 from qibao_api.routes.tdx_local import router as tdx_local_router
 from qibao_api.routes.speech import router as speech_router
@@ -170,6 +181,12 @@ from qibao_api.shangshu.trading_calendar import (
 from qibao_api.routes.briefings import router as briefings_router
 from qibao_api.shangshu.postclose_context import RepositoryPostcloseContextSource
 from qibao_api.shangshu.operations_repository import OperationsRepository
+from qibao_api.operations.read_model import OperationsReadModel
+from qibao_api.tasks.progress import TaskProgressRegistry
+from qibao_api.bootstrap.lazy_service import AsyncLazyService
+from qibao_api.a_shares.company_research_tasks import CompanyResearchTaskService
+from qibao_api.operations.performance_store import PerformanceStore
+from qibao_api.operations.shared_snapshots import SharedSnapshotRegistry
 from qibao_api.shangshu.scheduler import DailyBriefingScheduler
 from qibao_api.gongbu.backup_service import BackupService
 from qibao_api.routes.operations import router as operations_router
@@ -229,6 +246,71 @@ async def _scheduler_loop(
             logger.exception("scheduled briefing tick failed")
 
 
+async def _sector_fund_flow_sampling_loop(
+    service,
+    *,
+    clock=lambda: datetime.now(timezone.utc),
+    sleep=asyncio.sleep,
+    initial_delay_seconds: float = 5,
+    intraday_interval_seconds: float = 60,
+    idle_interval_seconds: float = 900,
+) -> None:
+    await sleep(max(0.0, initial_delay_seconds))
+    while True:
+        try:
+            await service.sync()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.info("sector fund-flow sample unavailable; keeping cache", exc_info=True)
+        local_now = clock().astimezone(CHINA_TZ)
+        session_time = local_now.weekday() < 5 and (
+            datetime_time(9, 15) <= local_now.time() <= datetime_time(11, 35)
+            or datetime_time(12, 55) <= local_now.time() <= datetime_time(15, 5)
+        )
+        await sleep(
+            intraday_interval_seconds if session_time else idle_interval_seconds
+        )
+
+
+async def _source_health_snapshot_loop(
+    repository,
+    *,
+    sleep=asyncio.sleep,
+    interval_seconds: float = 30,
+) -> None:
+    """Refresh only the local read model; GET requests never probe sources."""
+    while True:
+        try:
+            await asyncio.to_thread(repository.refresh_source_health_snapshot, 20)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.info(
+                "source health snapshot refresh unavailable; keeping cache",
+                exc_info=True,
+            )
+        await sleep(interval_seconds)
+
+
+async def _tdx_auto_import_loop(
+    monitor,
+    *,
+    sleep=asyncio.sleep,
+    initial_delay_seconds: float = 20,
+    interval_seconds: float = 30,
+) -> None:
+    await sleep(max(0.0, initial_delay_seconds))
+    while True:
+        try:
+            await asyncio.to_thread(monitor.poll)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.info("TDX auto-import monitor unavailable; keeping status", exc_info=True)
+        await sleep(max(1.0, interval_seconds))
+
+
 def _runtime_tick(scheduler, now: datetime) -> None:
     scheduler.tick(now)
     scheduler.tick_intraday(now)
@@ -270,6 +352,34 @@ def _refresh_market_sentiment(service, now: datetime) -> None:
         logger.info("initial market sentiment refresh skipped outside session")
     except Exception:
         logger.info("initial market sentiment refresh deferred", exc_info=True)
+
+
+def _refresh_after_tdx_import(application, latest: date | None) -> None:
+    """Rebuild only evidence-backed read models after a local import commits."""
+    if latest is None:
+        return
+    review = getattr(application.state, "local_market_review_source", None)
+    if review is not None:
+        try:
+            review.refresh(as_of=latest)
+        except Exception:
+            logger.info("local market review rebuild deferred after TDX import", exc_info=True)
+    now = datetime.now(timezone.utc)
+    calendar = getattr(application.state, "trading_calendar", None)
+    local_now = now.astimezone(CHINA_TZ)
+    in_session = datetime_time(9, 30) <= local_now.time() <= datetime_time(15, 0)
+    is_trading_day = calendar is None or calendar.is_trading_day(latest)
+    if latest != local_now.date() or not in_session or not is_trading_day:
+        return
+    sentiment = getattr(application.state, "market_sentiment_service", None)
+    if sentiment is not None:
+        _refresh_market_sentiment(sentiment, now)
+    overview = getattr(application.state, "market_overview_service", None)
+    if overview is not None:
+        try:
+            overview.current(now)
+        except Exception:
+            logger.info("market overview rebuild deferred after TDX import", exc_info=True)
 
 
 def _defer_initial_market_sentiment_refresh(executor, service, now: datetime) -> None:
@@ -318,6 +428,15 @@ async def lifespan(application: FastAPI):
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     write_gate = asyncio.Lock()
     application.state.write_gate = write_gate
+    application.state.task_progress_registry = TaskProgressRegistry()
+    shared_snapshot_registry = SharedSnapshotRegistry(
+        settings.data_dir / "shared-snapshots.sqlite3"
+    )
+    application.state.shared_snapshot_registry = shared_snapshot_registry
+    application.state.performance_store = PerformanceStore(
+        settings.data_dir / "performance.sqlite3",
+        shared_snapshot_registry=shared_snapshot_registry,
+    )
     ai_settings_repository = AISettingsRepository(settings.data_dir)
     application.state.ai_settings_repository = ai_settings_repository
     effective_ai_settings = EffectiveAISettingsResolver(
@@ -412,6 +531,27 @@ async def lifespan(application: FastAPI):
         settings.data_dir / "fund-flow.sqlite3"
     )
     application.state.fund_flow_repository = fund_flow_repository
+    sector_fund_flow_repository = SectorFundFlowRepository(
+        settings.data_dir / "sector-fund-flow.sqlite3"
+    )
+    application.state.sector_fund_flow_repository = sector_fund_flow_repository
+    research_enrichment_repository = ResearchEnrichmentRepository(
+        settings.data_dir / "research-enrichment.sqlite3"
+    )
+    application.state.research_enrichment_repository = research_enrichment_repository
+    from qibao_api.a_shares.company_research_versions import CompanyResearchVersionRepository
+    from qibao_api.a_shares.company_research_ai_cache import CompanyResearchAIResultRepository
+    company_research_version_repository = CompanyResearchVersionRepository(
+        settings.data_dir / "company-research-versions.sqlite3",
+        shared_snapshot_registry=shared_snapshot_registry,
+    )
+    application.state.company_research_version_repository = company_research_version_repository
+    company_research_ai_result_repository = CompanyResearchAIResultRepository(
+        settings.data_dir / "company-research-ai-results.sqlite3"
+    )
+    application.state.company_research_ai_result_repository = (
+        company_research_ai_result_repository
+    )
     a_share_research_repository = AShareResearchRepository(
         settings.data_dir / "a-share-research.sqlite3"
     )
@@ -431,12 +571,23 @@ async def lifespan(application: FastAPI):
     operations_repository = OperationsRepository(
         settings.data_dir / "operations.sqlite3"
     )
+    source_health_snapshot_task = asyncio.create_task(
+        _source_health_snapshot_loop(operations_repository),
+        name="source-health-snapshot",
+    )
+    tdx_auto_import_task = None
     application.state.operations_repository = operations_repository
+    application.state.operations_read_model = OperationsReadModel(portable_root)
     log_startup_stage("repositories-ready")
 
     bond_universe_refresh_task = None
+    sector_fund_flow_sampling_task = None
     async with httpx.AsyncClient(timeout=10) as client:
         application.state.a_share_quote_source = TencentQuoteSource(client)
+        application.state.sector_fund_flow_service = SectorFundFlowService(
+            EastmoneySectorFundFlowSource(client=client),
+            sector_fund_flow_repository,
+        )
         with httpx.Client(timeout=10) as history_client:
             history_sources = [
                 AuthorizedHistorySource(
@@ -546,10 +697,35 @@ async def lifespan(application: FastAPI):
                 fund_flow_repository=fund_flow_repository,
                 trading_calendar=trading_calendar,
             )
-            application.state.company_research_service = CompanyResearchService(
-                application.state.a_share_diagnosis_service,
-                SinaFinancialHistorySource(client=history_client),
-                TdxCompanyProfileSource(client_factory=create_tdx_client),
+            def create_company_research_service():
+                from qibao_api.a_shares.company_research import CompanyResearchService
+                from qibao_api.gongbu.sina_financials import SinaFinancialHistorySource
+                from qibao_api.gongbu.tdx_company_profile import TdxCompanyProfileSource
+                from qibao_api.gongbu.research_enrichment import EastmoneyResearchEnrichmentSource
+
+                return CompanyResearchService(
+                    application.state.a_share_diagnosis_service,
+                    SinaFinancialHistorySource(client=history_client),
+                    TdxCompanyProfileSource(client_factory=create_tdx_client),
+                    enrichment_source=EastmoneyResearchEnrichmentSource(client),
+                    enrichment_repository=research_enrichment_repository,
+                    version_repository=company_research_version_repository,
+                )
+
+            application.state.company_research_service = AsyncLazyService(
+                create_company_research_service
+            )
+            application.state.company_research_task_service = CompanyResearchTaskService(
+                application.state.company_research_service,
+                application.state.task_progress_registry,
+            )
+            from qibao_api.a_shares.company_research_ai import ReloadableCompanyResearchAIGateway
+            from qibao_api.a_shares.company_research_ai_tasks import CompanyResearchAITaskService
+            application.state.company_research_ai_task_service = CompanyResearchAITaskService(
+                company_research_version_repository,
+                ReloadableCompanyResearchAIGateway(effective_ai_settings, history_client),
+                application.state.task_progress_registry,
+                result_repository=company_research_ai_result_repository,
             )
             application.state.bond_repository = bond_repository
             application.state.bond_service = ConvertibleBondService(
@@ -659,6 +835,7 @@ async def lifespan(application: FastAPI):
                 RepositoryPostcloseContextSource(decision_repository, audit_repository),
             )
             application.state.decision_calendar = trading_calendar
+            application.state.trading_calendar = trading_calendar
             decision_candidate_source = RepositoryCandidateFactorSource(
                 application.state.a_share_diagnosis_service
             )
@@ -754,13 +931,43 @@ async def lifespan(application: FastAPI):
             history_sync_repository = HistorySyncRepository(
                 settings.data_dir / "history-sync.sqlite3"
             )
+            tdx_import_repository = TdxImportRepository(
+                settings.data_dir / "tdx-import.sqlite3"
+            )
             history_sync_executor = ThreadPoolExecutor(
                 max_workers=1,
                 thread_name_prefix="history-sync",
             )
             history_symbol_reconciliation_task = None
             application.state.history_sync_repository = history_sync_repository
+            application.state.tdx_import_repository = tdx_import_repository
             application.state.history_sync_executor = history_sync_executor
+            application.state.tdx_import_executor = history_sync_executor
+            application.state.tdx_import_service = TdxLocalImportService(
+                bar_repository,
+                job_repository=tdx_import_repository,
+                clock=lambda: datetime.now(timezone.utc),
+                discovery=local_source_discovery_result,
+                archive_paths=local_source_settings_record.settings.tdx_archive_paths,
+            )
+            def _tdx_auto_import_paths():
+                paths = []
+                active = getattr(local_source_discovery_result, "active_tdx_vipdoc", None)
+                if active is not None:
+                    paths.append(active)
+                    if active.name.casefold() == "vipdoc":
+                        archive_root = active.parent / "T0002"
+                        if archive_root.is_dir():
+                            paths.append(archive_root)
+                paths.extend(local_source_settings_record.settings.tdx_archive_paths)
+                return tuple(dict.fromkeys(paths))
+
+            tdx_auto_import_monitor = TdxAutoImportMonitor(
+                _tdx_auto_import_paths,
+                service=application.state.tdx_import_service,
+                executor=history_sync_executor,
+            )
+            application.state.tdx_auto_import_monitor = tdx_auto_import_monitor
             full_market_history_service = None
             market_sentiment_repository = None
             local_tdx_overview_source = None
@@ -809,8 +1016,11 @@ async def lifespan(application: FastAPI):
                 application.state.scheduler.history_sync_submitter = (
                     history_sync_executor.submit
                 )
+                log_startup_stage("history-service-ready")
                 full_market_history_service.recover_interrupted()
+                tdx_import_repository.recover_interrupted()
                 interrupted_job = full_market_history_service.current_job()
+                log_startup_stage("history-recovery-ready")
                 if interrupted_job is not None and interrupted_job.state == "pending":
                     history_sync_executor.submit(
                         full_market_history_service.run,
@@ -822,6 +1032,7 @@ async def lifespan(application: FastAPI):
                 application.state.market_sentiment_repository = (
                     market_sentiment_repository
                 )
+                log_startup_stage("market-sentiment-repository-ready")
                 vipdoc_root = local_source_discovery_result.active_tdx_vipdoc
                 local_source_settings = local_source_settings_record.settings
                 tdx_rpc = (
@@ -851,12 +1062,13 @@ async def lifespan(application: FastAPI):
                     tdx_rpc_factory,
                     fallback=TdxQuantPythonSource(direct_tdx_roots),
                 )
+                log_startup_stage("tdx-professional-ready")
                 local_tdx_overview_source = LocalTdxOverviewSource(
                     cache_path=portable_root / "cache" / "tdx-market-overview.json",
                     rpc=tdx_rpc,
                     clock=lambda: datetime.now(timezone.utc),
                     refresh_seconds=5,
-                    initial_delay_seconds=2 if is_portable_runtime else 0,
+                    initial_delay_seconds=15 if is_portable_runtime else 0,
                     fallback=SelfContainedOverviewProvider(
                         catalog_loader=MootdxAShareCatalogSource(
                             directory=a_share_instrument_directory,
@@ -869,10 +1081,15 @@ async def lifespan(application: FastAPI):
                 application.state.local_tdx_overview_source = (
                     local_tdx_overview_source
                 )
+                log_startup_stage("tdx-overview-cache-ready")
                 local_tdx_overview_source.start()
                 local_market_review_source = LocalMarketReviewSource(
                     vipdoc_root=vipdoc_root,
                     cache_path=settings.data_dir / "market-review" / "latest.json",
+                    bar_repository=bar_repository,
+                    symbol_provider=lambda: tuple(
+                        application.state.a_share_instrument_directory.active_symbols()
+                    ),
                     name_resolver=lambda symbol: (
                         instrument.name
                         if (instrument := a_share_instrument_directory.resolve(symbol))
@@ -890,10 +1107,23 @@ async def lifespan(application: FastAPI):
                         else None
                     ),
                     clock=lambda: datetime.now(timezone.utc),
+                    initial_delay_seconds=15 if is_portable_runtime else 0,
+                    defer_cache_validation=is_portable_runtime,
                 )
                 application.state.local_market_review_source = (
                     local_market_review_source
                 )
+                application.state.tdx_import_service.after_import = (
+                    lambda latest: _refresh_after_tdx_import(application, latest)
+                )
+                tdx_auto_import_task = asyncio.create_task(
+                    _tdx_auto_import_loop(
+                        tdx_auto_import_monitor,
+                        initial_delay_seconds=20 if is_portable_runtime else 5,
+                    ),
+                    name="tdx-auto-import-monitor",
+                )
+                log_startup_stage("market-review-cache-ready")
                 if is_portable_runtime:
                     local_market_review_source.start()
                 market_sentiment_source = LocalTdxMarketSentimentSource(
@@ -914,6 +1144,7 @@ async def lifespan(application: FastAPI):
                         classification_repository=stock_classification_repository,
                     )
                 )
+                log_startup_stage("sentiment-factor-builder-ready")
                 application.state.market_sentiment_service = MarketSentimentService(
                     repository=market_sentiment_repository,
                     source=market_sentiment_source,
@@ -925,10 +1156,13 @@ async def lifespan(application: FastAPI):
                 application.state.scheduler.market_sentiment_service = (
                     application.state.market_sentiment_service
                 )
+                log_startup_stage("market-sentiment-service-ready")
                 startup_now = datetime.now(timezone.utc)
+                cached_market_overview = local_tdx_overview_source.current()
+                log_startup_stage("market-overview-cache-check-ready")
                 if (
                     is_portable_runtime
-                    and local_tdx_overview_source.current() is not None
+                    and cached_market_overview is not None
                     and _should_defer_initial_market_sentiment_refresh(startup_now)
                 ):
                     _defer_initial_market_sentiment_refresh(
@@ -945,9 +1179,35 @@ async def lifespan(application: FastAPI):
                     clock=lambda: datetime.now(timezone.utc),
                     local_market_source=local_tdx_overview_source,
                     market_review_source=local_market_review_source,
+                    fund_flow_repository=fund_flow_repository,
+                    sector_fund_flow_repository=sector_fund_flow_repository,
+                    official_calendar_source=application.state.tdx_ipo_source,
                     trading_calendar=trading_calendar,
                     cache_path=portable_root / "cache" / "market-overview.json",
                     defer_initial_refresh=is_portable_runtime,
+                    initial_refresh_delay_seconds=1 if is_portable_runtime else 0,
+                    shared_snapshot_registry=shared_snapshot_registry,
+                )
+                sector_fund_flow_sampling_task = asyncio.create_task(
+                    _sector_fund_flow_sampling_loop(
+                        application.state.sector_fund_flow_service,
+                        initial_delay_seconds=30 if is_portable_runtime else 5,
+                    ),
+                    name="sector-fund-flow-sampling",
+                )
+                quant_shadow_ledger = QuantShadowLedgerStore(
+                    settings.data_dir / "quant-shadow-ledger.sqlite3"
+                )
+                application.state.quant_shadow_ledger = quant_shadow_ledger
+                application.state.decision_journal = DecisionJournalStore(
+                    settings.data_dir / "decision-journal.sqlite3"
+                )
+                application.state.portfolio_risk_service = PortfolioRiskService(
+                    bar_repository,
+                    research_enrichment_repository,
+                )
+                application.state.portfolio_risk_store = PortfolioRiskStore(
+                    settings.data_dir / "portfolio-risk.sqlite3"
                 )
                 application.state.quant_strategy_service = QuantStrategyService(
                     application.state.market_overview_service,
@@ -958,6 +1218,13 @@ async def lifespan(application: FastAPI):
                         fund_flow_repository,
                     ),
                     defer_initial_scan=is_portable_runtime,
+                    defer_initial_overview=is_portable_runtime,
+                    defer_trigger_evidence=is_portable_runtime,
+                    snapshot_store=QuantStrategySnapshotStore(
+                        portable_root / "cache" / "quant-strategy.json"
+                    ),
+                    shadow_ledger=quant_shadow_ledger,
+                    shared_snapshot_registry=shared_snapshot_registry,
                 )
                 application.state.stock_timeline_service = StockTimelineService(
                     bar_repository,
@@ -1030,6 +1297,18 @@ async def lifespan(application: FastAPI):
                     scheduler_task.cancel()
                     with suppress(asyncio.CancelledError):
                         await scheduler_task
+                if sector_fund_flow_sampling_task is not None:
+                    sector_fund_flow_sampling_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await sector_fund_flow_sampling_task
+                if source_health_snapshot_task is not None:
+                    source_health_snapshot_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await source_health_snapshot_task
+                if tdx_auto_import_task is not None:
+                    tdx_auto_import_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await tdx_auto_import_task
                 if full_market_history_service is not None:
                     full_market_history_service.request_shutdown()
                 if local_tdx_overview_source is not None:
@@ -1044,6 +1323,21 @@ async def lifespan(application: FastAPI):
                 )
                 if market_overview_service is not None:
                     market_overview_service.close()
+                company_research_service = getattr(
+                    application.state, "company_research_service", None
+                )
+                if company_research_service is not None:
+                    company_research_service.close()
+                company_research_task_service = getattr(
+                    application.state, "company_research_task_service", None
+                )
+                if company_research_task_service is not None:
+                    company_research_task_service.close()
+                company_research_ai_task_service = getattr(
+                    application.state, "company_research_ai_task_service", None
+                )
+                if company_research_ai_task_service is not None:
+                    company_research_ai_task_service.close()
                 if local_market_review_source is not None:
                     local_market_review_source.close()
                 if history_symbol_reconciliation_task is not None:
@@ -1052,12 +1346,17 @@ async def lifespan(application: FastAPI):
                         await history_symbol_reconciliation_task
                 history_sync_executor.shutdown(wait=True, cancel_futures=True)
                 history_sync_repository.close()
+                tdx_import_repository.close()
                 bond_repository.close()
                 bond_universe_repository.close()
                 diagnosis_repository.close()
                 news_repository.close()
                 stock_classification_repository.close()
                 fund_flow_repository.close()
+                sector_fund_flow_repository.close()
+                research_enrichment_repository.close()
+                company_research_version_repository.close()
+                company_research_ai_result_repository.close()
                 briefing_repository.close()
                 compliance.close()
                 audit_repository.close()
@@ -1077,24 +1376,41 @@ app = FastAPI(title="一树电子商务-A股观测台", version="0.1.0", lifespa
 
 @app.middleware("http")
 async def serialize_runtime_access(request: Request, call_next):
+    request_started = time.perf_counter()
     write_gate = getattr(request.app.state, "write_gate", None)
-    if write_gate is None:
-        return await call_next(request)
     path = request.url.path
-    if path == "/health":
-        return await call_next(request)
-    if path.startswith("/api/v1/settings/"):
-        return await call_next(request)
-    if request.method == "GET" and (
-        path == "/api/v1/a-shares/candidates"
-        or (
-            path.startswith("/api/v1/a-shares/")
-            and path.endswith(("/diagnosis", "/cockpit", "/timeline"))
-        )
-    ):
-        return await call_next(request)
-    async with write_gate:
-        return await call_next(request)
+    response = None
+    try:
+        if (
+            write_gate is None
+            or request.method in {"GET", "HEAD", "OPTIONS"}
+            or path == "/health"
+            or path.startswith("/api/v1/settings/")
+        ):
+            response = await call_next(request)
+        else:
+            async with write_gate:
+                response = await call_next(request)
+        return response
+    finally:
+        store = getattr(request.app.state, "performance_store", None)
+        if store is not None and path.startswith("/api/") and path != "/api/v1/operations/performance":
+            latency_ms = round((time.perf_counter() - request_started) * 1000)
+            success = response is not None and response.status_code < 500
+            async def persist_performance_sample() -> None:
+                try:
+                    await asyncio.to_thread(
+                        store.record,
+                        "api",
+                        path,
+                        latency_ms=latency_ms,
+                        success=success,
+                        cache_hit=(response.headers.get("X-Qibao-Cache") == "hit") if response is not None else None,
+                    )
+                except Exception:
+                    logger.debug("performance sample write failed", exc_info=True)
+
+            asyncio.create_task(persist_performance_sample())
 app.include_router(health_router)
 app.include_router(research_router)
 app.include_router(data_router)
@@ -1111,6 +1427,7 @@ app.include_router(settings_router)
 app.include_router(market_sentiment_router)
 app.include_router(market_overview_router)
 app.include_router(quant_strategy_router)
+app.include_router(portfolio_risk_router)
 app.include_router(first_limit_up_router)
 app.include_router(tdx_local_router)
 app.include_router(speech_router)

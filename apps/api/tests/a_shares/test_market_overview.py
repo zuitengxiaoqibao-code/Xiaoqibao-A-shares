@@ -8,6 +8,7 @@ import time
 import httpx
 
 from qibao_api.a_shares.market_overview import MarketOverviewService
+from qibao_api.contracts.market_review import MarketReviewSnapshot
 from qibao_api.contracts.market_overview import (
     OverviewBreadth,
     OverviewFeatureStock,
@@ -111,6 +112,30 @@ def test_overview_does_not_pin_batch_hotspot_fetch_time_to_the_minute_chart() ->
     )
 
     assert [item.anomaly_id for item in result] == [timestamped_news.event_id]
+
+
+def test_overview_anomaly_reuses_unified_event_category_and_verified_direction() -> None:
+    timestamped_news = event(0, event_type="market_news")
+    minute = OverviewMinutePoint(
+        observed_at=NOW,
+        price=Decimal("3823.73"),
+        volume=Decimal("100"),
+        amount=Decimal("1000"),
+    )
+    projection = SimpleNamespace(
+        category="industry_sector", direction="positive",
+        strength="high", credibility="verified",
+    )
+
+    result = MarketOverviewService._anomalies(
+        (timestamped_news,), (minute,),
+        {timestamped_news.event_id: projection},
+    )
+
+    assert result[0].category == "industry_sector"
+    assert result[0].direction == "positive"
+    assert result[0].strength == "high"
+    assert result[0].credibility == "verified"
 
 
 class NewsRepository:
@@ -221,6 +246,54 @@ class LocalMarketSource:
         )
 
 
+class FundFlowRepository:
+    def latest(self, symbol, as_of, *, cutoff=None):
+        if symbol != "600001":
+            return None
+        return SimpleNamespace(
+            symbol=symbol,
+            observed_at=NOW,
+            latest_trade_date=date(2026, 7, 29),
+            latest_main_net=Decimal("280000000"),
+            latest_large_net=Decimal("150000000"),
+            latest_super_net=Decimal("130000000"),
+            source="eastmoney-fund-flow",
+        )
+
+
+class SectorFundFlowRepository:
+    def history(self, *, limit=60):
+        first = SimpleNamespace(
+            observed_at=NOW - timedelta(minutes=1),
+            source="eastmoney-sector-fund-flow",
+            items=(
+                SimpleNamespace(sector_code="BK1036", sector_name="人工智能", main_net_yi=Decimal("20.00"), large_net_yi=Decimal("9.00"), super_net_yi=Decimal("11.00")),
+                SimpleNamespace(sector_code="BK0475", sector_name="银行", main_net_yi=Decimal("-8.00"), large_net_yi=Decimal("-4.00"), super_net_yi=Decimal("-4.00")),
+            ),
+        )
+        second = SimpleNamespace(
+            observed_at=NOW,
+            source="eastmoney-sector-fund-flow",
+            items=(
+                SimpleNamespace(sector_code="BK1036", sector_name="人工智能", main_net_yi=Decimal("23.80"), large_net_yi=Decimal("10.80"), super_net_yi=Decimal("13.00")),
+                SimpleNamespace(sector_code="BK0475", sector_name="银行", main_net_yi=Decimal("-9.60"), large_net_yi=Decimal("-5.40"), super_net_yi=Decimal("-4.20")),
+            ),
+        )
+        return (first, second)
+
+
+class OfficialCalendarSource:
+    def fetch(self):
+        return (
+            SimpleNamespace(
+                code="732001", name="测试新股", kind="新股申购",
+                subscription_date=date(2026, 7, 29), listing_date=date(2026, 8, 6),
+                allotment_date=date(2026, 7, 31), fetched_at=NOW,
+                source="tdx-local-rpc",
+            ),
+        )
+
+
 def test_overview_labels_previous_close_snapshot_before_open() -> None:
     premarket = datetime(2026, 7, 30, 0, 30, tzinfo=timezone.utc)
     result = service(
@@ -303,6 +376,31 @@ def test_overview_combines_local_sentiment_news_and_tencent_market_data() -> Non
     }]
 
 
+def test_overview_registers_four_shared_snapshots_and_marks_cache_reuse() -> None:
+    class SnapshotRegistry:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def record(self, kind, **payload):
+            self.calls.append((kind, payload))
+
+    registry = SnapshotRegistry()
+    overview = service(Source(), shared_snapshot_registry=registry)
+
+    overview.current(NOW)
+    overview.current(NOW + timedelta(seconds=1))
+
+    expected = [
+        "market_cross_section", "limit_events", "sector_strength", "stock_fund_flow",
+    ]
+    assert [kind for kind, _payload in registry.calls[:4]] == expected
+    assert [kind for kind, _payload in registry.calls[4:]] == expected
+    assert all(payload["reused"] is False for _kind, payload in registry.calls[:4])
+    assert all(payload["reused"] is True for _kind, payload in registry.calls[4:])
+    assert all(len(payload["content_hash"]) == 64 for _kind, payload in registry.calls)
+    assert registry.calls[0][1]["trade_date"] == date(2026, 7, 29)
+
+
 def test_overview_excludes_news_without_verified_a_share_association() -> None:
     a_share_news = event(0, event_type="market_news")
     convertible_bond_news = event(
@@ -375,11 +473,111 @@ def test_overview_prefers_independent_local_realtime_market_statistics() -> None
     assert result.market_data.source == "tdx-local-rpc"
     assert result.market_data.quote_count == 5200
     assert result.market_stocks[0].state == "limit_up"
+    assert result.data_scope.market_aggregate == "full_a_share_market"
+    assert result.data_scope.market_quote_count == 5200
+    assert result.data_scope.stock_sample == "representative"
+    assert result.data_scope.stock_sample_count == len(result.market_stocks)
+    assert result.data_scope.sector_sample == "strong_sector"
+    assert result.data_scope.sector_sample_count == len(result.sectors)
     assert result.regime.regime == "缩量混沌"
     assert result.regime.coverage_percent == Decimal("85.00")
     assert "net_positive_ratio" in result.regime.missing_factors
     assert result.regime.rule_matched is False
     assert "tdx-local-realtime" in result.sources
+    evidence = {item.field_path: item for item in result.field_evidence}
+    assert evidence["breadth.rising_count"].value == 3000
+    assert evidence["breadth.rising_count"].source == "tdx-local-rpc"
+    assert evidence["breadth.rising_count"].status == "live"
+    assert evidence["breadth.rising_count"].coverage_percent == Decimal("98.11")
+    assert evidence["sentiment.score"].derived is True
+    assert evidence["sentiment.score"].formula == "a-share-sentiment-v2"
+    assert evidence["regime.emotion_score"].derived is True
+    assert evidence["regime.emotion_score"].formula == "a-share-short-regime-v2.0"
+
+
+def test_overview_marks_unavailable_market_fields_as_missing_evidence() -> None:
+    result = service(Source()).current(NOW)
+
+    evidence = {item.field_path: item for item in result.field_evidence}
+    assert evidence["regime.emotion_score"].status == "missing"
+    assert evidence["regime.emotion_score"].value is None
+    assert evidence["regime.emotion_score"].limitations == ("tdx_local_market_unavailable",)
+
+
+def test_overview_exposes_cached_real_large_order_direction_without_amount_proxy() -> None:
+    result = service(
+        Source(),
+        local_market_source=LocalMarketSource(),
+        fund_flow_repository=FundFlowRepository(),
+    ).current(NOW)
+
+    assert len(result.large_order_flows) == 1
+    flow = result.large_order_flows[0]
+    assert flow.symbol == "600001"
+    assert flow.main_net_yi == Decimal("2.80")
+    assert flow.large_net_yi == Decimal("1.50")
+    assert flow.super_net_yi == Decimal("1.30")
+    assert flow.direction == "inflow"
+    assert flow.source == "eastmoney-fund-flow"
+    assert result.data_scope.large_order_sample_count == 1
+
+
+def test_overview_exposes_real_sector_net_flow_time_series_with_sample_scope() -> None:
+    result = service(
+        Source(),
+        local_market_source=LocalMarketSource(),
+        sector_fund_flow_repository=SectorFundFlowRepository(),
+    ).current(NOW)
+
+    assert len(result.sector_fund_flow) == 4
+    assert result.sector_fund_flow[0].sector_code == "BK1036"
+    assert result.sector_fund_flow[-1].main_net_yi == Decimal("-9.60")
+    assert result.sector_fund_flow[-1].quality == "ready"
+    assert result.data_scope.sector_fund_flow_sample_count == 2
+    assert result.data_scope.sector_fund_flow_snapshot_count == 2
+
+
+def test_overview_separates_official_calendar_dates_from_news_timestamps() -> None:
+    result = service(
+        Source(),
+        official_calendar_source=OfficialCalendarSource(),
+    ).current(NOW)
+
+    assert [(item.event_type, item.event_date) for item in result.official_events] == [
+        ("subscription", date(2026, 7, 29)),
+        ("allotment", date(2026, 7, 31)),
+        ("listing", date(2026, 8, 6)),
+    ]
+    assert all(item.source == "tdx-local-rpc" for item in result.official_events)
+    assert result.live_feed[0].occurred_at == NOW
+
+
+def test_overview_marks_lagging_review_stale_without_dropping_real_rows() -> None:
+    review = MarketReviewSnapshot(
+        as_of=date(2026, 7, 28),
+        observed_at=NOW,
+        latest_trade_date=date(2026, 7, 28),
+        source="market-db",
+        quality="ready",
+        universe_count=5300,
+        history_ready_count=5200,
+    )
+
+    class ReviewSource:
+        def current(self):
+            return review
+
+    result = service(
+        Source(),
+        local_market_source=LocalMarketSource(),
+        market_review_source=ReviewSource(),
+    ).current(NOW)
+
+    assert result.review is not None
+    assert result.review.quality == "stale"
+    assert result.review.latest_trade_date == date(2026, 7, 28)
+    assert result.review.history_ready_count == 5200
+    assert "market_review_stale" in result.warnings
 
 
 def test_overview_reuses_persisted_snapshot_while_latest_refresh_runs_in_background(
@@ -409,3 +607,65 @@ def test_overview_reuses_persisted_snapshot_while_latest_refresh_runs_in_backgro
     while time.monotonic() < deadline and not source.calls:
         time.sleep(0.01)
     cached.close()
+
+
+def test_overview_gives_cached_response_a_grace_period_before_background_refresh(
+    tmp_path: Path,
+) -> None:
+    cache_path = tmp_path / "market-overview.json"
+    initial = service(Source(), clock=lambda: NOW, cache_path=cache_path)
+    initial.current(NOW)
+    initial.close()
+
+    source = BlockingSource()
+    cached = service(
+        source,
+        clock=lambda: NOW,
+        cache_path=cache_path,
+        defer_initial_refresh=True,
+        initial_refresh_delay_seconds=0.05,
+    )
+
+    result = cached.current(NOW + timedelta(seconds=20))
+
+    assert result.observed_at == NOW
+    assert not source.started.wait(timeout=0.01)
+    assert source.started.wait(timeout=1)
+    source.release.set()
+    cached.close()
+
+
+def test_overview_does_not_expose_review_from_stale_disk_cache(tmp_path: Path) -> None:
+    cache_path = tmp_path / "market-overview.json"
+    base = service(Source()).current(NOW)
+    stale_review = MarketReviewSnapshot(
+        as_of=date(2026, 7, 17),
+        observed_at=NOW,
+        latest_trade_date=date(2026, 7, 17),
+        source="market-db",
+        quality="ready",
+    )
+    cache_path.write_text(
+        base.model_copy(update={"review": stale_review}).model_dump_json(),
+        encoding="utf-8",
+    )
+
+    class StaleReviewSource:
+        def cache_is_stale(self):
+            return True
+
+        def current(self):
+            return None
+
+    overview = service(
+        Source(),
+        cache_path=cache_path,
+        market_review_source=StaleReviewSource(),
+        defer_initial_refresh=True,
+    )
+
+    result = overview.current(NOW + timedelta(seconds=20))
+
+    assert result.review is None
+    assert "market_review_cache_stale" in result.warnings
+    overview.close()

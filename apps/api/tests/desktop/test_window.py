@@ -13,12 +13,14 @@ def test_startup_progress_script_uses_verified_milestone_values() -> None:
             percent=38,
             step="市场情绪服务已就绪",
             detail="正在准备首页与量化服务",
+            elapsed_ms=828,
         )
     )
 
     assert "window.qibaoStartup.update(38" in script
     assert "市场情绪服务已就绪" in script
     assert "正在准备首页与量化服务" in script
+    assert "828" in script
 
 
 def test_window_publishes_verified_startup_progress_while_api_waits(monkeypatch) -> None:

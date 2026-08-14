@@ -3,7 +3,40 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fetchJsonWithProgress, type LoadProgress } from "./fetchJsonWithProgress";
 
 describe("fetchJsonWithProgress", () => {
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps advancing with a clearly labelled estimate while the backend prepares the response", async () => {
+    vi.useFakeTimers();
+    let release!: (response: Response) => void;
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => { release = resolve; })));
+    const updates: LoadProgress[] = [];
+
+    const request = fetchJsonWithProgress<{ ok: boolean }>(
+      "/api/test",
+      undefined,
+      (progress) => updates.push(progress),
+    );
+
+    expect(updates.at(-1)).toMatchObject({ percent: 1, stage: "connecting", mode: "estimated" });
+    await vi.advanceTimersByTimeAsync(2_400);
+
+    const estimated = updates.filter((item) => item.mode === "estimated");
+    expect(estimated.length).toBeGreaterThan(3);
+    expect(estimated.at(-1)!.percent).toBeGreaterThan(1);
+    expect(estimated.at(-1)!.percent).toBeLessThanOrEqual(45);
+    expect(estimated.at(-1)!.elapsedMs).toBeGreaterThanOrEqual(2_000);
+    expect(estimated.at(-1)!.detail).toContain("阶段估算");
+
+    release(new Response('{"ok":true}', {
+      status: 200,
+      headers: { "Content-Length": "11", "Content-Type": "application/json" },
+    }));
+    await expect(request).resolves.toEqual({ ok: true });
+    expect(updates.at(-1)).toMatchObject({ percent: 100, stage: "complete", mode: "verified" });
+  });
 
   it("reports real byte progress before parsing and completing", async () => {
     const encoder = new TextEncoder();
@@ -27,10 +60,10 @@ describe("fetchJsonWithProgress", () => {
     );
 
     expect(result).toEqual({ ok: true });
-    expect(updates[0]).toMatchObject({ percent: 1, stage: "connecting" });
-    expect(updates.some((item) => item.stage === "receiving" && item.percent > 5 && item.percent <= 92)).toBe(true);
-    expect(updates.some((item) => item.stage === "parsing" && item.percent === 96)).toBe(true);
-    expect(updates.at(-1)).toMatchObject({ percent: 100, stage: "complete" });
+    expect(updates[0]).toMatchObject({ percent: 1, stage: "connecting", mode: "estimated" });
+    expect(updates.some((item) => item.stage === "receiving" && item.percent > 5 && item.percent <= 92 && item.mode === "measured")).toBe(true);
+    expect(updates.some((item) => item.stage === "parsing" && item.percent === 96 && item.mode === "verified")).toBe(true);
+    expect(updates.at(-1)).toMatchObject({ percent: 100, stage: "complete", mode: "verified" });
   });
 
   it("reports received bytes when content length is unavailable", async () => {

@@ -26,11 +26,12 @@ type Props = {
   save: LocalSourceSettingsWriter;
 };
 
-type PathKind = "tdx_install_paths" | "ths_install_paths";
+type PathKind = "tdx_install_paths" | "tdx_archive_paths" | "ths_install_paths";
 
 const defaultSettings: LocalSourceSettings = {
   auto_discovery: true,
   tdx_install_paths: [],
+  tdx_archive_paths: [],
   ths_install_paths: [],
   tdx_rpc_enabled: false,
   tdx_rpc_url: null,
@@ -95,25 +96,32 @@ export function LocalSourceSettingsSection({ load, detect, save }: Props) {
   };
 
   const updatePath = (kind: PathKind, index: number, value: string) => {
-    setPaths(kind, draft[kind].map((item, itemIndex) => itemIndex === index ? value : item));
+    setPaths(kind, (draft[kind] ?? []).map((item, itemIndex) => itemIndex === index ? value : item));
   };
 
   const movePath = (kind: PathKind, index: number, offset: -1 | 1) => {
     const nextIndex = index + offset;
-    if (nextIndex < 0 || nextIndex >= draft[kind].length) return;
-    const values = [...draft[kind]];
+    const currentPaths = draft[kind] ?? [];
+    if (nextIndex < 0 || nextIndex >= currentPaths.length) return;
+    const values = [...currentPaths];
     [values[index], values[nextIndex]] = [values[nextIndex], values[index]];
     setPaths(kind, values);
   };
 
-  const normalizedDraft = (): LocalSourceSettings => ({
-    ...draft,
-    tdx_install_paths: draft.tdx_install_paths.map((path) => path.trim()).filter(Boolean),
-    ths_install_paths: draft.ths_install_paths.map((path) => path.trim()).filter(Boolean),
-    tdx_rpc_url: draft.tdx_rpc_enabled
-      ? (draft.tdx_rpc_url?.trim() || "http://127.0.0.1:17709/")
-      : null,
-  });
+  const normalizedDraft = (): LocalSourceSettings => {
+    const archivePaths = (draft.tdx_archive_paths ?? []).map((path) => path.trim()).filter(Boolean);
+    const normalized: LocalSourceSettings = {
+      ...draft,
+      tdx_install_paths: draft.tdx_install_paths.map((path) => path.trim()).filter(Boolean),
+      ths_install_paths: draft.ths_install_paths.map((path) => path.trim()).filter(Boolean),
+      tdx_rpc_url: draft.tdx_rpc_enabled
+        ? (draft.tdx_rpc_url?.trim() || "http://127.0.0.1:17709/")
+        : null,
+    };
+    if (archivePaths.length > 0) normalized.tdx_archive_paths = archivePaths;
+    else delete normalized.tdx_archive_paths;
+    return normalized;
+  };
 
   const rpcStatus = result?.tdx_rpc;
   const bridgePort = bridgePortLabel(rpcStatus?.endpoint ?? draft.tdx_rpc_url);
@@ -180,8 +188,17 @@ export function LocalSourceSettingsSection({ load, detect, save }: Props) {
       paths={draft.tdx_install_paths}
       update={updatePath}
       move={movePath}
-      remove={(kind, index) => setPaths(kind, draft[kind].filter((_item, itemIndex) => itemIndex !== index))}
-      add={(kind) => setPaths(kind, [...draft[kind], ""])}
+      remove={(kind, index) => setPaths(kind, (draft[kind] ?? []).filter((_item, itemIndex) => itemIndex !== index))}
+      add={(kind) => setPaths(kind, [...(draft[kind] ?? []), ""])}
+    />
+    <PathEditor
+      title="通达信日线压缩包目录"
+      kind="tdx_archive_paths"
+      paths={draft.tdx_archive_paths ?? []}
+      update={updatePath}
+      move={movePath}
+      remove={(kind, index) => setPaths(kind, (draft[kind] ?? []).filter((_item, itemIndex) => itemIndex !== index))}
+      add={(kind) => setPaths(kind, [...(draft[kind] ?? []), ""])}
     />
     <PathEditor
       title="同花顺安装目录"
@@ -189,8 +206,8 @@ export function LocalSourceSettingsSection({ load, detect, save }: Props) {
       paths={draft.ths_install_paths}
       update={updatePath}
       move={movePath}
-      remove={(kind, index) => setPaths(kind, draft[kind].filter((_item, itemIndex) => itemIndex !== index))}
-      add={(kind) => setPaths(kind, [...draft[kind], ""])}
+      remove={(kind, index) => setPaths(kind, (draft[kind] ?? []).filter((_item, itemIndex) => itemIndex !== index))}
+      add={(kind) => setPaths(kind, [...(draft[kind] ?? []), ""])}
     />
 
     {result && result.terminals.length > 0 && <div className="local-terminal-list">
@@ -240,6 +257,12 @@ export function LocalSourceSettingsSection({ load, detect, save }: Props) {
             <span><strong>JSON-RPC 桥</strong><b>{rpcStatus.reachable ? `${bridgePort} 已监听` : `${bridgePort} 未监听`}</b><small>{rpcStatus.reachable ? "端口可达，正在探测只读能力" : "端口不可达；客户端运行也不会自动等同于桥接可用"}</small></span>
           </article>
         </div>
+        <div className="tdx-recovery-steps" aria-label="通达信能力恢复向导">
+          {(rpcStatus.recovery_steps ?? []).map((step, index) => <article key={step.key} data-status={step.status}>
+            <span className="tdx-recovery-step-index">{index + 1}</span>
+            <span><strong>{step.label}</strong><small>{step.detail}</small></span>
+          </article>)}
+        </div>
         <div className="tdx-rpc-capability-grid">
           <article data-status={rpcStatus.direct_python.status}>
             <AlertCircle size={15} />
@@ -247,7 +270,7 @@ export function LocalSourceSettingsSection({ load, detect, save }: Props) {
           </article>
           {rpcStatus.capabilities.map((capability) => <article key={capability.key} data-status={capability.status}>
             {capability.status === "ready" ? <CheckCircle2 size={15} /> : capability.status === "disabled" ? <AlertCircle size={15} /> : <AlertCircle size={15} />}
-            <span><strong>{capability.label}</strong><small>{capability.status === "disabled" ? "桥接未启用" : capability.detail}</small></span>
+            <span><strong>{capability.label}</strong><small>{capability.status === "disabled" ? "桥接未启用" : capability.detail}</small>{capability.semantic_status === "detected_only" && <em>结构响应已验证 · 字段语义/单位未映射</em>}</span>
           </article>)}
         </div>
         <footer>最近探测：{new Date(rpcStatus.observed_at).toLocaleString("zh-CN", { hour12: false })} · 仅探测只读接口，不连接券商、不下单</footer>

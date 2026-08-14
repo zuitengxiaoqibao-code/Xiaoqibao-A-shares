@@ -30,6 +30,12 @@ export type StockTimelineEvent = {
   source_count: number;
   urgency: "breaking" | "tracking" | "normal";
   review_state: "verified";
+  category: "policy_macro" | "industry_sector" | "company_announcement" | "earnings_financial" | "capital_dragon_tiger" | "price_volume_anomaly" | "risk_event" | "rumor_unverified";
+  strength: "high" | "medium" | "low" | "unknown";
+  credibility: "multi_source_verified" | "verified" | "pending" | "rejected";
+  duration: "intraday" | "multi_day" | "long_term" | "unknown";
+  price_reflection: "not_reflected" | "partially_reflected" | "fully_reflected" | "unknown";
+  follow_up_indicators: string[];
 };
 
 export type StockTimelineResponse = {

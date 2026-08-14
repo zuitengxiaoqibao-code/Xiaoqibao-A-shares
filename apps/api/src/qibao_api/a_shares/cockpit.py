@@ -3,6 +3,7 @@ from collections.abc import Callable
 from datetime import date, datetime, time, timezone
 import hashlib
 import json
+from decimal import Decimal
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
@@ -14,6 +15,7 @@ from qibao_api.a_shares.diagnosis import DiagnosisUnavailableError
 from qibao_api.a_shares.instrument_directory import AShareInstrument
 from qibao_api.a_shares.preparation import StockPreparation
 from qibao_api.contracts.decision import AdviceCard, DecisionPhase, EvidenceReference
+from qibao_api.contracts.field_evidence import FieldEvidence
 from qibao_api.contracts.instruments import AShareCode
 from qibao_api.contracts.market import AssetKind
 from qibao_api.libu_compliance.repository import SourceAuthorizationError
@@ -77,6 +79,7 @@ class StockCockpitSnapshot(BaseModel):
     current_advice: tuple[AdviceCard, ...]
     sections: dict[str, CockpitSection]
     phases: dict[DecisionPhase, StockPhaseHistory]
+    field_evidence: tuple[FieldEvidence, ...] = ()
 
     def all_evidence(self) -> tuple[EvidenceReference, ...]:
         return tuple(
@@ -197,7 +200,124 @@ class StockDecisionCockpitService:
             instrument=instrument, preparation=preparation, candidate_membership=membership,
             assessment=assessment, ai_status=ai_status, ai_explanation=ai_explanation,
             current_advice=current, sections=sections, phases=phases,
+            field_evidence=self._field_evidence(
+                as_of=as_of, cutoff=effective_cutoff, sections=sections,
+                assessment=assessment,
+            ),
         )
+
+    @staticmethod
+    def _field_evidence(
+        *, as_of: date, cutoff: datetime, sections: dict[str, CockpitSection],
+        assessment: StockAssessment,
+    ) -> tuple[FieldEvidence, ...]:
+        specifications = (
+            ("market.latest_price", "market", "price", "live"),
+            ("market.change_percent", "market", "change_percent", "live"),
+            ("valuation.pe_ttm", "valuation", "pe_ttm", "live"),
+            ("valuation.pb", "valuation", "pb", "live"),
+            ("trend.return_20d", "trend", "return_20d", "postclose"),
+            ("trend.drawdown_60d", "trend", "drawdown_60d", "postclose"),
+            ("fundamentals.revenue", "fundamentals", "revenue", "cached"),
+            ("fundamentals.net_profit", "fundamentals", "net_profit", "cached"),
+            ("fundamentals.roe", "fundamentals", "roe", "cached"),
+        )
+        entries: list[FieldEvidence] = []
+        available = 0
+        evidence_ids: list[str] = []
+        for field_path, section_name, source_field, default_status in specifications:
+            section = sections.get(section_name)
+            metrics = (
+                section.payload.get("metrics", {})
+                if section is not None else {}
+            )
+            value = metrics.get(source_field)
+            observed_at = section.observed_at if section is not None else None
+            usable = (
+                section is not None
+                and section.status not in {"unavailable", "blocked"}
+                and observed_at is not None
+                and value is not None
+            )
+            if usable:
+                available += 1
+                section_evidence_ids = tuple(
+                    str(item) for item in section.payload.get("evidence_ids", ())
+                )
+                evidence_ids.extend(section_evidence_ids)
+                status = "stale" if section.status == "stale" else default_status
+                alternative = metrics.get(f"{source_field}_alternative")
+                alternative_source = metrics.get(f"{source_field}_alternative_source")
+                difference_value = metrics.get(f"{source_field}_difference")
+                alternative_observed_at = metrics.get(
+                    f"{source_field}_alternative_observed_at"
+                )
+                alternatives = ()
+                difference = None
+                selection_reason = None
+                affects_conclusion = None
+                limitations = (section.reason,) if section.reason else ()
+                if alternative is not None and alternative_source:
+                    status = "conflict"
+                    alternatives = ({
+                        "value": alternative,
+                        "source": str(alternative_source),
+                        "source_field": source_field,
+                        "observed_at": alternative_observed_at or observed_at,
+                    },)
+                    difference_decimal = Decimal(str(difference_value))
+                    alternative_decimal = Decimal(str(alternative))
+                    percent = (
+                        difference_decimal / abs(alternative_decimal) * Decimal("100")
+                        if alternative_decimal != 0 else Decimal("0")
+                    )
+                    difference = (
+                        f"{difference_decimal.quantize(Decimal('0.01'))} "
+                        f"({percent.quantize(Decimal('0.01'))}%)"
+                    )
+                    selection_reason = (
+                        "采用实时腾讯行情估值，保留本地通达信估值作为备选"
+                    )
+                    affects_conclusion = False
+                    limitations = ("valuation_sources_disagree",)
+                entries.append(FieldEvidence(
+                    field_path=field_path, value=value, source=section.source,
+                    source_field=source_field, status=status, trade_date=as_of,
+                    observed_at=observed_at, derived=False,
+                    evidence_ids=section_evidence_ids,
+                    limitations=limitations, alternatives=alternatives,
+                    difference=difference, selection_reason=selection_reason,
+                    affects_conclusion=affects_conclusion,
+                ))
+                continue
+            reason = (
+                section.reason if section is not None and section.reason
+                else f"{field_path}_unavailable"
+            )
+            entries.append(FieldEvidence(
+                field_path=field_path, value=None, source=(
+                    section.source if section is not None else "diagnosis"
+                ), source_field=source_field, status="missing", trade_date=as_of,
+                limitations=(reason,),
+            ))
+
+        coverage = (
+            Decimal(available * 100) / Decimal(len(specifications))
+        ).quantize(Decimal("0.01"))
+        unique_evidence_ids = tuple(dict.fromkeys(evidence_ids))
+        entries.append(FieldEvidence(
+            field_path="assessment.confidence", value=assessment.confidence,
+            source="deterministic-stock-assessor", source_field=None,
+            status="derived", trade_date=as_of, observed_at=cutoff,
+            coverage_percent=coverage, derived=True,
+            formula="deterministic-stock-assessor-v1",
+            evidence_ids=unique_evidence_ids,
+            limitations=(
+                () if available == len(specifications)
+                else (f"verified_field_coverage={available}/{len(specifications)}",)
+            ),
+        ))
+        return tuple(entries)
 
     @staticmethod
     def _merge_preparation_failures(sections, preparation):

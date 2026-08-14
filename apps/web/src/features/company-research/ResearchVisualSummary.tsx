@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import type { CompanyResearchResponse, FinancialPeriod, ResearchDimension } from "./types";
+import { ValuationComparisonChart } from "./ValuationComparisonChart";
 
 type Props = { value: CompanyResearchResponse };
 
@@ -159,6 +160,7 @@ function ResearchVisualSummary({ value }: Props) {
         <div className="research-valuation-board"><div><span>PE(TTM)</span><strong>{pe === null ? "--" : pe.toFixed(2)}</strong></div><div><span>PB</span><strong>{pb === null ? "--" : pb.toFixed(2)}</strong></div><div><span>营收3年CAGR</span><strong className={growth !== null && growth >= 0 ? "positive" : "negative"}>{percent(growth)}</strong></div><div><span>净利润3年CAGR</span><strong className={profitGrowth !== null && profitGrowth >= 0 ? "positive" : "negative"}>{percent(profitGrowth)}</strong></div></div>
         <p className="financial-note">最新财务期：{latest?.period ?? "不可用"} · 所有数值保留原始来源口径。</p>
       </article>
+      <div className="research-visual-card research-visual-card--wide" aria-label="估值双轴对照"><ValuationComparisonChart pe={pe} pb={pb} peerPe={numeric(value.valuation.peer_pe_median)} peerPb={numeric(value.valuation.peer_pb_median)} source={value.valuation.source} observedAt={value.valuation.observed_at} /></div>
     </div>
   </section>;
 }

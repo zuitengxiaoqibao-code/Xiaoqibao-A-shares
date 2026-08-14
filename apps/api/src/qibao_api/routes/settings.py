@@ -57,6 +57,7 @@ class TdxRpcCapability(BaseModel):
     label: str
     method: str
     status: Literal["ready", "unavailable", "disabled"]
+    semantic_status: Literal["not_applicable", "detected_only", "verified"] = "not_applicable"
     detail: str
 
 
@@ -72,6 +73,13 @@ class TdxClientStatus(BaseModel):
     detail: str
 
 
+class TdxRecoveryStep(BaseModel):
+    key: str
+    label: str
+    status: Literal["ready", "detected_only", "unavailable", "disabled"]
+    detail: str
+
+
 class TdxRpcStatus(BaseModel):
     status: Literal["ready", "partial", "unavailable", "disabled"]
     reachable: bool
@@ -80,6 +88,7 @@ class TdxRpcStatus(BaseModel):
     capabilities: tuple[TdxRpcCapability, ...]
     direct_python: TdxDirectPythonStatus
     client: TdxClientStatus
+    recovery_steps: tuple[TdxRecoveryStep, ...] = ()
 
 
 def get_ai_settings_repository(request: Request) -> AISettingsRepository:
@@ -161,6 +170,14 @@ def _tdx_rpc_view(
         module_path=direct.module_path,
     )
     if not settings.tdx_rpc_enabled or settings.tdx_rpc_url is None:
+        recovery_steps = _tdx_recovery_steps(
+            discovery=discovery,
+            client=client,
+            direct_python=direct_python,
+            reachable=False,
+            capabilities=(),
+            disabled=True,
+        )
         return TdxRpcStatus(
             status="disabled",
             reachable=False,
@@ -172,6 +189,7 @@ def _tdx_rpc_view(
             ),
             direct_python=direct_python,
             client=client,
+            recovery_steps=recovery_steps,
         )
 
     rpc = TdxJsonRpcClient(endpoint=settings.tdx_rpc_url)
@@ -179,6 +197,14 @@ def _tdx_rpc_view(
         report = probe_tdx_capabilities(rpc)
     finally:
         rpc.close()
+    recovery_steps = _tdx_recovery_steps(
+        discovery=discovery,
+        client=client,
+        direct_python=direct_python,
+        reachable=bool(report["reachable"]),
+        capabilities=tuple(report["capabilities"]),
+        disabled=False,
+    )
     return TdxRpcStatus(
         status=report["status"],
         reachable=bool(report["reachable"]),
@@ -187,6 +213,57 @@ def _tdx_rpc_view(
         capabilities=tuple(TdxRpcCapability(**item) for item in report["capabilities"]),
         direct_python=direct_python,
         client=client,
+        recovery_steps=recovery_steps,
+    )
+
+
+def _tdx_recovery_steps(
+    *,
+    discovery: LocalTerminalDiscoveryResult,
+    client: TdxClientStatus,
+    direct_python: TdxDirectPythonStatus,
+    reachable: bool,
+    capabilities: tuple[dict, ...],
+    disabled: bool,
+) -> tuple[TdxRecoveryStep, ...]:
+    ready_terminal = any(
+        item.vendor == "tdx" and item.status == "ready" and item.selection_eligible
+        for item in discovery.terminals
+    )
+    professional = [item for item in capabilities if item["key"].startswith("professional_")]
+    professional_verified = any(item.get("semantic_status") == "verified" for item in professional)
+    professional_detected = any(item.get("semantic_status") == "detected_only" for item in professional)
+    return (
+        TdxRecoveryStep(
+            key="install_directory", label="安装目录",
+            status="ready" if ready_terminal else "unavailable",
+            detail="已发现可选用的通达信数据目录" if ready_terminal else "未发现可读取的通达信目录或 vipdoc",
+        ),
+        TdxRecoveryStep(
+            key="plugin_dll", label="插件 / DLL",
+            status=direct_python.status,
+            detail=direct_python.detail,
+        ),
+        TdxRecoveryStep(
+            key="process", label="通达信进程",
+            status="ready" if client.status == "running" else "unavailable",
+            detail=client.detail,
+        ),
+        TdxRecoveryStep(
+            key="rpc", label="RPC 可达",
+            status="disabled" if disabled else "ready" if reachable else "unavailable",
+            detail="桥接未启用" if disabled else "本地 JSON-RPC 端口可达" if reachable else "本地 JSON-RPC 端口不可达",
+        ),
+        TdxRecoveryStep(
+            key="capability_call", label="能力调用",
+            status="disabled" if disabled else "ready" if any(item.get("status") == "ready" for item in capabilities) else "unavailable",
+            detail="等待桥接启用" if disabled else "至少一项只读接口返回结构化响应" if any(item.get("status") == "ready" for item in capabilities) else "没有只读接口返回可用响应",
+        ),
+        TdxRecoveryStep(
+            key="field_completeness", label="字段完整性",
+            status="ready" if professional_verified else "detected_only" if professional_detected else "disabled" if disabled else "unavailable",
+            detail="专业字段语义已验证" if professional_verified else "已返回专业结构，但字段语义/单位仍未映射" if professional_detected else "等待专业字段返回" if not disabled else "桥接未启用",
+        ),
     )
 
 

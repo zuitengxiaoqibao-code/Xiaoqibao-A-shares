@@ -8,6 +8,13 @@ from qibao_api.contracts.bars import DailyBar
 from qibao_api.contracts.instruments import AShareCode
 from qibao_api.contracts.news import AssociationKind
 from qibao_api.contracts.news_alerts import Urgency, VerificationState
+from qibao_api.contracts.unified_event import (
+    EventCredibility,
+    EventDuration,
+    ImpactStrength,
+    PriceReflection,
+    UnifiedEventCategory,
+)
 
 
 ImpactDirection = Literal["positive", "negative", "neutral", "uncertain"]
@@ -35,6 +42,12 @@ class StockTimelineEvent(BaseModel):
     source_count: int = Field(ge=1)
     urgency: Urgency
     review_state: Literal["verified"] = "verified"
+    category: UnifiedEventCategory
+    strength: ImpactStrength
+    credibility: EventCredibility
+    duration: EventDuration
+    price_reflection: PriceReflection
+    follow_up_indicators: tuple[str, ...]
 
 
 class StockTimelineResponse(BaseModel):

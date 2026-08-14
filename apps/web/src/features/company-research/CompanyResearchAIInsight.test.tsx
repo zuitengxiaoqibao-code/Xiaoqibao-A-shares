@@ -1,0 +1,24 @@
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+
+import { CompanyResearchAIInsight } from "./CompanyResearchAIInsight";
+
+describe("CompanyResearchAIInsight", () => {
+  it("shows AI counter-case as a separate evidence-bound supplement", () => {
+    render(<CompanyResearchAIInsight loading={false} error="" result={{
+      status: "ready", snapshot_id: "version-2", provider: "openai-compatible", model: "model",
+      prompt_version: "company-research-ai-v1", generated_at: "2026-08-12T15:00:00+08:00",
+      analysis: {
+        executive_summary: "现金流证据较强，但估值风险仍需核验。",
+        contrary_risks: [{ title: "估值压力", detail: "估值规则已触发。", evidence_ids: ["risk-1"] }],
+        verification_questions: ["现金流能否继续覆盖利润？"],
+      },
+    }} />);
+
+    const region = screen.getByRole("region", { name: "AI 证据总结与反方审查" });
+    expect(region).toHaveTextContent("现金流证据较强");
+    expect(region).toHaveTextContent("估值压力");
+    expect(region).toHaveTextContent("证据 risk-1");
+    expect(region).toHaveTextContent("不生成新事实");
+  });
+});

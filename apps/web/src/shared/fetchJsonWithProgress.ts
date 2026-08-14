@@ -1,9 +1,12 @@
 export type LoadStage = "connecting" | "receiving" | "parsing" | "complete";
+export type LoadProgressMode = "estimated" | "measured" | "verified";
 
 export type LoadProgress = {
   percent: number;
   stage: LoadStage;
   detail: string;
+  mode?: LoadProgressMode;
+  elapsedMs?: number;
   receivedBytes?: number;
   totalBytes?: number;
 };
@@ -24,6 +27,7 @@ function apiMessage(text: string, fallback: string): string {
 async function readBody(
   response: Response,
   onProgress?: LoadProgressCallback,
+  startedAt = performance.now(),
 ): Promise<string> {
   if (!response.body) {
     const text = await response.text();
@@ -31,6 +35,8 @@ async function readBody(
       percent: 92,
       stage: "receiving",
       detail: `已接收 ${new TextEncoder().encode(text).byteLength} 字节`,
+      mode: "measured",
+      elapsedMs: performance.now() - startedAt,
     });
     return text;
   }
@@ -48,12 +54,14 @@ async function readBody(
     received += value.byteLength;
     text += decoder.decode(value, { stream: true });
     const percent = total
-      ? 5 + Math.min(87, Math.floor((received / total) * 87))
-      : Math.min(88, 12 + Math.floor(Math.log2(received + 1) * 5));
+      ? 46 + Math.min(46, Math.floor((received / total) * 46))
+      : Math.min(88, 46 + Math.floor(Math.log2(received + 1) * 3));
     onProgress?.({
       percent,
       stage: "receiving",
       detail: total ? `已接收 ${received} / ${total} 字节` : `已接收 ${received} 字节`,
+      mode: "measured",
+      elapsedMs: performance.now() - startedAt,
       receivedBytes: received,
       totalBytes: total ?? undefined,
     });
@@ -68,13 +76,61 @@ export async function fetchJsonWithProgress<T>(
   onProgress?: LoadProgressCallback,
   fallbackError: (status: number) => string = (status) => `请求失败 (${status})`,
 ): Promise<T> {
-  onProgress?.({ percent: 1, stage: "connecting", detail: "正在连接本地数据服务" });
-  const response = await fetch(input, init);
-  onProgress?.({ percent: 5, stage: "receiving", detail: "连接成功，正在接收数据" });
-  const text = await readBody(response, onProgress);
+  const startedAt = performance.now();
+  let lastPercent = 0;
+  const emit: LoadProgressCallback = (progress) => {
+    const percent = Math.max(lastPercent, Math.min(100, Math.round(progress.percent)));
+    lastPercent = percent;
+    onProgress?.({ ...progress, percent });
+  };
+  emit({
+    percent: 1,
+    stage: "connecting",
+    mode: "estimated",
+    elapsedMs: 0,
+    detail: "正在连接本地数据服务 · 阶段估算",
+  });
+  const estimateTimer = window.setInterval(() => {
+    const elapsedMs = performance.now() - startedAt;
+    const estimated = Math.min(45, 1 + Math.floor(44 * (1 - Math.exp(-elapsedMs / 6_000))));
+    emit({
+      percent: estimated,
+      stage: "connecting",
+      mode: "estimated",
+      elapsedMs,
+      detail: `本地服务正在准备数据 · 已等待 ${(elapsedMs / 1_000).toFixed(1)} 秒 · 阶段估算`,
+    });
+  }, 250);
+  let response: Response;
+  try {
+    response = await coalescedFetch(input, init);
+  } finally {
+    window.clearInterval(estimateTimer);
+  }
+  emit({
+    percent: 46,
+    stage: "receiving",
+    mode: "measured",
+    elapsedMs: performance.now() - startedAt,
+    detail: "连接成功，正在接收真实响应字节",
+  });
+  const text = await readBody(response, emit, startedAt);
   if (!response.ok) throw new Error(apiMessage(text, fallbackError(response.status)));
-  onProgress?.({ percent: 96, stage: "parsing", detail: "数据接收完成，正在校验并解析" });
+  emit({
+    percent: 96,
+    stage: "parsing",
+    mode: "verified",
+    elapsedMs: performance.now() - startedAt,
+    detail: "数据接收完成，正在校验并解析",
+  });
   const value = JSON.parse(text) as T;
-  onProgress?.({ percent: 100, stage: "complete", detail: "最新数据已载入" });
+  emit({
+    percent: 100,
+    stage: "complete",
+    mode: "verified",
+    elapsedMs: performance.now() - startedAt,
+    detail: "最新数据已载入",
+  });
   return value;
 }
+import { coalescedFetch } from "./coalescedFetch";

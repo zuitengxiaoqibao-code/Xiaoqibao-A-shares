@@ -149,6 +149,47 @@ class FundFlowDiagnosis(Diagnosis):
         return result.model_copy(update={"sections": sections})
 
 
+class FieldEvidenceDiagnosis(Diagnosis):
+    async def diagnose(self, symbol, as_of, *, persist=True, cutoff=None):
+        result = await super().diagnose(
+            symbol, as_of, persist=persist, cutoff=cutoff
+        )
+        metrics = {
+            "market": {"price": Decimal("10.25"), "change_percent": Decimal("1.49")},
+            "valuation": {"pe_ttm": Decimal("6.32"), "pb": Decimal("0.58")},
+            "trend": {"return_20d": Decimal("0.08"), "drawdown_60d": Decimal("-0.12")},
+            "fundamentals": {
+                "revenue": Decimal("123456789"),
+                "net_profit": Decimal("23456789"),
+                "roe": Decimal("0.086"),
+            },
+        }
+        sections = dict(result.sections)
+        for name, values in metrics.items():
+            sections[name] = sections[name].model_copy(update={
+                "metrics": values,
+                "evidence_ids": (f"{name}-evidence",),
+            })
+        return result.model_copy(update={"sections": sections})
+
+
+class ValuationConflictDiagnosis(FieldEvidenceDiagnosis):
+    async def diagnose(self, symbol, as_of, *, persist=True, cutoff=None):
+        result = await super().diagnose(
+            symbol, as_of, persist=persist, cutoff=cutoff
+        )
+        section = result.sections["valuation"].model_copy(update={"metrics": {
+            "pe_ttm": Decimal("6.32"),
+            "pe_ttm_alternative": Decimal("6.80"),
+            "pe_ttm_alternative_source": "tdx-local-rpc-detail",
+            "pe_ttm_difference": Decimal("-0.48"),
+            "pb": Decimal("0.58"),
+        }})
+        return result.model_copy(update={
+            "sections": {**result.sections, "valuation": section},
+        })
+
+
 class RecordingHistoricalDiagnosis(Diagnosis):
     def __init__(self):
         self.cutoff = None
@@ -436,6 +477,57 @@ async def test_cockpit_maps_verified_fund_flow_section() -> None:
     assert result.sections["funds"].payload["evidence_ids"] == (
         "fund-flow-" + "c" * 24,
     )
+
+
+@pytest.mark.asyncio
+async def test_cockpit_exposes_field_level_evidence_for_decision_critical_values() -> None:
+    result = await service(diagnosis=FieldEvidenceDiagnosis()).get(
+        "600000", TRADE_DATE, CUTOFF
+    )
+
+    evidence = {item.field_path: item for item in result.field_evidence}
+    assert evidence["market.latest_price"].value == Decimal("10.25")
+    assert evidence["market.latest_price"].status == "live"
+    assert evidence["market.latest_price"].source_field == "price"
+    assert evidence["valuation.pe_ttm"].value == Decimal("6.32")
+    assert evidence["trend.return_20d"].status == "postclose"
+    assert evidence["trend.drawdown_60d"].evidence_ids == ("trend-evidence",)
+    assert evidence["fundamentals.revenue"].status == "cached"
+    assert evidence["fundamentals.roe"].value == Decimal("0.086")
+    assert evidence["assessment.confidence"].derived is True
+    assert evidence["assessment.confidence"].formula == "deterministic-stock-assessor-v1"
+    assert evidence["assessment.confidence"].coverage_percent == Decimal("100.00")
+
+
+@pytest.mark.asyncio
+async def test_cockpit_marks_unavailable_section_fields_missing_with_reason() -> None:
+    result = await service(diagnosis=UnavailableValuation()).get(
+        "600000", TRADE_DATE, CUTOFF
+    )
+
+    evidence = {item.field_path: item for item in result.field_evidence}
+    assert evidence["valuation.pe_ttm"].status == "missing"
+    assert evidence["valuation.pe_ttm"].value is None
+    assert evidence["valuation.pe_ttm"].limitations == (
+        "diagnosis_section_unavailable",
+    )
+
+
+@pytest.mark.asyncio
+async def test_cockpit_discloses_real_valuation_source_conflict() -> None:
+    result = await service(diagnosis=ValuationConflictDiagnosis()).get(
+        "600000", TRADE_DATE, CUTOFF
+    )
+
+    evidence = {item.field_path: item for item in result.field_evidence}
+    pe = evidence["valuation.pe_ttm"]
+    assert pe.status == "conflict"
+    assert pe.value == Decimal("6.32")
+    assert pe.alternatives[0].value == Decimal("6.80")
+    assert pe.alternatives[0].source == "tdx-local-rpc-detail"
+    assert pe.difference == "-0.48 (-7.06%)"
+    assert pe.selection_reason == "采用实时腾讯行情估值，保留本地通达信估值作为备选"
+    assert pe.affects_conclusion is False
 
 
 @pytest.mark.asyncio

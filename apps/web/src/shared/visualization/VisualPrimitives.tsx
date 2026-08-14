@@ -2,24 +2,9 @@ import type { ReactNode } from "react";
 
 import { chartToneColor } from "./chartTheme";
 import type { EvidenceState, EvidenceStatus, MetricItem, MetricTone, RankItem } from "./types";
+import { freshnessDetail, freshnessLabel } from "../evidence/freshnessCopy";
 
 import "./visualization.css";
-
-const STATUS_LABEL: Record<EvidenceStatus, string> = {
-  ready: "数据已就绪",
-  partial: "数据部分可用",
-  stale: "使用历史数据",
-  unavailable: "数据不可用",
-  error: "数据加载失败",
-};
-
-const STATUS_DETAIL: Record<EvidenceStatus, string> = {
-  ready: "已取得当前可用行情",
-  partial: "部分字段仍待补齐",
-  stale: "当前内容可能不是最新快照",
-  unavailable: "暂无可用于计算的证据",
-  error: "请检查数据源后重试",
-};
 
 function classes(...values: Array<string | undefined | false>): string {
   return values.filter(Boolean).join(" ");
@@ -47,14 +32,14 @@ export function DataStateNotice({ state, title, detail, onRetry }: {
   detail?: string;
   onRetry?: () => void;
 }) {
-  const heading = title ?? STATUS_LABEL[state.status];
-  const description = detail ?? STATUS_DETAIL[state.status];
+  const heading = title ?? freshnessLabel(state.status);
+  const description = detail ?? freshnessDetail(state.status);
   return (
     <div className="viz-state-notice" data-status={state.status} role="status" aria-label={heading}>
       <span className="viz-state-dot" aria-hidden="true" />
       <div className="viz-state-copy">
         <strong>{heading}</strong>
-        <span>{STATUS_LABEL[state.status]} · {description}</span>
+        <span>{freshnessLabel(state.status)} · {description}</span>
         <small>来源：{state.source} · 观测时间：{formatObservedAt(state.observedAt)} · {formatCoverage(state.coverage)}</small>
         {state.warnings.length > 0 && <small className="viz-state-warning">{state.warnings.join("；")}</small>}
       </div>
@@ -76,7 +61,7 @@ export function ChartPanel({ title, subtitle, state, ariaLabel, children }: {
         <div><h3>{title}</h3>{subtitle && <p>{subtitle}</p>}</div>
         {state && <EvidenceBadge status={state.status} />}
       </header>
-      {state && state.status !== "ready" && <DataStateNotice state={state} title={`${title}：${STATUS_LABEL[state.status]}`} />}
+      {state && state.status !== "ready" && <DataStateNotice state={state} title={`${title}：${freshnessLabel(state.status)}`} />}
       <div className="viz-chart-panel-content">{children}</div>
     </section>
   );
@@ -135,5 +120,5 @@ export function RankBarList({ items, state }: { items: RankItem[]; state?: Evide
 }
 
 export function EvidenceBadge({ status, label }: { status: EvidenceStatus; label?: string }) {
-  return <span className="viz-evidence-badge" data-status={status} role="status">{label ?? STATUS_LABEL[status]}</span>;
+  return <span className="viz-evidence-badge" data-status={status} role="status">{label ?? freshnessLabel(status)}</span>;
 }

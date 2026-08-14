@@ -1,4 +1,6 @@
 import type { MarketOverviewResponse } from "../types";
+import { createMetricContract, type MetricContract } from "../../../shared/evidence/metricContract";
+import type { MetricDrilldownSelection } from "./MetricDrilldown";
 import { hasDragonTigerEvidence } from "./workspaceEvidence";
 import { numberValue, type WorkspaceMarketModel } from "./workspaceSelectors";
 
@@ -15,6 +17,8 @@ export type WorkspaceInsight = {
   tone: InsightTone;
   basis: InsightBasis;
   method?: string;
+  drilldown?: MetricDrilldownSelection;
+  contract?: MetricContract;
   icon: "pulse" | "news" | "theme" | "auction" | "limit" | "sector" | "history" | "seat" | "risk" | "data" | "stock";
 };
 
@@ -122,6 +126,12 @@ const MARKET_DEPENDENT_METRICS: Partial<Record<MetricKey, string>> = {
 
 function metric(key: MetricKey, data: MarketOverviewResponse, model: WorkspaceMarketModel): WorkspaceInsight {
   const review = data.review;
+  const hasVerifiedHistory = Boolean(
+    review
+    && review.history_ready_count > 0
+    && review.source !== "unavailable"
+    && review.quality !== "unavailable",
+  );
   const seatEvidenceReady = hasDragonTigerEvidence(review);
   const seats = review?.dragon_tiger.flatMap((item) => item.seats) ?? [];
   const seatNetValues = seats.map((item) => numberValue(item.net_amount_yi)).filter((value): value is number => value !== null);
@@ -199,11 +209,15 @@ function metric(key: MetricKey, data: MarketOverviewResponse, model: WorkspaceMa
     case "theme-stock-top": return topThemeStock
       ? ready(key, "题材叠加最多", topThemeStock.name, `${topThemeStock.themes.length} 个已关联题材`, "warning", "theme")
       : unavailable(key, "题材叠加最多", "没有股票同时具备已关联题材证据", "theme");
-    case "history-coverage": return review && review.universe_count > 0 && review.history_ready_count > 0 && coverage !== null
+    case "history-coverage": return hasVerifiedHistory && review && review.universe_count > 0 && coverage !== null
       ? ready(key, "日线覆盖", `${coverage.toFixed(1)}%`, `${review.history_ready_count}/${review.universe_count}`, coverage >= 80 ? "positive" : "warning", "history", "derived", "可用日线股票数 / 全市场股票数")
       : unavailable(key, "日线覆盖", "本地日线没有可用历史样本", "history");
-    case "history-new-high": return unavailable(key, "百日新高清单", "当前响应未返回百日新高逐股结果", "history");
-    case "history-previous-limit": return unavailable(key, "昨涨停反馈", "当前响应未返回上一交易日涨停名单", "history");
+    case "history-new-high": return hasVerifiedHistory && review && Array.isArray(review.new_high_100)
+      ? ready(key, "百日新高清单", String(review.new_high_100.length), `${review.latest_trade_date ?? "复盘交易日待确认"} · 完整日线筛选`, "positive", "history")
+      : unavailable(key, "百日新高清单", "本地日线没有可验证的百日窗口", "history");
+    case "history-previous-limit": return hasVerifiedHistory && review && Array.isArray(review.previous_limit_up)
+      ? ready(key, "昨涨停反馈", String(review.previous_limit_up.length), `${review.latest_trade_date ?? "复盘交易日待确认"} · 上一交易日严格涨停`, "neutral", "history")
+      : unavailable(key, "昨涨停反馈", "本地日线没有可验证的上一交易日名单", "history");
     case "interval-result": return unavailable(key, "区间统计结果", "尚未选择并计算明确起止区间", "history");
     case "consecutive-count": return review ? ready(key, "连续涨停", String(review.consecutive_limit_up.length), "至少 2 个交易日连续收盘涨停", "positive", "history") : unavailable(key, "连续涨停", "本地日线复盘尚未完成", "history");
     case "top-board": {
@@ -239,5 +253,159 @@ function metric(key: MetricKey, data: MarketOverviewResponse, model: WorkspaceMa
 export function buildWorkspaceInsights(feature: string, data: MarketOverviewResponse, model: WorkspaceMarketModel): WorkspaceInsight[] {
   const profile = WORKSPACE_INSIGHT_PROFILES[feature];
   if (!profile) throw new Error(`信息总览缺少关键指标定义：${feature}`);
-  return profile.map((key) => metric(key, data, model));
+  return profile.map((key) => {
+    const insight = metric(key, data, model);
+    const drilldown = insightDrilldown(key, insight, data, model);
+    const contract = workspaceMetricContract(key, insight, drilldown, data);
+    return { ...insight, contract, drilldown: { ...drilldown, contract } };
+  });
+}
+
+const REVIEW_KEYS = new Set<MetricKey>([
+  "history-coverage", "history-new-high", "history-previous-limit", "interval-result",
+  "consecutive-count", "top-board", "first-board", "volume-breakout", "previous-high",
+  "low-volume", "seat-stocks", "seat-count", "seat-net", "top-seat", "review-date", "review-quality",
+]);
+
+const COUNT_KEYS = new Set<MetricKey>([
+  "anomaly-total", "anomaly-positive", "anomaly-negative", "anomaly-symbols", "news-total",
+  "news-verified", "news-symbols", "theme-total", "theme-symbols", "gap-up", "gap-down",
+  "gap-recovery", "auction-pass", "limit-up", "broken-limit", "limit-down", "risk-stocks",
+  "sector-total", "sector-positive", "sector-limit", "rising", "falling", "active-stocks",
+  "history-new-high", "history-previous-limit", "consecutive-count", "first-board", "volume-breakout",
+  "previous-high", "low-volume", "seat-stocks", "seat-count", "large-order", "large-order-buy", "large-order-sell",
+]);
+
+function integerValue(value: string): number | null {
+  const match = value.replaceAll(",", "").match(/^-?\d+$/);
+  return match ? Number(match[0]) : null;
+}
+
+function workspaceMetricContract(
+  key: MetricKey,
+  insight: WorkspaceInsight,
+  drilldown: MetricDrilldownSelection,
+  data: MarketOverviewResponse,
+): MetricContract {
+  const reviewMetric = REVIEW_KEYS.has(key);
+  const members = drilldown.stocks ?? [];
+  const parsedTotal = COUNT_KEYS.has(key) ? integerValue(insight.value) : null;
+  const totalCount = parsedTotal !== null && parsedTotal >= members.length ? parsedTotal : null;
+  const observedAt = reviewMetric
+    ? data.review?.observed_at ?? data.market_data.observed_at ?? data.observed_at ?? data.sentiment.observed_at
+    : data.market_data.observed_at ?? data.observed_at ?? data.sentiment.observed_at;
+  const tradeDate = reviewMetric
+    ? data.review?.latest_trade_date ?? data.as_of ?? observedAt?.slice(0, 10)
+    : data.as_of ?? observedAt?.slice(0, 10);
+  const source = reviewMetric
+    ? data.review?.source ?? "本地日线复盘未接入"
+    : data.market_data.source || data.sources?.join(" / ") || "数据源未提供";
+  const sampleCount = reviewMetric
+    ? data.review?.history_ready_count ?? null
+    : data.market_data.quote_count || data.breadth.valid_count || null;
+  const unavailableReason = drilldown.unavailableReason
+    ?? (insight.quality === "unavailable" ? insight.detail : null);
+  return createMetricContract({
+    metricId: `market-overview.${key}`,
+    label: insight.label,
+    value: insight.value,
+    scope: insight.method ?? insight.detail,
+    status: insight.quality,
+    tradeDate,
+    observedAt: observedAt || null,
+    source,
+    formulaVersion: reviewMetric ? data.review?.formula_version ?? null : insight.method ? "workspace-insight-v1" : null,
+    sampleCount,
+    totalCount,
+    drilldownKind: drilldown.stocks ? "members" : "aggregate_only",
+    members: members.map((member) => ({
+      symbol: member.symbol,
+      name: member.name,
+      reason: member.reason,
+      value: typeof member.value === "string" || typeof member.value === "number" ? member.value : null,
+    })),
+    unavailableReason,
+  });
+}
+
+function insightDrilldown(key: MetricKey, insight: WorkspaceInsight, data: MarketOverviewResponse, model: WorkspaceMarketModel): MetricDrilldownSelection {
+  const stock = (item: WorkspaceMarketModel["stocks"][number], reason: string) => ({
+    symbol: item.symbol, name: item.name?.trim() || "名称待补齐", reason,
+    value: known(item.change) ? `${item.change > 0 ? "+" : ""}${item.change.toFixed(2)}%` : "--",
+  });
+  const reviewStock = (item: NonNullable<MarketOverviewResponse["review"]>["first_limit_up"][number], reason: string) => ({
+    symbol: item.symbol, name: item.name?.trim() || "名称待补齐", reason,
+    value: numberValue(item.change_percent) === null ? "--" : `${Number(item.change_percent) > 0 ? "+" : ""}${Number(item.change_percent).toFixed(2)}%`,
+  });
+  const listedStock = (item: NonNullable<MarketOverviewResponse["review"]>["dragon_tiger"][number], reason: string) => ({
+    symbol: item.symbol, name: item.name?.trim() || "名称待补齐", reason,
+    value: numberValue(item.change_percent) === null ? "--" : `${Number(item.change_percent) > 0 ? "+" : ""}${Number(item.change_percent).toFixed(2)}%`,
+  });
+  const aggregate = (reason: string): MetricDrilldownSelection => ({ label: insight.label, value: insight.value, source: insight.detail, unavailableReason: reason });
+  const exact = (stocks: MetricDrilldownSelection["stocks"], totalLabel?: string): MetricDrilldownSelection => ({ label: insight.label, value: insight.value, source: insight.detail, stocks, totalLabel });
+  const linkedSymbols = (items: Array<{ symbols: string[]; headline?: string; label?: string }>, prefix: string) => {
+    const reasons = new Map<string, string[]>();
+    items.forEach((item) => item.symbols.forEach((symbol) => reasons.set(symbol, [...(reasons.get(symbol) ?? []), item.headline ?? item.label ?? prefix])));
+    return [...reasons.entries()].map(([symbol, values]) => ({ symbol, name: model.stockNames.get(symbol) ?? "名称待补齐", reason: `${prefix}：${[...new Set(values)].join(" / ")}` }));
+  };
+  const gapsUp = model.stocks.filter((item) => known(item.gap) && item.gap >= 2);
+  const gapsDown = model.stocks.filter((item) => known(item.gap) && item.gap <= -2);
+  const riskStocks = model.stocks.filter((item) => item.state === "broken_limit_up" || item.state === "limit_down" || (known(item.change) && item.change <= -3));
+
+  switch (key) {
+    case "anomaly-total": return exact(linkedSymbols(model.anomalies, "异动事件"), "事件统计");
+    case "anomaly-positive": return exact(linkedSymbols(model.anomalies.filter((item) => item.direction === "positive"), "正向异动"), "事件统计");
+    case "anomaly-negative": return exact(linkedSymbols(model.anomalies.filter((item) => item.direction === "negative"), "风险异动"), "事件统计");
+    case "anomaly-symbols": return exact(linkedSymbols(model.anomalies, "异动关联"));
+    case "news-total": return exact(linkedSymbols(model.news, "资讯关联"), "资讯统计");
+    case "news-verified": return exact(linkedSymbols(model.news.filter((item) => item.review_state === "verified"), "已核验资讯"), "资讯统计");
+    case "news-symbols": return exact(linkedSymbols(model.news, "资讯关联"));
+    case "theme-symbols": return exact([...new Set(model.themes.flatMap((item) => item.symbols))].map((symbol) => ({ symbol, name: model.stockNames.get(symbol) ?? "名称待补齐", reason: `已关联题材：${model.themes.filter((item) => item.symbols.includes(symbol)).map((item) => item.name).join(" / ")}` })));
+    case "gap-up": return exact(gapsUp.map((item) => stock(item, `高开 ${item.gap!.toFixed(2)}%`)));
+    case "gap-down": return exact(gapsDown.map((item) => stock(item, `低开 ${item.gap!.toFixed(2)}%`)));
+    case "gap-recovery": return exact(gapsUp.filter((item) => known(item.change) && item.change >= item.gap! - 1).map((item) => stock(item, `高开 ${item.gap!.toFixed(2)}%，当前涨幅保持`)));
+    case "auction-pass": return exact(model.stocks.filter((item) => known(item.gap) && known(item.change) && known(item.closePosition) && known(item.amount) && item.gap >= -1 && item.gap <= 4 && item.change >= item.gap - 1 && item.closePosition >= 50 && item.amount > 0).map((item) => stock(item, "缺口、现价、收盘位置和成交额均通过")));
+    case "limit-up": return exact(model.stocks.filter((item) => item.state === "limit_up").map((item) => stock(item, "当前价格达到严格涨停状态")), "全市场统计");
+    case "broken-limit": return exact(model.stocks.filter((item) => item.state === "broken_limit_up").map((item) => stock(item, "最高触板但当前未封住涨停")), "全市场统计");
+    case "limit-down": return exact(model.stocks.filter((item) => item.state === "limit_down").map((item) => stock(item, "当前价格达到严格跌停状态")), "全市场统计");
+    case "risk-stocks": return exact(riskStocks.map((item) => stock(item, "跌停、炸板或当前跌幅不高于 -3%")));
+    case "active-stocks": return exact(model.stocks.map((item) => stock(item, "当前接口返回的代表股票样本")));
+    case "top-stock": {
+      const item = [...model.stocks].filter((candidate) => known(candidate.change)).sort((left, right) => compareDesc(left.change, right.change))[0];
+      return item ? exact([stock(item, "当前代表样本中涨幅领先")]) : aggregate("行情样本缺少可验证涨跌幅，无法形成逐股明细。");
+    }
+    case "high-amplitude": {
+      const item = [...model.stocks].filter((candidate) => known(candidate.amplitude)).sort((left, right) => compareDesc(left.amplitude, right.amplitude))[0];
+      return item ? exact([stock(item, `振幅 ${item.amplitude!.toFixed(2)}%`)]) : aggregate("行情样本缺少高低价，无法形成逐股明细。");
+    }
+    case "attention-top": {
+      const item = [...model.stocks].filter((candidate) => known(candidate.attentionScore)).sort((left, right) => compareDesc(left.attentionScore, right.attentionScore))[0];
+      return item ? exact([stock(item, `观察热度分 ${item.attentionScore!.toFixed(0)}`)]) : aggregate("行情、成交额和关联证据不足，无法形成逐股明细。");
+    }
+    case "theme-stock-top": {
+      const item = [...model.stocks].filter((candidate) => candidate.themes.length > 0).sort((left, right) => right.themes.length - left.themes.length)[0];
+      return item ? exact([stock(item, `已关联题材：${item.themes.join(" / ")}`)]) : aggregate("没有股票同时具备可追溯题材证据。");
+    }
+    case "history-new-high": return data.review ? exact((data.review.new_high_100 ?? []).map((item) => reviewStock(item, "收盘创 100 日新高"))) : aggregate("本地日线复盘尚未完成。");
+    case "history-previous-limit": return data.review ? exact((data.review.previous_limit_up ?? []).map((item) => reviewStock(item, "上一交易日严格涨停"))) : aggregate("本地日线复盘尚未完成。");
+    case "consecutive-count": return data.review ? exact((data.review.consecutive_limit_up ?? []).map((item) => reviewStock(item, `连续 ${item.board_count ?? "--"} 个交易日收盘涨停`))) : aggregate("本地日线复盘尚未完成。");
+    case "top-board": {
+      const rows = data.review?.consecutive_limit_up ?? [];
+      const maxBoard = Math.max(...rows.map((item) => item.board_count ?? 0), 0);
+      return maxBoard > 0 ? exact(rows.filter((item) => item.board_count === maxBoard).map((item) => reviewStock(item, `当前最高连板 ${maxBoard} 板`))) : aggregate("本地连续日线没有可用连板高度。");
+    }
+    case "first-board": return data.review ? exact((data.review.first_limit_up ?? []).map((item) => reviewStock(item, "当日涨停且上一交易日未涨停"))) : aggregate("本地日线复盘尚未完成。");
+    case "volume-breakout": return data.review ? exact((data.review.volume_breakouts ?? []).map((item) => reviewStock(item, "60 日收盘新高且量能达到规则"))) : aggregate("本地日线复盘尚未完成。");
+    case "previous-high": return data.review ? exact((data.review.previous_high_breakouts ?? []).map((item) => reviewStock(item, "突破前 20 日高点并放量"))) : aggregate("本地日线复盘尚未完成。");
+    case "low-volume": return data.review ? exact((data.review.low_position_volume ?? []).map((item) => reviewStock(item, "120 日区间下部且出现放量"))) : aggregate("本地日线复盘尚未完成。");
+    case "seat-stocks": return data.review ? exact((data.review.dragon_tiger ?? []).map((item) => listedStock(item, `龙虎榜原因：${item.reason}`))) : aggregate("龙虎榜接口和本地缓存均不可用。");
+    case "seat-count": return data.review ? exact((data.review.dragon_tiger ?? []).map((item) => listedStock(item, `包含 ${item.seats.length} 条可验证席位明细`)), "席位明细统计") : aggregate("龙虎榜席位尚未取得。");
+    case "large-order": return data.large_order_flows?.length ? exact(data.large_order_flows.map((item) => ({ symbol: item.symbol, name: item.name?.trim() || "名称待补齐", reason: "真实大单资金流缓存样本", value: signedMoney(Number(item.main_net_yi)) }))) : aggregate("当前响应没有逐笔方向和真实净流入。");
+    case "rising": return aggregate("当前接口仅返回全市场聚合值，暂无成员级明细；不会用代表股票样本冒充全部上涨股票。");
+    case "falling": return aggregate("当前接口仅返回全市场聚合值，暂无成员级明细；不会用代表股票样本冒充全部下跌股票。");
+    case "market-amount": return aggregate("两市成交是全市场聚合金额，不存在可逐股等价展开的成员名单。");
+    case "sector-total": case "sector-positive": case "sector-limit": case "top-sector": case "top-sector-breadth": case "top-sector-amount":
+      return aggregate("该指标统计对象是板块，不是股票；当前股票钻取面板不会把板块数量伪装成个股名单。");
+    default: return aggregate(insight.quality === "unavailable" ? insight.detail : "该指标当前只有聚合值或综合评分，没有严格同口径的逐股成员明细。");
+  }
 }

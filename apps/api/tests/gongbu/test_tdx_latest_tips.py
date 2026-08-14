@@ -69,3 +69,30 @@ def test_parse_latest_tips_filters_f10_navigation_and_financial_table_noise() ->
     assert "8000 万元至 6500 万元" in performance.summary
     announcement = next(item for item in items if item.category == "公告与合同")
     assert "债券" in announcement.title
+
+
+def test_parse_latest_tips_extracts_financial_fields_without_table_or_navigation_noise() -> None:
+    text = """
+☆603009 北特科技 更新日期：☆ 通达信沪深京F10
+★本栏包括【1.最新提示】【2.互动问答】【3.最新公告】【4.最新报道】
+| 2026-03-31 | 营业收入(万元):58571.50 | 同比增长(%):8.04 |
+| 净利润(万元):2717.81 | 同比增长(%):17.86 |
+最新分红扩股： | |
+●2026-07-20 北特科技：关于向特定对象发行限售股上市流通的公告
+"""
+
+    items = parse_latest_tips(text, source="mootdx-f10", observed_at=OBSERVED_AT)
+
+    assert len(items) == 2
+    financial = next(item for item in items if item.category == "业绩预告")
+    assert financial.title == "季度经营数据同比增长"
+    assert "营业收入 58571.50 万元，同比增长 8.04%" in financial.summary
+    assert "净利润 2717.81 万元，同比增长 17.86%" in financial.summary
+    assert financial.tone == "positive"
+    assert "下降" not in financial.title
+    unlock = next(item for item in items if item.category == "资金与融资")
+    assert unlock.title == "限售股解禁事项"
+    assert all("本栏包括" not in item.raw_text for item in items)
+    assert all("通达信沪深京F10" not in item.raw_text for item in items)
+    assert all("|" not in item.raw_text for item in items)
+    assert all("最新分红扩股" not in item.raw_text for item in items)

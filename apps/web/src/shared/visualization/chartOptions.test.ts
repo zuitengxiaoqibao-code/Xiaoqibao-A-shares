@@ -6,6 +6,9 @@ import {
   buildDualAxisOption,
   buildGaugeOption,
   buildHeatmapOption,
+  buildFactorOption,
+  buildHorizontalRankOption,
+  buildStackedCompositionOption,
   buildRadarOption,
   buildTreemapOption,
 } from "./chartOptions";
@@ -63,5 +66,50 @@ describe("chart option factories", () => {
     const candle = buildCandlestickOption({ categories: ["D1"], values: [[null, null, null, null]] });
     expect(firstSeries(candle)).toEqual(expect.objectContaining({ type: "candlestick" }));
     expect(firstSeries(candle).data).toEqual([[null, null, null, null]]);
+  });
+
+  it("keeps radar at eight dimensions and switches larger factor sets to grouped horizontal bars", () => {
+    const radar = buildFactorOption({
+      indicators: Array.from({ length: 8 }, (_, index) => ({ name: `因子${index + 1}`, max: 100 })),
+      values: Array.from({ length: 8 }, (_, index) => index * 10),
+      name: "八维因子",
+    });
+    const groupedBars = buildFactorOption({
+      indicators: Array.from({ length: 9 }, (_, index) => ({ name: `因子${index + 1}`, max: 100 })),
+      values: [10, 20, null, 40, 50, 60, 70, 80, 90],
+      name: "九维因子",
+    });
+
+    expect(firstSeries(radar).type).toBe("radar");
+    expect(firstSeries(groupedBars)).toEqual(expect.objectContaining({
+      type: "bar",
+      data: [10, 20, null, 40, 50, 60, 70, 80, 90],
+    }));
+    expect(groupedBars.yAxis).toEqual(expect.objectContaining({
+      type: "category",
+      data: Array.from({ length: 9 }, (_, index) => `因子${index + 1}`),
+    }));
+  });
+
+  it("uses horizontal bars for rankings and stacked bars for composition without converting missing values to zero", () => {
+    const ranking = buildHorizontalRankOption({
+      categories: ["银行", "证券"],
+      values: [12.5, null],
+      name: "强度",
+    });
+    const composition = buildStackedCompositionOption({
+      categories: ["全市场"],
+      series: [
+        { name: "上涨", values: [3200], tone: "up" },
+        { name: "下跌", values: [null], tone: "down" },
+      ],
+    });
+
+    expect(firstSeries(ranking)).toEqual(expect.objectContaining({ type: "bar", data: [12.5, null] }));
+    expect(ranking.yAxis).toEqual(expect.objectContaining({ type: "category", data: ["银行", "证券"] }));
+    expect(composition.series).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "上涨", type: "bar", stack: "composition", data: [3200] }),
+      expect.objectContaining({ name: "下跌", type: "bar", stack: "composition", data: [null] }),
+    ]));
   });
 });

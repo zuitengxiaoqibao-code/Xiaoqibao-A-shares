@@ -25,6 +25,20 @@ describe("BeginnerRiskView", () => {
     fireEvent.click(screen.getByRole("button", { name: "重试" }));
     expect(await screen.findByText("当前风险：待核验")).toBeInTheDocument();
   });
+  it("shows market, stock, event, data and strategy as separate risk layers", async () => {
+    render(<BeginnerRiskView load={() => Promise.resolve({
+      rule_version: "v2", limits: {}, overall_level: "low",
+      dimensions: [
+        { id: "market_sentiment", label: "市场环境", level: "low", value: "中性", evidence: "市场快照", action: "继续复核" },
+        { id: "stock_specific", label: "个股风险", level: "unavailable", value: "等待选择股票", evidence: "未绑定股票", action: "选择股票" },
+        { id: "news_events", label: "新闻事件", level: "low", value: "暂无", evidence: "已核验", action: "持续监控" },
+        { id: "data_freshness", label: "数据时效", level: "low", value: "当前", evidence: "快照有效", action: "继续复核" },
+        { id: "strategy_execution", label: "策略风险", level: "unavailable", value: "等待策略", evidence: "无版本样本", action: "冻结参数" },
+      ], alerts: [],
+    })} />);
+    const matrix = await screen.findByLabelText("五层风险矩阵");
+    expect(matrix).toHaveTextContent("市场较低个股待核验事件较低数据较低策略待核验");
+  });
   it("ignores an older response after the loader changes", async () => {
     let resolveOld!: (value: { rule_version: string; limits: Record<string, string> }) => void;
     const old = new Promise<{ rule_version: string; limits: Record<string, string> }>((resolve) => { resolveOld = resolve; });

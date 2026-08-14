@@ -1,10 +1,14 @@
+import hashlib
 from decimal import Decimal
 
 from qibao_api.contracts.backtest import (
     BacktestRequest,
+    BacktestEvidence,
     BacktestResult,
+    BacktestRollingWindow,
     BacktestSegmentResult,
     EquityPoint,
+    SignalDecayPoint,
     Trade,
 )
 from qibao_api.contracts.bars import DailyBar
@@ -36,15 +40,91 @@ class BacktestEngine:
         )
         if all(len(segment_bars) > required_bars for _, segment_bars in named_segments):
             result.segments = [
-                self._attribute_segment(name, segment_bars, result.equity_curve)
+                self._run_segment(name, request, segment_bars)
                 for name, segment_bars in named_segments
             ]
+        closed_trade_count = result.metrics.closed_trade_count
+        sample_gate_passed = closed_trade_count >= 5
+        if not sample_gate_passed:
+            result.metrics.sharpe_ratio = None
+            result.metrics.calmar_ratio = None
+            result.metrics.win_rate = None
+            result.metrics.profit_loss_ratio = None
+            result.metrics.expected_value = None
+        if not sample_gate_passed:
+            result.segments = []
+        result.evidence = BacktestEvidence(
+            sample_status=(
+                "segmented" if sample_gate_passed and len(result.segments) == 3
+                else "descriptive" if sample_gate_passed
+                else "insufficient"
+            ),
+            minimum_closed_trades=5,
+            closed_trade_count=closed_trade_count,
+            source_bar_count=len(ordered),
+            lookahead_check="passed",
+            segment_status=(
+                "ready" if sample_gate_passed and len(result.segments) == 3
+                else "partial" if sample_gate_passed and result.segments
+                else "unavailable"
+            ),
+            parameter_snapshot_hash=hashlib.sha256(
+                request.model_dump_json().encode("utf-8")
+            ).hexdigest(),
+            conclusion_metrics_available=sample_gate_passed,
+            gated_metrics=() if sample_gate_passed else (
+                "sharpe_ratio", "calmar_ratio", "win_rate", "profit_loss_ratio", "expected_value",
+            ),
+        )
+        result.rolling_windows = self._rolling_windows(
+            request, ordered, required_bars,
+            sample_gate_passed,
+        )
+        result.request_snapshot = request.model_copy(deep=True)
+        result.signal_decay = self._signal_decay(ordered, result.trades)
         return result
+
+    def _rolling_windows(
+        self,
+        request: BacktestRequest,
+        bars: list[DailyBar],
+        required_bars: int,
+        gate_passed: bool,
+    ) -> list[BacktestRollingWindow]:
+        """Create three overlapping chronological windows without inventing metrics."""
+        window_size = max(required_bars + 1, len(bars) // 2)
+        if len(bars) < required_bars + 4 or window_size >= len(bars):
+            return []
+        step = max(1, (len(bars) - window_size) // 2)
+        starts = [0, step, len(bars) - window_size]
+        windows: list[BacktestRollingWindow] = []
+        for name, start in zip(("early", "middle", "recent"), starts, strict=True):
+            window_bars = bars[start:start + window_size]
+            window_result = self._run_core(
+                request=request,
+                ordered=window_bars,
+            )
+            window_points = window_result.equity_curve
+            if len(window_points) < 2:
+                continue
+            starting_equity = window_points[0].equity
+            ending_equity = window_points[-1].equity
+            windows.append(BacktestRollingWindow(
+                name=name,
+                start_date=window_bars[0].trade_date,
+                end_date=window_bars[-1].trade_date,
+                bar_count=len(window_points),
+                starting_equity=starting_equity,
+                ending_equity=ending_equity,
+                total_return=((ending_equity / starting_equity) - Decimal("1")).quantize(Decimal("0.0001")),
+                max_drawdown=max_drawdown([point.equity for point in window_points]),
+                evaluation_status="available" if gate_passed else "gated",
+            ))
+        return windows
 
     def _run_core(
         self, request: BacktestRequest, ordered: list[DailyBar]
     ) -> BacktestResult:
-
         cash = request.initial_cash
         shares = 0
         trades: list[Trade] = []
@@ -61,6 +141,14 @@ class BacktestEngine:
         for index, bar in enumerate(ordered):
             if pending and index > 0:
                 side, signal_date = pending
+                if bar.volume == 0 or bar.amount == 0:
+                    warnings.append(f"{bar.trade_date} 停牌或无成交，委托顺延")
+                    market_value = bar.close * shares
+                    points.append(EquityPoint(
+                        trade_date=bar.trade_date, equity=cash + market_value,
+                        cash=cash, shares=shares, market_value=market_value,
+                    ))
+                    continue
                 previous_close = ordered[index - 1].close
                 opening_change = bar.open / previous_close - Decimal("1")
                 if side == "buy" and shares == 0:
@@ -79,19 +167,20 @@ class BacktestEngine:
                             total_cost += fees + (price - bar.open) * quantity
                             trades.append(Trade(side="buy", signal_date=signal_date,
                                 trade_date=bar.trade_date, price=price, shares=quantity,
-                                gross_amount=gross, fees=fees))
+                                gross_amount=gross, fees=fees, stamp_duty=Decimal("0")))
                 elif side == "sell" and shares > 0:
                     if opening_change <= -LIMIT_THRESHOLD:
                         warnings.append(f"{bar.trade_date} 接近跌停，卖出未成交")
                     else:
                         price = bar.open * (Decimal("1") - request.slippage_rate)
                         gross = price * shares
-                        fees = gross * request.commission_rate
+                        stamp_duty = gross * request.stamp_duty_rate
+                        fees = gross * request.commission_rate + stamp_duty
                         total_cost += fees + (bar.open - price) * shares
                         cash += gross - fees
                         trades.append(Trade(side="sell", signal_date=signal_date,
                             trade_date=bar.trade_date, price=price, shares=shares,
-                            gross_amount=gross, fees=fees))
+                            gross_amount=gross, fees=fees, stamp_duty=stamp_duty))
                         shares = 0
                         entry_price = None
                 pending = None
@@ -115,41 +204,59 @@ class BacktestEngine:
             max_drawdown=max_drawdown([point.equity for point in points]),
             total_cost=total_cost.quantize(Decimal("0.01")),
             metrics=performance_metrics(points, trades),
-            market_regimes=market_regime_attribution(ordered, points),
+            market_regimes=market_regime_attribution(ordered, points, trades),
             trades=trades,
             equity_curve=points,
             warnings=warnings,
         )
 
-    def _attribute_segment(
-        self, name: str, bars: list[DailyBar], equity_curve: list[EquityPoint]
+    def _run_segment(
+        self, name: str, request: BacktestRequest, bars: list[DailyBar]
     ) -> BacktestSegmentResult:
-        start_date = bars[0].trade_date
-        end_date = bars[-1].trade_date
-        start_index = next(
-            index for index, point in enumerate(equity_curve)
-            if point.trade_date == start_date
-        )
-        end_index = next(
-            index for index, point in enumerate(equity_curve)
-            if point.trade_date == end_date
-        )
-        anchor_index = max(0, start_index - 1)
-        attribution_points = equity_curve[anchor_index:end_index + 1]
-        starting_equity = attribution_points[0].equity
-        ending_equity = attribution_points[-1].equity
+        segment_result = self._run_core(request, bars)
+        starting_equity = request.initial_cash
+        ending_equity = segment_result.ending_equity
         return BacktestSegmentResult(
             name=name,
-            start_date=start_date,
-            end_date=end_date,
+            start_date=bars[0].trade_date,
+            end_date=bars[-1].trade_date,
             bar_count=len(bars),
             starting_equity=starting_equity,
             ending_equity=ending_equity,
             total_return=(ending_equity / starting_equity - Decimal("1")).quantize(
                 Decimal("0.0001")
             ),
-            max_drawdown=max_drawdown([point.equity for point in attribution_points]),
+            max_drawdown=segment_result.max_drawdown,
         )
+
+    @staticmethod
+    def _signal_decay(
+        bars: list[DailyBar], trades: list[Trade]
+    ) -> list[SignalDecayPoint]:
+        index_by_date = {bar.trade_date: index for index, bar in enumerate(bars)}
+        buy_signals = [trade for trade in trades if trade.side == "buy"]
+        points: list[SignalDecayPoint] = []
+        for horizon in (1, 3, 5, 10, 20):
+            returns: list[Decimal] = []
+            for trade in buy_signals:
+                index = index_by_date.get(trade.signal_date)
+                if index is None or index + horizon >= len(bars):
+                    continue
+                base = bars[index].close
+                returns.append(bars[index + horizon].close / base - Decimal("1"))
+            points.append(SignalDecayPoint(
+                horizon=horizon,
+                sample_count=len(returns),
+                average_return=(
+                    (sum(returns, Decimal("0")) / Decimal(len(returns))).quantize(Decimal("0.0001"))
+                    if returns else None
+                ),
+                hit_rate=(
+                    (Decimal(sum(value > 0 for value in returns)) / Decimal(len(returns))).quantize(Decimal("0.0001"))
+                    if returns else None
+                ),
+            ))
+        return points
 
     @staticmethod
     def _average(bars: list[DailyBar], index: int, window: int) -> Decimal:

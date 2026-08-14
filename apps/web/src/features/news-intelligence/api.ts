@@ -10,14 +10,15 @@ async function read<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export async function loadNewsIntelligence(): Promise<NewsIntelligenceBundle> {
-  const [events, interpretations, quality, corrections, briefings] = await Promise.all([
+  const [events, interpretations, unifiedEvents, quality, corrections, briefings] = await Promise.all([
     read<NewsIntelligenceBundle["events"]>("/api/v1/news/events"),
     read<NewsIntelligenceBundle["interpretations"]>("/api/v1/news/interpretations"),
+    read<NonNullable<NewsIntelligenceBundle["unifiedEvents"]>>("/api/v1/news/unified-events"),
     read<NewsIntelligenceBundle["quality"]>("/api/v1/news/quality"),
     read<NewsIntelligenceBundle["corrections"]>("/api/v1/news/corrections"),
     read<NewsIntelligenceBundle["briefings"]>("/api/v1/briefings"),
   ]);
-  return { events, interpretations, quality, corrections, briefings };
+  return { events, interpretations, unifiedEvents, quality, corrections, briefings };
 }
 
 export const syncNews = (symbol?: string | null) => read<Record<string, number>>(

@@ -16,6 +16,7 @@ import type {
 import type { AShareInstrument, InstrumentSearchResponse } from "./types";
 import { friendlyError } from "../../shared/friendlyError";
 import { DailyCacheHistory } from "../../shared/DailyCacheHistory";
+import { createInstrumentDirectory } from "../../shared/instruments/instrumentDirectory";
 
 const WATCHLIST_KEY = "qibao.a_share.watchlist.v1";
 type CandidateTab = "short_term" | "swing" | "watchlist";
@@ -30,6 +31,7 @@ type Props = {
   loadWatchlistScores?: CandidateScoreLoader;
   prepare?: (symbol: string) => Promise<unknown>;
   search: (query: string) => Promise<InstrumentSearchResponse>;
+  loadDirectory?: () => Promise<{ items: AShareInstrument[] }>;
   loadCandidateSentiments?: CandidateSentimentLoader;
   refreshCandidateSentiments?: CandidateSentimentLoader;
   onCandidateSentiments?: (batch: CandidateSentimentBatch | null) => void;
@@ -104,13 +106,14 @@ function matchesSentimentBatch(
   return batch.candidate_input_hash === board.input_snapshot_hash;
 }
 
-export function StockSelector({ loadCandidates, loadWatchlistScores, prepare, search, loadCandidateSentiments, refreshCandidateSentiments, onCandidateSentiments, pollIntervalMs = 30_000 }: Props) {
+export function StockSelector({ loadCandidates, loadWatchlistScores, prepare, search, loadDirectory, loadCandidateSentiments, refreshCandidateSentiments, onCandidateSentiments, pollIntervalMs = 30_000 }: Props) {
   const selection = useSelectedInstrument();
   const [board, setBoard] = useState<CandidateBoard | null>(null);
   const [candidateState, setCandidateState] = useState<"loading" | "ready" | "error">("loading");
   const [tab, setTab] = useState<CandidateTab>("watchlist");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<AShareInstrument[]>([]);
+  const [directoryItems, setDirectoryItems] = useState<AShareInstrument[]>([]);
   const [searchState, setSearchState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [searchSourceStatus, setSearchSourceStatus] = useState<"ready" | "unavailable">("ready");
   const [searchError, setSearchError] = useState("");
@@ -139,6 +142,13 @@ export function StockSelector({ loadCandidates, loadWatchlistScores, prepare, se
   const sentimentCallbackRef = useRef(onCandidateSentiments);
   sentimentCallbackRef.current = onCandidateSentiments;
   const tabRefs = useRef<Record<CandidateTab, HTMLButtonElement | null>>({ short_term: null, swing: null, watchlist: null });
+  const localDirectory = useMemo(() => createInstrumentDirectory(directoryItems), [directoryItems]);
+
+  useEffect(() => {
+    let active = true;
+    if (loadDirectory) void loadDirectory().then((value) => { if (active) setDirectoryItems(value.items); }).catch(() => undefined);
+    return () => { active = false; };
+  }, [loadDirectory]);
 
   const refreshCandidates = useCallback(async (initial = false) => {
     const request = ++candidateRequest.current;
@@ -308,10 +318,15 @@ export function StockSelector({ loadCandidates, loadWatchlistScores, prepare, se
     const request = ++searchRequest.current;
     const normalized = query.trim();
     if (!normalized) { setResults([]); setSearchSourceStatus("ready"); setSearchState("idle"); return; }
+    const localResults = localDirectory.search(normalized);
+    if (localResults.length) {
+      setResults(localResults); setSearchSourceStatus("ready"); setSearchState("ready");
+      return;
+    }
     setSearchState("loading"); setSearchError("");
     const timer = window.setTimeout(() => executeSearch(normalized, request), /^\d{6}$/.test(normalized) ? 0 : 250);
     return () => window.clearTimeout(timer);
-  }, [executeSearch, query]);
+  }, [executeSearch, localDirectory, query]);
 
   const candidateEntries = useMemo(() => board && tab !== "watchlist" ? board[tab] : [], [board, tab]);
   const watchlistScoreBySymbol = useMemo(() => new Map(watchlistScores?.items.map((item) => [item.symbol, item]) ?? []), [watchlistScores]);

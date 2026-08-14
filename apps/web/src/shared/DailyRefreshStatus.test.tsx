@@ -4,6 +4,45 @@ import { describe, expect, it } from "vitest";
 import { DailyRefreshStatus } from "./DailyRefreshStatus";
 
 describe("DailyRefreshStatus", () => {
+  it("labels estimated progress so users know the backend is still preparing data", () => {
+    render(<DailyRefreshStatus
+      label="公司研究"
+      loading
+      progress={{
+        percent: 18,
+        stage: "connecting",
+        mode: "estimated",
+        elapsedMs: 3_400,
+        detail: "本地服务正在准备公司研究 · 阶段估算",
+      }}
+    />);
+
+    const status = screen.getByRole("status", { name: "公司研究数据刷新状态" });
+    expect(status).toHaveTextContent("阶段估算");
+    expect(status).toHaveTextContent("已等待 3.4 秒");
+    expect(screen.getByRole("progressbar", { name: "公司研究最新数据加载进度" })).toHaveAttribute("data-progress-mode", "estimated");
+  });
+
+  it("labels measured byte progress after the response starts arriving", () => {
+    render(<DailyRefreshStatus
+      label="个股观察"
+      loading
+      progress={{
+        percent: 62,
+        stage: "receiving",
+        mode: "measured",
+        elapsedMs: 4_200,
+        receivedBytes: 4096,
+        totalBytes: 8192,
+        detail: "已接收 4096 / 8192 字节",
+      }}
+    />);
+
+    const status = screen.getByRole("status", { name: "个股观察数据刷新状态" });
+    expect(status).toHaveTextContent("真实字节");
+    expect(status).toHaveTextContent("已接收 4096 / 8192 字节");
+  });
+
   it("keeps a visible live-monitoring state after the latest data finishes loading", () => {
     render(<DailyRefreshStatus
       label="个股观察"

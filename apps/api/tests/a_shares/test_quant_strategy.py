@@ -5,7 +5,12 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
-from qibao_api.a_shares.models import CandidateBoard, CandidateEntry, FactorSnapshot
+from qibao_api.a_shares.models import (
+    CandidateBoard,
+    CandidateEntry,
+    CandidateFunnel,
+    FactorSnapshot,
+)
 from qibao_api.a_shares.quant_strategy import (
     ArchivedTriggerEvidenceSource,
     QuantStrategyService,
@@ -169,6 +174,10 @@ def test_strategy_formula_and_missing_trigger_gate_are_explicit() -> None:
     assert result.regime.regime == "情绪主升"
     assert result.metrics.net_positive_ratio is None
     assert candidate.rr_score == Decimal("0")
+    assert len(candidate.signal_votes) == 5
+    assert {item.signal for item in candidate.signal_votes} == {"市场风格", "个股质量", "盘中触发", "盈亏比", "风险约束"}
+    assert candidate.vote_consensus == Decimal("0.20")
+    assert candidate.vote_position == Decimal("0")
     assert "缺少明确止损/目标价，盈亏比分不计分" in candidate.risk_flags
     assert {item.name for item in result.strategy_models} == {
         "0轴低吸模型", "恐慌低吸模型", "权重容量低吸模型",
@@ -179,6 +188,11 @@ def test_strategy_formula_and_missing_trigger_gate_are_explicit() -> None:
     assert result.data_age_seconds == 0
     assert result.refresh_mode == "live"
     assert result.next_refresh_at == NOW + timedelta(seconds=5)
+    evidence = {item.field_path: item for item in result.field_evidence}
+    assert evidence["regime.emotion_score"].value == Decimal("76")
+    assert evidence["candidates.600001.strategy_score"].value == candidate.strategy_score
+    assert evidence["candidates.600001.strategy_score"].formula == "a-share-short-strategy-v2.0"
+    assert evidence["candidates.600001.strategy_score"].coverage_percent == candidate.evidence_coverage_percent
 
 
 def test_strategy_marks_old_market_snapshot_stale_without_changing_values() -> None:
@@ -236,6 +250,75 @@ def test_complete_real_trigger_evidence_can_reach_alert() -> None:
     assert candidate.status == "alert"
     assert candidate.missing_evidence == ()
     assert "intraday-poll" in candidate.sources
+    assert candidate.alert_gate.eligible is True
+    assert all(check.passed for check in candidate.alert_gate.checks)
+
+
+def test_hard_risk_flag_blocks_alert_but_keeps_confirmed_candidate_on_watch() -> None:
+    risky_entry = factor("600001", Decimal("90")).model_copy(update={
+        "factor_snapshot": factor("600001", Decimal("90")).factor_snapshot.model_copy(update={
+            "volatility_20d": Decimal("0.06"),
+        }),
+    })
+    risky_board = board().model_copy(update={"short_term": [risky_entry]})
+
+    result = build_quant_strategy_dashboard(
+        overview(),
+        risky_board,
+        names={"600001": "样本股份"},
+        trigger_evidence={
+            "600001": TriggerEvidence(
+                vwap_support=True,
+                three_minute_return=Decimal("0.01"),
+                net_large_flow_positive=True,
+                close_position_rising=True,
+                sources=("intraday-poll",),
+            )
+        },
+    )
+
+    candidate = result.candidates[0]
+    assert candidate.strategy_score >= Decimal("80")
+    assert candidate.trigger_confirmed is True
+    assert candidate.status == "watch"
+    assert candidate.alert_gate.eligible is False
+    assert "存在高波动或深回撤硬风险" in candidate.alert_gate.blockers
+
+
+def test_strategy_exposes_full_candidate_funnel_and_trigger_result() -> None:
+    input_board = board().model_copy(update={
+        "funnel": CandidateFunnel(
+            history_ready_size=4700,
+            factor_ready_size=4650,
+            liquidity_ready_size=4200,
+            ranked_size=1,
+            exclusion_reasons={"insufficient_history": 300, "insufficient_liquidity": 450},
+            completeness="partial",
+            blockers=("incomplete_daily_history",),
+        )
+    })
+    result = build_quant_strategy_dashboard(
+        overview(),
+        input_board,
+        names={"600001": "样本股份"},
+        trigger_evidence={
+            "600001": TriggerEvidence(
+                vwap_support=True,
+                three_minute_return=Decimal("0.01"),
+                net_large_flow_positive=True,
+                close_position_rising=True,
+            )
+        },
+    )
+
+    assert [stage.key for stage in result.candidate_funnel.stages] == [
+        "universe", "history_ready", "factor_ready", "liquidity_ready",
+        "ranked", "trigger_confirmed", "final_candidates",
+    ]
+    counts = [stage.count for stage in result.candidate_funnel.stages]
+    assert counts == [5000, 4700, 4650, 4200, 1, 1, 1]
+    assert result.candidate_funnel.exclusion_reasons["insufficient_history"] == 300
+    assert result.candidate_funnel.completeness == "partial"
 
 
 def test_archived_trigger_source_uses_real_ticks_and_fund_flow() -> None:
@@ -352,6 +435,30 @@ def test_service_reuses_candidate_evidence_within_refresh_window() -> None:
     assert third.candidate_scan_age_seconds == 0
 
 
+def test_service_registers_quant_factor_compute_and_cache_reuse() -> None:
+    calls = []
+
+    class Registry:
+        def record(self, kind, **payload):
+            calls.append((kind, payload))
+
+    service = QuantStrategyService(
+        SimpleNamespace(current=lambda now: overview()),
+        SimpleNamespace(candidates=lambda as_of, limit: board()),
+        SimpleNamespace(resolve=lambda symbol: None),
+        cache_seconds=5,
+        shared_snapshot_registry=Registry(),
+    )
+
+    service.current(NOW)
+    service.current(NOW + timedelta(seconds=4))
+
+    assert [kind for kind, _payload in calls] == ["quant_factors", "quant_factors"]
+    assert calls[0][1]["reused"] is False
+    assert calls[1][1]["reused"] is True
+    assert calls[0][1]["trade_date"] == date(2026, 7, 31)
+
+
 def test_service_keeps_daily_candidate_scan_cached_while_strategy_refreshes() -> None:
     calls = 0
 
@@ -374,6 +481,71 @@ def test_service_keeps_daily_candidate_scan_cached_while_strategy_refreshes() ->
     assert second.candidate_scan_cached is True
     assert second.candidate_scan_at == NOW
     assert second.candidate_scan_age_seconds == 6
+
+
+def test_service_persists_ready_strategy_snapshot() -> None:
+    saved = []
+
+    class Store:
+        def load(self, **_kwargs):
+            return None
+
+        def save(self, dashboard):
+            saved.append(dashboard)
+
+    service = QuantStrategyService(
+        SimpleNamespace(current=lambda now: overview()),
+        SimpleNamespace(candidates=lambda as_of, limit: board()),
+        SimpleNamespace(resolve=lambda symbol: None),
+        snapshot_store=Store(),
+    )
+
+    result = service.current(NOW)
+
+    assert result.refresh_state == "ready"
+    assert result.snapshot_source == "computed"
+    assert len(saved) == 1
+    assert saved[0] == result
+
+
+def test_service_serves_disk_snapshot_before_first_overview_refresh(tmp_path) -> None:
+    from qibao_api.a_shares.quant_strategy_snapshot import QuantStrategySnapshotStore
+    import threading
+
+    store = QuantStrategySnapshotStore(tmp_path / "quant-strategy.json")
+    writer = QuantStrategyService(
+        SimpleNamespace(current=lambda now: overview()),
+        SimpleNamespace(candidates=lambda as_of, limit: board()),
+        SimpleNamespace(resolve=lambda symbol: None),
+        snapshot_store=store,
+    )
+    stored = writer.current(NOW)
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def load_overview(_now):
+        started.set()
+        release.wait(timeout=2)
+        return overview()
+
+    reader = QuantStrategyService(
+        SimpleNamespace(current=load_overview),
+        SimpleNamespace(candidates=lambda as_of, limit: board()),
+        SimpleNamespace(resolve=lambda symbol: None),
+        defer_initial_overview=True,
+        snapshot_store=store,
+    )
+
+    first = reader.current(NOW + timedelta(seconds=1))
+
+    assert started.wait(timeout=1)
+    assert first.refresh_state == "pending"
+    assert first.snapshot_source == "disk"
+    assert first.candidates == stored.candidates
+    assert "market_overview_pending" in first.missing_data
+    release.set()
+    reader.close()
 
 
 def test_service_can_defer_first_candidate_scan_without_blocking_request() -> None:
@@ -408,6 +580,288 @@ def test_service_can_defer_first_candidate_scan_without_blocking_request() -> No
 
     assert ready.candidate_scan_state == "ready"
     assert ready.candidates[0].symbol == "600001"
+    service.close()
+
+
+def test_disk_snapshot_keeps_candidates_during_deferred_candidate_refresh(tmp_path) -> None:
+    import threading
+
+    from qibao_api.a_shares.quant_strategy_snapshot import QuantStrategySnapshotStore
+
+    store = QuantStrategySnapshotStore(tmp_path / "quant-strategy.json")
+    writer = QuantStrategyService(
+        SimpleNamespace(current=lambda now: overview()),
+        SimpleNamespace(candidates=lambda as_of, limit: board()),
+        SimpleNamespace(resolve=lambda symbol: None),
+        snapshot_store=store,
+    )
+    stored = writer.current(NOW)
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def load_board(_as_of, _limit):
+        started.set()
+        release.wait(timeout=2)
+        return board()
+
+    reader = QuantStrategyService(
+        SimpleNamespace(current=lambda now: overview()),
+        SimpleNamespace(candidates=load_board),
+        SimpleNamespace(resolve=lambda symbol: None),
+        defer_initial_scan=True,
+        snapshot_store=store,
+    )
+
+    pending = reader.current(NOW + timedelta(seconds=1))
+
+    assert started.wait(timeout=1)
+    assert pending.refresh_state == "pending"
+    assert pending.snapshot_source == "disk"
+    assert pending.candidates == stored.candidates
+    assert "candidate_scan_pending" in pending.missing_data
+
+    release.set()
+    reader.close()
+
+
+def test_insufficient_ready_scan_keeps_last_real_snapshot(tmp_path) -> None:
+    import threading
+    import time
+
+    from qibao_api.a_shares.quant_strategy_snapshot import QuantStrategySnapshotStore
+
+    store = QuantStrategySnapshotStore(tmp_path / "quant-strategy.json")
+    writer = QuantStrategyService(
+        SimpleNamespace(current=lambda now: overview()),
+        SimpleNamespace(candidates=lambda as_of, limit: board()),
+        SimpleNamespace(resolve=lambda symbol: None),
+        snapshot_store=store,
+    )
+    stored = writer.current(NOW)
+    writer.close()
+
+    started = threading.Event()
+
+    def load_empty_board(_as_of, _limit):
+        started.set()
+        return CandidateBoard(
+            as_of=date(2026, 7, 31),
+            universe_size=5242,
+            eligible_size=0,
+            latest_trade_date=None,
+            sources=(),
+            short_term=[],
+            swing=[],
+        )
+
+    reader = QuantStrategyService(
+        SimpleNamespace(current=lambda now: overview()),
+        SimpleNamespace(candidates=load_empty_board),
+        SimpleNamespace(resolve=lambda symbol: None),
+        defer_initial_scan=True,
+        snapshot_store=store,
+    )
+
+    pending = reader.current(NOW + timedelta(seconds=1))
+    assert started.wait(timeout=1)
+    assert pending.candidates == stored.candidates
+    for _ in range(20):
+        if reader.candidate_scan_ready(NOW + timedelta(seconds=1)):
+            break
+        time.sleep(0.01)
+
+    failed = reader.current(NOW + timedelta(seconds=2))
+
+    assert failed.candidates == stored.candidates
+    assert failed.snapshot_source == "disk"
+    assert failed.refresh_state == "failed"
+    assert failed.candidate_scan_state == "failed"
+    assert failed.candidate_scan_error == "本地候选扫描失败，请检查日线覆盖和数据源状态"
+    assert "candidate_scan_insufficient_history" in failed.missing_data
+    retained = reader.current(NOW + timedelta(seconds=3))
+    assert retained.candidates == stored.candidates
+    assert retained.refresh_state == "failed"
+    assert retained.candidate_scan_state == "failed"
+    reader.close()
+
+
+def test_deferred_candidate_refresh_keeps_last_ready_board() -> None:
+    import threading
+    import time
+
+    calls = 0
+    first_release = threading.Event()
+    second_started = threading.Event()
+    second_release = threading.Event()
+
+    def load_board(_as_of, _limit):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            first_release.wait(timeout=2)
+        else:
+            second_started.set()
+            second_release.wait(timeout=2)
+        return board()
+
+    service = QuantStrategyService(
+        SimpleNamespace(current=lambda now: overview()),
+        SimpleNamespace(candidates=load_board),
+        SimpleNamespace(resolve=lambda symbol: None),
+        cache_seconds=1,
+        defer_initial_scan=True,
+    )
+
+    initial = service.current(NOW)
+    assert initial.candidates == ()
+    first_release.set()
+    for _ in range(20):
+        if service.candidate_scan_ready(NOW):
+            break
+        time.sleep(0.01)
+    ready = service.current(NOW + timedelta(milliseconds=100))
+    assert ready.candidates[0].symbol == "600001"
+
+    refreshing = service.current(NOW + timedelta(seconds=2))
+    assert second_started.wait(timeout=1)
+    assert refreshing.candidate_scan_state == "pending"
+    assert refreshing.candidates[0].symbol == "600001"
+    assert "candidate_scan_pending" in refreshing.missing_data
+
+    second_release.set()
+    service.close()
+
+
+def test_service_can_defer_slow_market_overview_without_blocking_request() -> None:
+    import threading
+    import time
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def load_overview(_now):
+        started.set()
+        release.wait(timeout=2)
+        return overview()
+
+    service = QuantStrategyService(
+        SimpleNamespace(current=load_overview),
+        SimpleNamespace(candidates=lambda as_of, limit: board()),
+        SimpleNamespace(resolve=lambda symbol: None),
+        defer_initial_overview=True,
+    )
+
+    started_at = time.monotonic()
+    pending = service.current(NOW)
+    elapsed = time.monotonic() - started_at
+
+    assert elapsed < 0.2
+    assert started.wait(timeout=1)
+    assert pending.status == "unavailable"
+    assert pending.candidates == ()
+    assert "market_overview_pending" in pending.missing_data
+
+    release.set()
+    for _ in range(20):
+        if service.market_overview_ready():
+            break
+        time.sleep(0.01)
+    ready = service.current(NOW + timedelta(seconds=1))
+    assert ready.regime.regime == "情绪主升"
+    service.close()
+
+
+def test_deferred_market_overview_keeps_last_ready_snapshot_during_refresh() -> None:
+    import threading
+    import time
+
+    calls = 0
+    first_release = threading.Event()
+    second_started = threading.Event()
+    second_release = threading.Event()
+
+    def load_overview(_now):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            first_release.wait(timeout=2)
+        else:
+            second_started.set()
+            second_release.wait(timeout=2)
+        return overview()
+
+    service = QuantStrategyService(
+        SimpleNamespace(current=load_overview),
+        SimpleNamespace(candidates=lambda as_of, limit: board()),
+        SimpleNamespace(resolve=lambda symbol: None),
+        defer_initial_overview=True,
+    )
+
+    initial = service.current(NOW)
+    assert initial.status == "unavailable"
+    first_release.set()
+    for _ in range(20):
+        if service.market_overview_ready():
+            break
+        time.sleep(0.01)
+    ready = service.current(NOW + timedelta(seconds=1))
+    assert ready.regime.regime == "情绪主升"
+
+    pending = service.current(NOW + timedelta(seconds=2))
+    assert second_started.wait(timeout=1)
+    assert pending.regime.regime == ready.regime.regime
+    assert "market_overview_pending" in pending.missing_data
+
+    second_release.set()
+    for _ in range(20):
+        if service.market_overview_ready():
+            break
+        time.sleep(0.01)
+    refreshed = service.current(NOW + timedelta(seconds=3))
+    assert refreshed.regime.regime == "情绪主升"
+    service.close()
+
+
+def test_service_can_defer_slow_trigger_evidence_without_blocking_request() -> None:
+    import threading
+    import time
+
+    started = threading.Event()
+    release = threading.Event()
+
+    class SlowEvidenceSource:
+        def get(self, _symbol, _trading_date, _cutoff, _stock):
+            started.set()
+            release.wait(timeout=2)
+            return TriggerEvidence(vwap_support=True, sources=("tick-archive",))
+
+    service = QuantStrategyService(
+        SimpleNamespace(current=lambda now: overview()),
+        SimpleNamespace(candidates=lambda as_of, limit: board()),
+        SimpleNamespace(resolve=lambda symbol: None),
+        trigger_evidence_source=SlowEvidenceSource(),
+        defer_trigger_evidence=True,
+    )
+
+    started_at = time.monotonic()
+    pending = service.current(NOW)
+    elapsed = time.monotonic() - started_at
+
+    assert elapsed < 0.2
+    assert started.wait(timeout=1)
+    assert pending.trigger_evidence_at is None
+    assert "trigger_evidence_pending" in pending.missing_data
+
+    release.set()
+    for _ in range(20):
+        if service.trigger_evidence_ready(NOW):
+            break
+        time.sleep(0.01)
+    ready = service.current(NOW + timedelta(seconds=1))
+    assert ready.trigger_evidence_at == NOW + timedelta(seconds=1)
+    assert "trigger_evidence_pending" not in ready.missing_data
+    assert "tick-archive" in ready.candidates[0].sources
     service.close()
 
 

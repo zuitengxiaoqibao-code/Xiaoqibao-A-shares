@@ -31,6 +31,21 @@ describe("workspace insights", () => {
     expect(new Set(signatures)).toHaveLength(labels.length);
   });
 
+  it("attaches a truthful shared contract to every workspace metric", () => {
+    const model = buildWorkspaceMarketModel(data);
+    featureRows.flat().forEach((feature) => {
+      buildWorkspaceInsights(feature, data, model).forEach((insight) => {
+        expect(insight.contract).toBeDefined();
+        expect(insight.contract?.metricId).toBe(`market-overview.${insight.key}`);
+        expect(insight.contract?.source).toBeTruthy();
+        expect(insight.contract?.loadedMemberCount).toBe(insight.contract?.members.length);
+        if (insight.contract?.drilldownKind === "aggregate_only") {
+          expect(insight.contract.unavailableReason).toBeTruthy();
+        }
+      });
+    });
+  });
+
   it("uses real seat records for seat workspaces and never amount proxies", () => {
     const model = buildWorkspaceMarketModel(data);
     const tracking = buildWorkspaceInsights("游资追踪", data, model);
@@ -81,6 +96,79 @@ describe("workspace insights", () => {
     expect(coverage?.quality).toBe("unavailable");
     expect(coverage?.value).toBe("未接入");
     expect(coverage?.value).not.toBe("0.0%");
+  });
+
+  it("reports verified hundred-day highs and previous-limit feedback when review rows exist", () => {
+    const historical = {
+      ...data,
+      review: {
+        ...data.review!,
+        new_high_100: [{
+          symbol: "600001", name: "样本股", trade_date: "2026-07-29",
+          category: "new_high_100", close: "11", change_percent: "3.1",
+          amount_yi: "30", source: "market-db", board_count: null,
+          limit_statistics: null, prior_close: null, prior_change_percent: null,
+          turnover_rate: null, seal_amount_yi: null, failed_limit_count: null,
+          first_seal_time: null, volume_multiple: null, reference_high: "10.8",
+          window_days: 100, range_position_percent: null,
+        }],
+        previous_limit_up: [{
+          symbol: "600002", name: "反馈股", trade_date: "2026-07-29",
+          category: "previous_limit_feedback", close: "9.8", change_percent: "-2",
+          amount_yi: "12", source: "market-db", board_count: null,
+          limit_statistics: null, prior_close: "10", prior_change_percent: "10",
+          turnover_rate: null, seal_amount_yi: null, failed_limit_count: null,
+          first_seal_time: null, volume_multiple: null, reference_high: null,
+          window_days: 2, range_position_percent: null,
+        }],
+      },
+    } as unknown as MarketOverviewResponse;
+
+    const model = buildWorkspaceMarketModel(historical);
+    expect(buildWorkspaceInsights("百日新高", historical, model).find((item) => item.key === "history-new-high"))
+      .toMatchObject({ quality: "ready", value: "1" });
+    expect(buildWorkspaceInsights("昨涨停", historical, model).find((item) => item.key === "history-previous-limit"))
+      .toMatchObject({ quality: "ready", value: "1" });
+  });
+
+  it("reports a verified zero when the historical screen completed with no matches", () => {
+    const emptyVerifiedResult = {
+      ...data,
+      review: {
+        ...data.review!,
+        source: "market-db",
+        quality: "ready",
+        new_high_100: [],
+        previous_limit_up: [],
+        warnings: [],
+      },
+    } as unknown as MarketOverviewResponse;
+
+    const model = buildWorkspaceMarketModel(emptyVerifiedResult);
+    expect(buildWorkspaceInsights("百日新高", emptyVerifiedResult, model).find((item) => item.key === "history-new-high"))
+      .toMatchObject({ quality: "ready", value: "0" });
+    expect(buildWorkspaceInsights("昨涨停", emptyVerifiedResult, model).find((item) => item.key === "history-previous-limit"))
+      .toMatchObject({ quality: "ready", value: "0" });
+  });
+
+  it("keeps historical screens unavailable when the review source is unavailable", () => {
+    const unavailableReview = {
+      ...data,
+      review: {
+        ...data.review!,
+        source: "unavailable",
+        quality: "unavailable",
+        new_high_100: [],
+        previous_limit_up: [],
+        warnings: ["tdx_daily_history_unavailable"],
+      },
+    } as unknown as MarketOverviewResponse;
+
+    const model = buildWorkspaceMarketModel(unavailableReview);
+    expect(buildWorkspaceInsights("百日新高", unavailableReview, model).find((item) => item.key === "history-new-high"))
+      .toMatchObject({ quality: "unavailable", value: "未接入" });
+    expect(buildWorkspaceInsights("昨涨停", unavailableReview, model).find((item) => item.key === "history-previous-limit"))
+      .toMatchObject({ quality: "unavailable", value: "未接入" });
   });
 
   it("does not aggregate missing seat amounts as verified zero", () => {

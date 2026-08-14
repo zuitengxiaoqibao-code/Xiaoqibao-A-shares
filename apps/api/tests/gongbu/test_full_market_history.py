@@ -4,7 +4,7 @@ from decimal import Decimal
 from qibao_api.contracts.bars import DailyBar
 from qibao_api.gongbu.full_market_history import FullMarketHistoryService
 from qibao_api.gongbu.history_sync_repository import HistorySyncRepository
-from qibao_api.storage.bar_repository import BarCoverage
+from qibao_api.storage.bar_repository import BarCoverage, BarCoverageAggregate
 
 
 TARGET = date(2026, 7, 24)
@@ -51,6 +51,25 @@ class Bars:
             )
             for symbol in symbols
         }
+
+    def coverage_aggregate(self, symbols, target_date, *, minimum_bars, backfill_bars):
+        values = self.coverage(symbols, target_date)
+        latest_dates = [item.latest_trade_date for item in values.values() if item.latest_trade_date]
+        dominant = max(set(latest_dates), key=latest_dates.count) if latest_dates else None
+        latest = max(latest_dates) if latest_dates else None
+        return BarCoverageAggregate(
+            universe_count=len(symbols),
+            dominant_trade_date=dominant,
+            dominant_date_count=sum(item == dominant for item in latest_dates),
+            latest_available_trade_date=latest,
+            latest_available_trade_date_count=sum(item == latest for item in latest_dates),
+            history_ready_count=sum(
+                item.bar_count >= minimum_bars for item in values.values()
+            ),
+            backfill_complete_count=sum(
+                item.bar_count >= backfill_bars for item in values.values()
+            ),
+        )
 
     def append_missing(self, values):
         self.writes.extend(values)
@@ -181,6 +200,55 @@ def test_coverage_reports_real_universe_eligibility_and_target_freshness(tmp_pat
     assert summary.backfill_complete_count == 1
     assert summary.eligible_count == 2
     assert summary.target_date_count == 2
+
+
+def test_repair_center_classifies_real_history_gaps(tmp_path) -> None:
+    value = service(
+        tmp_path,
+        symbols=("600001", "600002", "600003", "600004"),
+        coverage={
+            "600001": (300, TARGET),
+            "600002": (0, None),
+            "600003": (120, TARGET),
+            "600004": (280, TARGET - timedelta(days=1)),
+        },
+        tdx={},
+        baidu={},
+    )
+
+    result = value.repair_center(TARGET, limit=10)
+
+    assert result.coverage.dominant_trade_date == TARGET
+    assert result.total_gap_count == 3
+    assert [(item.symbol, item.gap_kind) for item in result.gaps] == [
+        ("600002", "missing_history"),
+        ("600003", "insufficient_history"),
+        ("600004", "behind_dominant_date"),
+    ]
+
+
+def test_quality_report_uses_local_date_grid_and_flags_real_gaps(tmp_path) -> None:
+    value = service(
+        tmp_path,
+        symbols=("600001", "600002"),
+        coverage={"600001": (3, TARGET), "600002": (2, TARGET)},
+        tdx=Source({}),
+        baidu=Source({}),
+    )
+    value.bar_repository.trade_dates = lambda limit=1000: [
+        TARGET, TARGET - timedelta(days=1), TARGET - timedelta(days=2)
+    ]
+    value.bar_repository.latest_many = lambda symbols, limit, as_of: {
+        "600001": bars("600001", 3),
+        "600002": [bars("600002", 1)[0], bars("600002", 1)[0]],
+    }
+
+    report = value.quality_report(limit=3)
+
+    assert report.source == "market.duckdb/daily_bars"
+    assert report.expected_sessions == 3
+    assert report.status == "partial"
+    assert report.gap_count == 1
 
 
 def test_shutdown_request_leaves_pending_work_restartable(tmp_path) -> None:

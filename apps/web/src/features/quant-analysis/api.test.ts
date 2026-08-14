@@ -16,6 +16,7 @@ describe("loadKronosForecast", () => {
 
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/a-shares/first-limit-up/quant-forecast?symbol=600000&horizon=10&as_of=2026-07-24",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
 
@@ -38,7 +39,10 @@ describe("loadQuantStrategy", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(loadQuantStrategy(8)).resolves.toEqual(payload);
-    expect(fetchMock).toHaveBeenCalledWith("/api/v1/a-shares/quant-strategy?limit=8");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/a-shares/quant-strategy?limit=8",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 });
 
@@ -53,6 +57,7 @@ describe("loadTdxFormula", () => {
 
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/tdx/local/formula?formula_name=formula_process_mul_zb&stock_codes=600000&stock_codes=000001",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
 });

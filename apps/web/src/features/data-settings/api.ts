@@ -3,10 +3,14 @@ import type {
   AISettingsView,
   AShareUniverseSyncResult,
   HistoryCoverageSummary,
+  HistoryRepairCenter,
+  HistoryRepairAudit,
   HistorySyncJob,
   LocalSourceSettings,
   LocalSourceSettingsView,
   SourceHealthResponse,
+  TdxImportJob,
+  TdxImportScan,
 } from "./types";
 
 async function settingsRequest(path: string, init?: RequestInit): Promise<AISettingsView> {
@@ -82,6 +86,18 @@ export const loadHistoryCoverage = async (): Promise<HistoryCoverageSummary> => 
   return response.json() as Promise<HistoryCoverageSummary>;
 };
 
+export const loadHistoryRepairCenter = async (): Promise<HistoryRepairCenter> => {
+  const response = await fetch("/api/v1/a-shares/history-sync/repair-center?limit=100");
+  if (!response.ok) throw new Error(`日线修复中心读取失败 (${response.status})`);
+  return response.json() as Promise<HistoryRepairCenter>;
+};
+
+export const loadHistoryRepairAudits = async (): Promise<HistoryRepairAudit[]> => {
+  const response = await fetch("/api/v1/a-shares/history-sync/repair-audits?limit=20");
+  if (!response.ok) throw new Error(`日线修复审计读取失败 (${response.status})`);
+  return response.json() as Promise<HistoryRepairAudit[]>;
+};
+
 export const startHistoryBackfill = () => historySyncRequest(
   "/api/v1/a-shares/history-sync/backfill",
   { method: "POST" },
@@ -93,4 +109,29 @@ export const pauseHistorySync = (jobId: string) => historySyncRequest(
 export const resumeHistorySync = (jobId: string) => historySyncRequest(
   `/api/v1/a-shares/history-sync/${encodeURIComponent(jobId)}/resume`,
   { method: "POST" },
+);
+
+async function tdxImportRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(path, init);
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null) as { detail?: string } | null;
+    throw new Error(payload?.detail ?? `通达信本地导入失败 (${response.status})`);
+  }
+  return response.json() as Promise<T>;
+}
+
+export const scanTdxImport = (paths: string[] = []) => tdxImportRequest<TdxImportScan>(
+  "/api/v1/a-shares/tdx-import/scan",
+  { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ paths }) },
+);
+export const startTdxImport = (paths: string[] = []) => tdxImportRequest<TdxImportJob>(
+  "/api/v1/a-shares/tdx-import/start",
+  { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ paths }) },
+);
+export const loadTdxImport = () => tdxImportRequest<TdxImportJob | null>("/api/v1/a-shares/tdx-import/current");
+export const pauseTdxImport = (jobId: string) => tdxImportRequest<TdxImportJob>(
+  `/api/v1/a-shares/tdx-import/${encodeURIComponent(jobId)}/pause`, { method: "POST" },
+);
+export const resumeTdxImport = (jobId: string) => tdxImportRequest<TdxImportJob>(
+  `/api/v1/a-shares/tdx-import/${encodeURIComponent(jobId)}/resume`, { method: "POST" },
 );

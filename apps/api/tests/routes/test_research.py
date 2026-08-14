@@ -568,6 +568,54 @@ async def test_health_check_does_not_wait_for_runtime_write() -> None:
     assert response.status_code == 200
 
 
+@pytest.mark.asyncio
+async def test_operations_read_models_do_not_wait_for_runtime_write() -> None:
+    application = FastAPI()
+    application.middleware("http")(serialize_runtime_access)
+    application.state.write_gate = asyncio.Lock()
+
+    @application.get("/api/v1/operations/source-health")
+    async def source_health():
+        return {"status": "ready"}
+
+    await application.state.write_gate.acquire()
+    transport = httpx.ASGITransport(app=application)
+    try:
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await asyncio.wait_for(
+                client.get("/api/v1/operations/source-health"),
+                timeout=0.2,
+            )
+    finally:
+        application.state.write_gate.release()
+
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_all_read_only_requests_do_not_wait_for_runtime_write() -> None:
+    application = FastAPI()
+    application.middleware("http")(serialize_runtime_access)
+    application.state.write_gate = asyncio.Lock()
+
+    @application.get("/api/v1/a-shares/quant-strategy")
+    async def quant_strategy():
+        return {"status": "ready"}
+
+    await application.state.write_gate.acquire()
+    transport = httpx.ASGITransport(app=application)
+    try:
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await asyncio.wait_for(
+                client.get("/api/v1/a-shares/quant-strategy"),
+                timeout=0.2,
+            )
+    finally:
+        application.state.write_gate.release()
+
+    assert response.status_code == 200
+
+
 SEARCH_NOW = datetime(2026, 7, 15, 2, 0, tzinfo=timezone.utc)
 
 
@@ -746,6 +794,15 @@ def test_search_returns_only_a_shares_in_rank_order() -> None:
     assert all(item["asset"] == "a_share" for item in response.json()["items"])
     assert response.json()["query"] == "银行"
     assert response.json()["server_time"] == "2026-07-15T02:00:00Z"
+
+
+def test_directory_snapshot_returns_local_identity_read_model() -> None:
+    response = search_client().get("/api/v1/a-shares/directory")
+
+    assert response.status_code == 200
+    assert response.json()["count"] == 2
+    assert [item["symbol"] for item in response.json()["items"]] == ["000001", "600000"]
+    assert all(item["name"] for item in response.json()["items"])
 
 
 def test_search_returns_empty_items_without_guessing() -> None:

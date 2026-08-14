@@ -1,13 +1,16 @@
 from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
+from collections import Counter
 from typing import Callable
 
 from qibao_api.contracts.market_review import (
     MarketIntervalReviewSnapshot,
     MarketIntervalReviewStock,
+    MarketDataWatermark,
     MarketReviewSnapshot,
     MarketReviewStock,
 )
+from qibao_api.contracts.evidence_ledger import EvidenceLedgerEntry
 from qibao_api.gongbu.tdx_local_daily import TdxLocalDailyBar
 
 
@@ -78,17 +81,37 @@ def _base_stock(
     )
 
 
+def _review_trade_dates(
+    histories: dict[str, tuple[TdxLocalDailyBar, ...]],
+) -> tuple[date | None, date | None, int, Decimal | None]:
+    latest_by_symbol = {
+        symbol: bars[-1].trade_date
+        for symbol, bars in histories.items()
+        if symbol not in BENCHMARK_SYMBOLS and bars
+    }
+    if not latest_by_symbol:
+        return None, None, 0, None
+    counts = Counter(latest_by_symbol.values())
+    dominant_date, dominant_count = max(
+        counts.items(),
+        key=lambda item: (item[1], item[0]),
+    )
+    latest_available = max(counts)
+    coverage = _two_places(
+        Decimal(dominant_count) / Decimal(len(latest_by_symbol)) * Decimal("100")
+    )
+    return dominant_date, latest_available, dominant_count, coverage
+
+
 def build_market_review(
     histories: dict[str, tuple[TdxLocalDailyBar, ...]],
     *,
     as_of: date,
     observed_at: datetime,
     name_resolver: Callable[[str], str],
+    history_source: str = "tdx-local-day",
 ) -> MarketReviewSnapshot:
-    latest_trade_date = max(
-        (bars[-1].trade_date for bars in histories.values() if bars),
-        default=None,
-    )
+    latest_trade_date, latest_available_trade_date, latest_trade_date_count, coverage = _review_trade_dates(histories)
     consecutive: list[MarketReviewStock] = []
     first: list[MarketReviewStock] = []
     new_high_100: list[MarketReviewStock] = []
@@ -196,13 +219,65 @@ def build_market_review(
     volume_breakouts.sort(key=lambda item: (-(item.volume_multiple or Decimal()), item.symbol))
     previous_high_breakouts.sort(key=lambda item: (-(item.volume_multiple or Decimal()), item.symbol))
     low_position_volume.sort(key=lambda item: (item.range_position_percent or Decimal("100"), -(item.volume_multiple or Decimal())))
-    quality = "ready" if ready_count >= 1000 else "partial" if ready_count else "unavailable"
-    warnings = () if latest_trade_date is not None else ("tdx_daily_history_unavailable",)
+    warning_list: list[str] = []
+    if latest_trade_date is None:
+        warning_list.append("tdx_daily_history_unavailable")
+    elif latest_available_trade_date != latest_trade_date:
+        warning_list.extend(("history_dates_fragmented", "history_latest_outlier"))
+    warnings = tuple(warning_list)
+    stock_universe_count = sum(
+        1 for symbol in histories if symbol not in BENCHMARK_SYMBOLS
+    )
+    watermark_blockers: list[str] = []
+    if latest_trade_date is None:
+        watermark_blockers.append("tdx_daily_history_unavailable")
+    if latest_trade_date_count < stock_universe_count:
+        watermark_blockers.append("history_dates_fragmented")
+    if ready_count < stock_universe_count:
+        watermark_blockers.append("history_not_ready_for_all_symbols")
+    if coverage is not None and coverage < Decimal("98"):
+        watermark_blockers.append("history_coverage_below_98_percent")
+    quality = (
+        "ready"
+        if ready_count and coverage is not None and coverage >= Decimal("98") and not watermark_blockers
+        else "partial" if ready_count
+        else "unavailable"
+    )
+    watermark = MarketDataWatermark(
+        dominant_trade_date=latest_trade_date,
+        latest_available_trade_date=latest_available_trade_date,
+        universe_count=stock_universe_count,
+        history_ready_count=ready_count,
+        coverage_percent=coverage,
+        fragmented_latest_count=max(0, stock_universe_count - latest_trade_date_count),
+        missing_history_count=max(0, stock_universe_count - ready_count),
+        quality=quality,
+        blockers=tuple(dict.fromkeys(watermark_blockers)),
+    )
+    evidence_status = quality
+    evidence_ledger = EvidenceLedgerEntry(
+        source=history_source if latest_trade_date else "unavailable",
+        operation="market_review",
+        status=evidence_status,
+        trade_date=latest_trade_date,
+        observed_at=observed_at,
+        formula_version="a-share-market-review-v2",
+        sample_count=ready_count if ready_count > 0 else None,
+        limitations=tuple(dict.fromkeys((*warnings, *watermark.blockers))),
+    )
     return MarketReviewSnapshot(
         as_of=as_of,
         observed_at=observed_at,
         latest_trade_date=latest_trade_date,
-        source="tdx-local-day" if latest_trade_date else "unavailable",
+        latest_available_trade_date=latest_available_trade_date,
+        latest_available_trade_date_count=sum(
+            1 for symbol, bars in histories.items()
+            if bars
+            and bars[-1].trade_date == latest_available_trade_date
+            and symbol not in BENCHMARK_SYMBOLS
+        ) if latest_available_trade_date is not None else 0,
+        latest_trade_date_coverage_percent=coverage,
+        source=history_source if latest_trade_date else "unavailable",
         quality=quality,
         universe_count=len(histories),
         history_ready_count=ready_count,
@@ -213,6 +288,8 @@ def build_market_review(
         volume_breakouts=tuple(volume_breakouts),
         previous_high_breakouts=tuple(previous_high_breakouts),
         low_position_volume=tuple(low_position_volume),
+        watermark=watermark,
+        evidence_ledger=(evidence_ledger,),
         warnings=warnings,
     )
 

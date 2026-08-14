@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   listDailySnapshots,
   readDailySnapshot,
+  readDailySnapshotMetadata,
   shanghaiDay,
   writeDailySnapshot,
 } from "./dailySnapshotCache";
@@ -25,6 +26,19 @@ describe("dailySnapshotCache", () => {
     expect(cached).toEqual({
       value: { symbol: "600519", value: 71 },
       cachedAt: cachedAt.toISOString(),
+    });
+  });
+
+  it("exposes source cutoff and completeness without changing snapshot shape", () => {
+    const now = new Date("2026-08-03T09:31:25+08:00");
+    writeDailySnapshot("evidence", "600519", { symbol: "600519", value: 71 }, now, {
+      sourceCutoff: "2026-08-03T09:30:00+08:00",
+      completeness: "complete",
+    });
+    expect(readDailySnapshotMetadata("evidence", "600519", now)).toEqual({
+      sourceCutoff: "2026-08-03T09:30:00+08:00",
+      completeness: "complete",
+      day: "2026-08-03",
     });
   });
 
@@ -163,5 +177,41 @@ describe("dailySnapshotCache", () => {
       new Date("2026-08-03T11:00:00+08:00"),
     )).toEqual([]);
     expect(localStorage.length).toBe(0);
+  });
+
+  it("does not let a partial refresh replace today's complete snapshot", () => {
+    const now = new Date("2026-08-03T10:00:00+08:00");
+    writeDailySnapshot("company-research", "600519", { symbol: "600519", value: 80 }, now);
+    writeDailySnapshot(
+      "company-research",
+      "600519",
+      { symbol: "600519", value: 20 },
+      new Date("2026-08-03T10:01:00+08:00"),
+      { completeness: "partial" },
+    );
+
+    expect(readDailySnapshot<Snapshot>("company-research", "600519", now)?.value.value).toBe(80);
+  });
+
+  it("stores version and source cutoff while preserving the public cache hit shape", () => {
+    const now = new Date("2026-08-03T10:00:00+08:00");
+    writeDailySnapshot(
+      "company-research",
+      "600519",
+      { symbol: "600519", value: 80 },
+      now,
+      { sourceCutoff: "2026-08-03T09:59:00+08:00" },
+    );
+
+    const raw = JSON.parse(localStorage.getItem(
+      "qibao.daily-snapshot.v1.company-research.2026-08-03.600519",
+    ) ?? "null");
+    expect(raw.schemaVersion).toBe(2);
+    expect(raw.completeness).toBe("complete");
+    expect(raw.sourceCutoff).toBe("2026-08-03T09:59:00+08:00");
+    expect(readDailySnapshot<Snapshot>("company-research", "600519", now)).toEqual({
+      value: { symbol: "600519", value: 80 },
+      cachedAt: now.toISOString(),
+    });
   });
 });

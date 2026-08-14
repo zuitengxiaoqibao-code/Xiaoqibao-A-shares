@@ -61,10 +61,12 @@ const quantBacktest = {
 };
 
 describe("route loading", () => {
-  it("shows an explicit loading status while a deferred workspace is fetched", () => {
+  it("uses a quiet busy state without the blocking workbench message", () => {
     render(<RouteLoadingFallback />);
 
-    expect(screen.getByRole("status", { name: "页面加载状态" })).toHaveTextContent("正在加载工作区");
+    const status = screen.getByRole("status", { name: "页面准备状态" });
+    expect(status).toHaveAttribute("aria-busy", "true");
+    expect(status).not.toHaveTextContent("加载工作台");
   });
 });
 
@@ -179,12 +181,12 @@ describe("Dashboard beginner shell", () => {
     expect(await screen.findByRole("region", { name: "A 股监控首页" })).toBeInTheDocument();
   });
 
-  it("shows a focused beginner menu and preserves every expert entry", () => {
+  it("shows one complete menu without navigation modes", () => {
     render(<Dashboard loadSnapshot={() => Promise.resolve(card)} />);
     const navigation = screen.getByRole("navigation", { name: "主要功能" });
-    expect(navigation.querySelectorAll("button")).toHaveLength(8);
-    fireEvent.click(screen.getByRole("button", { name: "专家模式" }));
-    expect(navigation.querySelectorAll("button")).toHaveLength(10);
+    expect(navigation.querySelectorAll("button")).toHaveLength(11);
+    expect(screen.queryByRole("button", { name: "新手模式" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "专家模式" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "信息总览" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "今日研判" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "首次涨停" })).toBeInTheDocument();
@@ -222,7 +224,6 @@ describe("Dashboard beginner shell", () => {
   it("opens the quant-analysis child page on its stable route", async () => {
     render(<Dashboard loadSnapshot={() => Promise.resolve(card)} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "专家模式" }));
     fireEvent.click(screen.getByRole("button", { name: "量化分析" }));
 
     expect(window.location.pathname).toBe("/first-limit-up/quant-analysis");
@@ -241,7 +242,6 @@ describe("Dashboard beginner shell", () => {
       runBacktest={() => Promise.resolve(quantBacktest)}
     />);
 
-    fireEvent.click(screen.getByRole("button", { name: "专家模式" }));
     fireEvent.click(screen.getByRole("button", { name: "量化分析" }));
 
     expect(await screen.findByRole("region", { name: "高频 TICK 分时" })).toBeInTheDocument();
@@ -273,7 +273,6 @@ describe("Dashboard beginner shell", () => {
       searchAShareInstruments={searchAShareInstruments}
     /></SelectedInstrumentProvider>);
 
-    fireEvent.click(screen.getByRole("button", { name: "专家模式" }));
     fireEvent.click(screen.getByRole("button", { name: "量化分析" }));
 
     expect(await screen.findByText("000001", { selector: ".quant-selected-symbol" })).toBeInTheDocument();
@@ -281,7 +280,8 @@ describe("Dashboard beginner shell", () => {
       target: { value: "贵州茅台" },
     });
     await waitFor(() => expect(searchAShareInstruments).toHaveBeenCalledWith("贵州茅台"));
-    fireEvent.click(await screen.findByRole("option", { name: /600519.*贵州茅台/ }));
+    await screen.findByRole("option", { name: /600519.*贵州茅台/ });
+    fireEvent.click(screen.getByRole("option", { name: /600519.*贵州茅台/ }));
 
     expect(new URL(window.location.href).searchParams.get("symbol")).toBe("600519");
   });
@@ -296,7 +296,6 @@ describe("Dashboard beginner shell", () => {
       loadQuantStrategy={loadQuantStrategy}
     />);
 
-    fireEvent.click(screen.getByRole("button", { name: "专家模式" }));
     fireEvent.click(screen.getByRole("button", { name: "量化分析" }));
 
     await waitFor(() => expect(loadQuantStrategy).toHaveBeenCalledWith(12));
@@ -308,7 +307,6 @@ describe("Dashboard beginner shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "风险提醒" }));
     expect(await screen.findByRole("heading", { name: "当前风险状态" })).toBeInTheDocument();
     expect(window.location.pathname).toBe("/risk");
-    fireEvent.click(screen.getByRole("button", { name: "专家模式" }));
     fireEvent.click(screen.getByRole("button", { name: "数据设置" }));
     expect(screen.getByRole("heading", { name: "数据源与 AI" })).toBeInTheDocument();
     expect(window.location.pathname).toBe("/settings");
@@ -337,7 +335,6 @@ describe("Dashboard beginner shell", () => {
       deleteAISettings={async () => ({ configured: false, base_url: null, model: null, api_key_hint: null })}
     /></SelectedInstrumentProvider>);
 
-    fireEvent.click(screen.getByRole("button", { name: "专家模式" }));
     for (const name of ["今日研判", "个股观察", "首次涨停", "量化分析", "新闻热点", "风险提醒", "历史复盘", "数据设置"]) {
       fireEvent.click(screen.getByRole("button", { name }));
       if (name === "数据设置") await waitFor(() => expect(loadAISettings).toHaveBeenCalled());
@@ -507,6 +504,29 @@ describe("Dashboard beginner shell", () => {
     window.history.replaceState({}, "", "/settings");
     render(<Dashboard loadSnapshot={vi.fn(() => Promise.resolve(card))} />);
     expect(screen.getByRole("heading", { name: "数据源与 AI" })).toBeInTheDocument();
+  });
+
+  it("opens local operations on its stable first-level route", async () => {
+    const operationsStatus = {
+      scheduler: { paused: false, jobs: [] },
+      backups: [],
+      inventory: { generated_at: "2026-08-11T08:00:00Z", directories: {}, databases: {}, scan_limit: 5000 },
+    };
+    render(<Dashboard
+      loadSnapshot={() => Promise.resolve(card)}
+      loadOperationsStatus={() => Promise.resolve(operationsStatus)}
+      setSchedulerPaused={() => Promise.resolve(operationsStatus.scheduler)}
+      createBackup={() => Promise.reject(new Error("unused"))}
+      verifyBackup={() => Promise.reject(new Error("unused"))}
+      runManualJob={() => Promise.reject(new Error("unused"))}
+      cleanupCache={() => Promise.resolve({ removed_count: 0, removed_bytes: 0 })}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: "本地运维" }));
+
+    expect(window.location.pathname).toBe("/operations");
+    expect(await screen.findByRole("heading", { name: "数据与运维中心" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "本地运维" })).toHaveAttribute("aria-current", "page");
   });
 
   it("does not pass an older stock preparation into settings for a new symbol", () => {

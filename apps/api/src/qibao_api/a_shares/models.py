@@ -47,11 +47,33 @@ class CandidateExclusion(BaseModel):
 
     symbol: str = Field(pattern=r"^\d{6}$")
     reason_code: Literal[
-        "insufficient_liquidity", "invalid_history", "stale_history"
+        "insufficient_history", "insufficient_liquidity", "invalid_history", "stale_history"
     ]
     observed_value: Decimal | None = None
     threshold: Decimal | None = None
     detail: str | None = None
+
+
+class CandidateFunnel(BaseModel):
+    """Counts for each deterministic stage of the local candidate scan."""
+
+    model_config = ConfigDict(frozen=True)
+
+    history_ready_size: int = Field(default=0, ge=0)
+    factor_ready_size: int = Field(default=0, ge=0)
+    liquidity_ready_size: int = Field(default=0, ge=0)
+    ranked_size: int = Field(default=0, ge=0)
+    exclusion_reasons: dict[str, int] = Field(default_factory=dict)
+    completeness: Literal["complete", "partial", "unavailable"] = "unavailable"
+    blockers: tuple[str, ...] = ()
+
+    def stage_counts(self) -> list[int]:
+        return [
+            self.history_ready_size,
+            self.factor_ready_size,
+            self.liquidity_ready_size,
+            self.ranked_size,
+        ]
 
 
 class CandidateBoard(BaseModel):
@@ -65,6 +87,7 @@ class CandidateBoard(BaseModel):
     factor_version: Literal["a-share-factors-v1"] = FACTOR_VERSION
     universe_size: int = Field(default=0, ge=0)
     eligible_size: int = Field(default=0, ge=0)
+    funnel: CandidateFunnel = Field(default_factory=CandidateFunnel)
     latest_trade_date: date | None = None
     sources: tuple[str, ...] = ()
     refresh_policy: Literal["after_close"] = "after_close"

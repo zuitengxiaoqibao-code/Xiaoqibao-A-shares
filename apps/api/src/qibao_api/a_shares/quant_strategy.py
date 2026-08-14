@@ -1,7 +1,11 @@
 from dataclasses import dataclass
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
+import logging
+import hashlib
+import json
+from time import perf_counter
 from threading import RLock
 from typing import Mapping
 from zoneinfo import ZoneInfo
@@ -9,12 +13,30 @@ from zoneinfo import ZoneInfo
 from qibao_api.a_shares.models import CandidateBoard, CandidateEntry
 from qibao_api.contracts.market_overview import (
     MarketOverviewResponse,
+    OverviewBreadth,
     OverviewFeatureStock,
+    OverviewLimitEcology,
+    OverviewLiquidity,
+    OverviewMarketDataStatus,
+    OverviewRegimeAssessment,
+    OverviewRegimeMetrics,
+    OverviewSentiment,
 )
 from qibao_api.contracts.quant_strategy import (
+    AlertGate,
+    AlertGateCheck,
+    CandidateFunnelStage,
+    CandidateSelectionFunnel,
     QuantStrategyCandidate,
     QuantStrategyDashboard,
     QuantStrategyModel,
+    QuantSignalVote,
+)
+from qibao_api.contracts.evidence_ledger import EvidenceLedgerEntry
+from qibao_api.contracts.field_evidence import FieldEvidence
+from qibao_api.a_shares.quant_strategy_snapshot import QuantStrategySnapshotStore
+from qibao_api.a_shares.quant_candidate_process import (
+    scan_candidate_board_from_local_bars,
 )
 
 
@@ -23,6 +45,8 @@ ONE = Decimal("1")
 TWO_PLACES = Decimal("0.01")
 CHINA_TZ = ZoneInfo("Asia/Shanghai")
 SAFE_CANDIDATE_SCAN_ERROR = "本地候选扫描失败，请检查日线覆盖和数据源状态"
+SAFE_MARKET_OVERVIEW_ERROR = "市场总览加载失败，请检查本地行情和新闻数据源"
+LOGGER = logging.getLogger(__name__)
 
 STRATEGY_MODEL_REGIMES = {
     "0轴低吸模型": ("情绪主升", "轮动震荡"),
@@ -333,11 +357,58 @@ def _build_candidate(
         - risk_penalty
     )
     score = _q(_clamp(raw_score, high=Decimal("100")))
+    risk_flags = []
+    if entry.factor_snapshot.volatility_20d >= Decimal("0.04"):
+        risk_flags.append("高波动")
+    if entry.factor_snapshot.drawdown_60d <= Decimal("-0.25"):
+        risk_flags.append("近60日回撤较深")
+    risk_flags.append("缺少明确止损/目标价，盈亏比分不计分")
+    evidence_coverage = _q((Decimal("70") + trigger_coverage * Decimal("0.3")))
+    hard_risk = any(flag in {"高波动", "近60日回撤较深"} for flag in risk_flags)
+    gate_checks = (
+        AlertGateCheck(
+            key="regime_match", label="市场模型匹配", passed=regime_match >= ONE,
+            detail=f"匹配度 {regime_match}",
+        ),
+        AlertGateCheck(
+            key="strategy_score", label="策略分门槛", passed=score >= Decimal("80"),
+            detail=f"{score} / 80",
+        ),
+        AlertGateCheck(
+            key="trigger_confirmed", label="盘中触发确认", passed=confirmed,
+            detail="已确认" if confirmed else "尚未确认",
+        ),
+        AlertGateCheck(
+            key="risk_penalty", label="风险扣分", passed=risk_penalty <= Decimal("5"),
+            detail=f"{risk_penalty} / 5",
+        ),
+        AlertGateCheck(
+            key="evidence_coverage", label="证据覆盖", passed=evidence_coverage >= Decimal("90"),
+            detail=f"{evidence_coverage}% / 90%",
+        ),
+        AlertGateCheck(
+            key="hard_risk", label="硬风险拦截", passed=not hard_risk,
+            detail="无高波动或深回撤" if not hard_risk else "存在高波动或深回撤",
+        ),
+    )
+    blocker_by_key = {
+        "regime_match": "市场风格与模型未匹配",
+        "strategy_score": "策略分低于80",
+        "trigger_confirmed": "盘中触发未确认",
+        "risk_penalty": "风险扣分超过5",
+        "evidence_coverage": "证据覆盖低于90%",
+        "hard_risk": "存在高波动或深回撤硬风险",
+    }
+    alert_gate = AlertGate(
+        eligible=all(check.passed for check in gate_checks),
+        checks=gate_checks,
+        blockers=tuple(blocker_by_key[check.key] for check in gate_checks if not check.passed),
+    )
     if missing:
         status = "pending_trigger"
     elif not confirmed:
         status = "reject"
-    elif score >= Decimal("80"):
+    elif alert_gate.eligible:
         status = "alert"
     elif score >= Decimal("70"):
         status = "watch"
@@ -347,13 +418,25 @@ def _build_candidate(
     planned_position = _q(
         Decimal("0.2") * market_coef * strategy_coef * rr_score
     )
-    risk_flags = []
-    if entry.factor_snapshot.volatility_20d >= Decimal("0.04"):
-        risk_flags.append("高波动")
-    if entry.factor_snapshot.drawdown_60d <= Decimal("-0.25"):
-        risk_flags.append("近60日回撤较深")
-    risk_flags.append("缺少明确止损/目标价，盈亏比分不计分")
-    evidence_coverage = _q((Decimal("70") + trigger_coverage * Decimal("0.3")))
+    vote_inputs = (
+        ("市场风格", regime_match),
+        ("个股质量", stock_score),
+        ("盘中触发", trigger_score),
+        ("盈亏比", rr_score),
+        ("风险约束", ONE - risk_penalty / Decimal("30")),
+    )
+    signal_votes = tuple(
+        QuantSignalVote(
+            signal=label,
+            vote=1 if value >= Decimal("0.7") else 0 if value >= Decimal("0.45") else -1,
+            evidence_value=_q(_clamp(value)),
+        )
+        for label, value in vote_inputs
+    )
+    vote_consensus = _q(
+        Decimal(sum(item.vote for item in signal_votes)) / Decimal(len(signal_votes))
+    )
+    vote_position = _q(planned_position * max(ZERO, vote_consensus))
     return QuantStrategyCandidate(
         symbol=entry.symbol,
         name=name,
@@ -368,11 +451,16 @@ def _build_candidate(
         trigger_confirmed=confirmed,
         position=planned_position if confirmed else ZERO,
         planned_position=planned_position,
+        reference_price=stock.price if stock is not None and stock.price > 0 else None,
+        vote_consensus=vote_consensus,
+        vote_position=vote_position if confirmed else ZERO,
+        signal_votes=signal_votes,
         evidence_coverage_percent=evidence_coverage,
         buy_triggers=TRIGGERS_BY_REGIME[regime],
         invalidation_rules=INVALIDATIONS_BY_REGIME[regime],
         risk_flags=tuple(risk_flags),
         missing_evidence=missing,
+        alert_gate=alert_gate,
         factor_as_of=entry.factor_snapshot.as_of,
         sources=tuple(dict.fromkeys((
             entry.factor_snapshot.source,
@@ -454,6 +542,7 @@ def build_quant_strategy_dashboard(
     candidate_scan_phase: str = "ready",
     candidate_scan_processed: int | None = None,
     candidate_scan_total: int | None = None,
+    extra_missing_data: tuple[str, ...] = (),
     limit: int = 12,
 ) -> QuantStrategyDashboard:
     if limit < 1 or limit > 50:
@@ -492,7 +581,11 @@ def build_quant_strategy_dashboard(
         *(("candidate_history",) if not board.short_term else ()),
         *((f"candidate_scan_{candidate_scan_state}",)
           if candidate_scan_state != "ready" else ()),
+        *extra_missing_data,
     )))
+    base_funnel = _candidate_selection_funnel(board, (), missing)
+    base_ledger = _strategy_evidence_ledger(overview, board, missing)
+    input_snapshot_ids = _quant_input_snapshot_ids(overview)
     if regime is None:
         return QuantStrategyDashboard(
             status="unavailable",
@@ -503,6 +596,9 @@ def build_quant_strategy_dashboard(
             metrics=overview.regime_metrics,
             regime=overview.regime,
             strategy_models=_strategy_models(regime),
+            candidate_funnel=base_funnel,
+            evidence_ledger=base_ledger,
+            input_snapshot_ids=input_snapshot_ids,
             candidates=(),
             discipline="市场风格尚未形成，等待真实横截面指标后再选择策略。",
             missing_data=missing or ("market_regime",),
@@ -519,6 +615,9 @@ def build_quant_strategy_dashboard(
             metrics=overview.regime_metrics,
             regime=overview.regime,
             strategy_models=_strategy_models(regime),
+            candidate_funnel=base_funnel,
+            evidence_ledger=base_ledger,
+            input_snapshot_ids=input_snapshot_ids,
             candidates=(),
             discipline=DISCIPLINE_BY_REGIME[regime],
             missing_data=missing,
@@ -542,6 +641,9 @@ def build_quant_strategy_dashboard(
     candidates = tuple(sorted(
         candidates, key=lambda item: (-item.strategy_score, item.symbol)
     ))
+    candidate_funnel = _candidate_selection_funnel(board, candidates, missing)
+    evidence_ledger = _strategy_evidence_ledger(overview, board, missing)
+    field_evidence = _strategy_field_evidence(overview, candidates, generated)
     status = "ready" if overview.status == "ready" and not missing else "partial"
     return QuantStrategyDashboard(
         status=status,
@@ -552,11 +654,166 @@ def build_quant_strategy_dashboard(
         metrics=overview.regime_metrics,
         regime=overview.regime,
         strategy_models=_strategy_models(regime),
+        candidate_funnel=candidate_funnel,
+        evidence_ledger=evidence_ledger,
+        field_evidence=field_evidence,
+        input_snapshot_ids=input_snapshot_ids,
         candidates=candidates,
         discipline=DISCIPLINE_BY_REGIME[regime],
         missing_data=missing,
         warnings=overview.warnings,
         sources=tuple(dict.fromkeys((*overview.sources, *board.sources))),
+    )
+
+
+def _quant_input_snapshot_ids(overview: MarketOverviewResponse) -> tuple[str, ...]:
+    """Return only real immutable source snapshot IDs used by the overview.
+
+    Evidence IDs are the canonical provenance boundary.  The operation name
+    (for example ``quant_strategy_v2``) describes a computation and must never
+    be presented as a data snapshot.
+    """
+    return tuple(dict.fromkeys(
+        evidence_id
+        for field in overview.field_evidence
+        for evidence_id in field.evidence_ids
+        if evidence_id.strip()
+    ))
+
+
+def _strategy_field_evidence(
+    overview: MarketOverviewResponse,
+    candidates: tuple[QuantStrategyCandidate, ...],
+    observed_at: datetime,
+) -> tuple[FieldEvidence, ...]:
+    sources = " / ".join(overview.sources) or "unavailable"
+    limitations = tuple(overview.regime.missing_factors)
+    entries = [
+        FieldEvidence(
+            field_path=f"regime.{name}", value=value,
+            source=sources if value is not None else "unavailable", source_field=None,
+            status="derived" if value is not None else "missing", trade_date=overview.as_of,
+            observed_at=observed_at if value is not None else None,
+            coverage_percent=overview.regime.coverage_percent if value is not None else None,
+            derived=value is not None,
+            formula=overview.regime.formula_version if value is not None else None,
+            limitations=limitations if value is not None and limitations else (("market_regime_unavailable",) if value is None else ()),
+        )
+        for name, value in (
+            ("emotion_score", overview.regime.emotion_score),
+            ("risk_score", overview.regime.risk_score),
+            ("heat_score", overview.regime.heat_score),
+            ("rotation_score", overview.regime.rotation_score),
+        )
+    ]
+    for candidate in candidates:
+        entries.append(FieldEvidence(
+            field_path=f"candidates.{candidate.symbol}.strategy_score",
+            value=candidate.strategy_score,
+            source=" / ".join(candidate.sources) or sources,
+            source_field=None,
+            status="derived",
+            trade_date=candidate.factor_as_of,
+            observed_at=observed_at,
+            coverage_percent=candidate.evidence_coverage_percent,
+            derived=True,
+            formula="a-share-short-strategy-v2.0",
+            limitations=tuple(candidate.missing_evidence),
+        ))
+    return tuple(entries)
+
+
+def _candidate_selection_funnel(
+    board: CandidateBoard,
+    candidates: tuple[QuantStrategyCandidate, ...],
+    missing: tuple[str, ...],
+) -> CandidateSelectionFunnel:
+    """Translate the scan's real counts into the dashboard funnel contract."""
+    scan = board.funnel
+    trigger_confirmed = sum(item.trigger_confirmed for item in candidates)
+    final_candidates = sum(item.status in {"alert", "watch"} for item in candidates)
+    exclusions = dict(scan.exclusion_reasons)
+    not_confirmed = sum(not item.trigger_confirmed for item in candidates)
+    risk_flagged = sum(bool(item.risk_flags) for item in candidates)
+    if not_confirmed:
+        exclusions["trigger_not_confirmed"] = not_confirmed
+    if risk_flagged:
+        exclusions["risk_flags"] = risk_flagged
+    blockers = list(scan.blockers)
+    if missing and "candidate_scan_pending" in missing:
+        blockers.append("candidate_scan_pending")
+    if missing and "trigger_evidence_pending" in missing:
+        blockers.append("trigger_evidence_pending")
+    return CandidateSelectionFunnel(
+        stages=(
+            CandidateFunnelStage(key="universe", label="全市场股票", count=board.universe_size),
+            CandidateFunnelStage(key="history_ready", label="日线历史完整", count=scan.history_ready_size),
+            CandidateFunnelStage(key="factor_ready", label="因子计算完成", count=scan.factor_ready_size),
+            CandidateFunnelStage(key="liquidity_ready", label="流动性达标", count=scan.liquidity_ready_size),
+            CandidateFunnelStage(key="ranked", label="策略排名入选", count=scan.ranked_size),
+            CandidateFunnelStage(key="trigger_confirmed", label="盘中触发确认", count=trigger_confirmed),
+            CandidateFunnelStage(key="final_candidates", label="最终候选", count=final_candidates),
+        ),
+        exclusion_reasons=exclusions,
+        completeness=scan.completeness,
+        blockers=tuple(dict.fromkeys(blockers)),
+    )
+
+
+def _strategy_evidence_ledger(
+    overview: MarketOverviewResponse,
+    board: CandidateBoard,
+    missing: tuple[str, ...],
+) -> tuple[EvidenceLedgerEntry, ...]:
+    limitations = tuple(dict.fromkeys((*missing, *board.funnel.blockers)))
+    status = (
+        "ready" if overview.status == "ready" and not limitations
+        else "partial" if overview.status != "unavailable" or board.funnel.completeness == "partial"
+        else "unavailable"
+    )
+    return (EvidenceLedgerEntry(
+        source=" / ".join(dict.fromkeys((*overview.sources, *board.sources))) or "unavailable",
+        operation="quant_strategy_v2",
+        status=status,
+        trade_date=board.latest_trade_date or overview.as_of,
+        observed_at=overview.observed_at,
+        formula_version="a-share-short-strategy-v2.0",
+        sample_count=board.universe_size if board.universe_size > 0 else None,
+        limitations=limitations,
+    ),)
+
+
+def _unavailable_market_overview(now: datetime, warning: str) -> MarketOverviewResponse:
+    """Return an honest shell while the real overview is being fetched in a worker."""
+    local_now = now.astimezone(CHINA_TZ)
+    phase = (
+        "premarket" if local_now.hour < 9 or (local_now.hour == 9 and local_now.minute < 25)
+        else "intraday" if local_now.hour < 15
+        else "postclose"
+    )
+    return MarketOverviewResponse(
+        status="unavailable",
+        as_of=local_now.date(),
+        observed_at=now,
+        sentiment=OverviewSentiment(
+            score=None, band="unavailable", coverage_percent=Decimal("0"),
+            quality="unavailable", observed_at=now,
+        ),
+        breadth=OverviewBreadth(
+            rising_count=0, falling_count=0, flat_count=0, valid_count=0,
+        ),
+        limit_ecology=OverviewLimitEcology(
+            limit_up_count=0, limit_down_count=0, broken_limit_up_count=0,
+        ),
+        liquidity=OverviewLiquidity(),
+        regime_metrics=OverviewRegimeMetrics(),
+        regime=OverviewRegimeAssessment(),
+        market_data=OverviewMarketDataStatus(
+            source="unavailable", quality="unavailable", phase=phase,
+            freshness="unavailable",
+        ),
+        warnings=(warning,),
+        sources=(),
     )
 
 
@@ -570,6 +827,11 @@ class QuantStrategyService:
         cache_seconds: int = 30,
         evidence_cache_seconds: int = 5,
         defer_initial_scan: bool = False,
+        defer_initial_overview: bool = False,
+        defer_trigger_evidence: bool = False,
+        snapshot_store: QuantStrategySnapshotStore | None = None,
+        shadow_ledger=None,
+        shared_snapshot_registry=None,
     ) -> None:
         self.overview_service = overview_service
         self.candidate_service = candidate_service
@@ -578,6 +840,11 @@ class QuantStrategyService:
         self.cache_ttl = timedelta(seconds=max(0, cache_seconds))
         self.evidence_cache_ttl = timedelta(seconds=max(0, evidence_cache_seconds))
         self.defer_initial_scan = defer_initial_scan
+        self.defer_initial_overview = defer_initial_overview
+        self.defer_trigger_evidence = defer_trigger_evidence
+        self.snapshot_store = snapshot_store
+        self.shadow_ledger = shadow_ledger
+        self.shared_snapshot_registry = shared_snapshot_registry
         self._candidate_cache: dict[
             tuple[date, int],
             tuple[datetime, datetime, CandidateBoard, dict[str, str]],
@@ -590,18 +857,117 @@ class QuantStrategyService:
             ThreadPoolExecutor(max_workers=1, thread_name_prefix="quant-candidate-scan")
             if defer_initial_scan else None
         )
+        bar_repository = getattr(candidate_service, "bar_repository", None)
+        database_path = getattr(bar_repository, "database_path", None)
+        parquet_dir = getattr(bar_repository, "parquet_dir", None)
+        self._candidate_process_paths = (
+            (str(database_path), str(parquet_dir))
+            if defer_initial_scan and database_path is not None and parquet_dir is not None
+            else None
+        )
+        self._candidate_process_executor = (
+            ProcessPoolExecutor(max_workers=1)
+            if self._candidate_process_paths is not None else None
+        )
         self._candidate_scan_jobs: dict[tuple[date, int], Future] = {}
         self._candidate_scan_started: dict[tuple[date, int], datetime] = {}
         self._candidate_scan_errors: dict[tuple[date, int], str] = {}
+        self._candidate_fallback_snapshots: dict[
+            tuple[date, int], QuantStrategyDashboard
+        ] = {}
         self._candidate_scan_progress: dict[
             tuple[date, int], tuple[str, int | None, int | None]
         ] = {}
+        self._overview_lock = RLock()
+        self._overview_executor = (
+            ThreadPoolExecutor(max_workers=1, thread_name_prefix="quant-market-overview")
+            if defer_initial_overview else None
+        )
+        self._overview_future: Future | None = None
+        self._overview_started_at: datetime | None = None
+        self._overview_error: str | None = None
+        self._overview_snapshot: MarketOverviewResponse | None = None
+        self._evidence_executor = (
+            ThreadPoolExecutor(max_workers=1, thread_name_prefix="quant-trigger-evidence")
+            if defer_trigger_evidence else None
+        )
+        self._evidence_jobs: dict[tuple[date, int], Future] = {}
+        self._evidence_started: dict[tuple[date, int], datetime] = {}
+        self._evidence_errors: dict[tuple[date, int], str] = {}
 
     def close(self) -> None:
         executor = self._candidate_scan_executor
         self._candidate_scan_executor = None
         if executor is not None:
             executor.shutdown(wait=True, cancel_futures=True)
+        process_executor = self._candidate_process_executor
+        self._candidate_process_executor = None
+        if process_executor is not None:
+            process_executor.shutdown(wait=False, cancel_futures=True)
+        for lock, future_attr, executor_attr in (
+            (self._overview_lock, "_overview_future", "_overview_executor"),
+        ):
+            with lock:
+                future = getattr(self, future_attr)
+                setattr(self, future_attr, None)
+                background_executor = getattr(self, executor_attr)
+                setattr(self, executor_attr, None)
+            if future is not None:
+                future.cancel()
+            if background_executor is not None:
+                background_executor.shutdown(wait=False, cancel_futures=True)
+        evidence_executor = self._evidence_executor
+        self._evidence_executor = None
+        if evidence_executor is not None:
+            with self._candidate_cache_lock:
+                for job in self._evidence_jobs.values():
+                    job.cancel()
+                self._evidence_jobs.clear()
+            evidence_executor.shutdown(wait=False, cancel_futures=True)
+
+    def market_overview_ready(self) -> bool:
+        with self._overview_lock:
+            return self._overview_future is not None and self._overview_future.done()
+
+    def _start_deferred_overview(self, now: datetime) -> None:
+        if self._overview_executor is None:
+            return
+        with self._overview_lock:
+            if self._overview_future is not None:
+                return
+            self._overview_started_at = now
+            self._overview_error = None
+            self._overview_future = self._overview_executor.submit(
+                self.overview_service.current, now
+            )
+
+    def _consume_deferred_overview(self, now: datetime) -> tuple[MarketOverviewResponse, bool]:
+        with self._overview_lock:
+            future = self._overview_future
+            snapshot = self._overview_snapshot
+        if future is None:
+            if snapshot is not None:
+                return snapshot, False
+            return _unavailable_market_overview(now, "market_overview_pending"), True
+        if not future.done():
+            if snapshot is not None:
+                return snapshot, True
+            return _unavailable_market_overview(now, "market_overview_pending"), True
+        try:
+            result = future.result()
+        except Exception:
+            with self._overview_lock:
+                self._overview_error = SAFE_MARKET_OVERVIEW_ERROR
+                self._overview_future = None
+                snapshot = self._overview_snapshot
+            if snapshot is not None:
+                return snapshot, True
+            return _unavailable_market_overview(now, SAFE_MARKET_OVERVIEW_ERROR), False
+        with self._overview_lock:
+            self._overview_future = None
+            self._overview_error = None
+            self._overview_snapshot = result
+        return result, False
 
     def candidate_scan_ready(
         self, now: datetime, *, as_of: date | None = None, limit: int = 12
@@ -623,12 +989,32 @@ class QuantStrategyService:
             self._candidate_scan_progress[cache_key] = (phase, processed, total)
 
     def _scan_candidates(self, cache_key: tuple[date, int], selected_date: date, limit: int):
-        progress = lambda phase, processed=None, total=None: self._record_candidate_progress(
-            cache_key, phase, processed, total
-        )
+        scan_started = perf_counter()
+        def progress(phase, processed=None, total=None):
+            self._record_candidate_progress(cache_key, phase, processed, total)
         progress("loading_history")
         progress_loader = getattr(self.candidate_service, "candidates_with_progress", None)
-        if callable(progress_loader):
+        if self._candidate_process_paths is not None and self._candidate_process_executor is not None:
+            factor_as_of = selected_date
+            candidate_as_of = getattr(self.candidate_service, "_candidate_as_of", None)
+            if callable(candidate_as_of):
+                factor_as_of = candidate_as_of(selected_date, None)
+            LOGGER.info(
+                "quant candidate scan input factor_as_of=%s database=%s parquet=%s",
+                factor_as_of,
+                self._candidate_process_paths[0],
+                self._candidate_process_paths[1],
+            )
+            progress("computing_factors", 0, None)
+            process_future = self._candidate_process_executor.submit(
+                scan_candidate_board_from_local_bars,
+                *self._candidate_process_paths,
+                factor_as_of,
+                limit,
+            )
+            board = process_future.result()
+            progress("computing_factors", board.universe_size, board.universe_size)
+        elif callable(progress_loader):
             board = progress_loader(selected_date, limit, progress=progress)
         else:
             board = self.candidate_service.candidates(selected_date, limit)
@@ -643,6 +1029,12 @@ class QuantStrategyService:
                 cache_key, ("ready", None, None)
             )
         progress("ready", processed, total)
+        LOGGER.warning(
+            "quant candidate scan finished elapsed_ms=%s processed=%s total=%s",
+            round((perf_counter() - scan_started) * 1000),
+            processed,
+            total,
+        )
         return board, names
 
     def _start_deferred_scan(
@@ -655,6 +1047,7 @@ class QuantStrategyService:
             if existing is not None:
                 return
             self._candidate_scan_errors.pop(cache_key, None)
+            self._candidate_fallback_snapshots.pop(cache_key, None)
             self._candidate_scan_progress[cache_key] = ("loading_history", None, None)
             self._candidate_scan_started[cache_key] = now
             self._candidate_scan_jobs[cache_key] = self._candidate_scan_executor.submit(
@@ -691,17 +1084,120 @@ class QuantStrategyService:
             self._evidence_cache.pop(cache_key, None)
         return board, names, "ready", now, None
 
+    def trigger_evidence_ready(
+        self, now: datetime, *, as_of: date | None = None, limit: int = 12
+    ) -> bool:
+        key = (as_of or now.astimezone(CHINA_TZ).date(), limit)
+        with self._candidate_cache_lock:
+            job = self._evidence_jobs.get(key)
+        return job is not None and job.done()
+
+    def _load_trigger_evidence(
+        self, cache_key: tuple[date, int], selected_date: date, now: datetime,
+        symbols: tuple[str, ...], stocks: Mapping[str, OverviewFeatureStock],
+    ) -> dict[str, TriggerEvidence]:
+        return {
+            symbol: self.trigger_evidence_source.get(
+                symbol, selected_date, now, stocks.get(symbol)
+            )
+            for symbol in symbols
+        }
+
+    def _start_deferred_trigger_evidence(
+        self, cache_key: tuple[date, int], selected_date: date, now: datetime,
+        board: CandidateBoard, stocks: Mapping[str, OverviewFeatureStock],
+    ) -> None:
+        if self._evidence_executor is None or self.trigger_evidence_source is None:
+            return
+        with self._candidate_cache_lock:
+            if cache_key in self._evidence_jobs:
+                return
+            self._evidence_started[cache_key] = now
+            self._evidence_errors.pop(cache_key, None)
+            self._evidence_jobs[cache_key] = self._evidence_executor.submit(
+                self._load_trigger_evidence,
+                cache_key, selected_date, now,
+                tuple(item.symbol for item in board.short_term), stocks,
+            )
+
+    def _consume_deferred_trigger_evidence(
+        self, cache_key: tuple[date, int], now: datetime,
+    ) -> tuple[dict[str, TriggerEvidence], datetime | None, bool, str | None]:
+        with self._candidate_cache_lock:
+            job = self._evidence_jobs.get(cache_key)
+        if job is None or not job.done():
+            return {}, None, False, None
+        try:
+            evidence = job.result()
+        except Exception:
+            with self._candidate_cache_lock:
+                self._evidence_errors[cache_key] = "trigger_evidence_failed"
+                self._evidence_jobs.pop(cache_key, None)
+                self._evidence_started.pop(cache_key, None)
+            return {}, None, False, "trigger_evidence_failed"
+        with self._candidate_cache_lock:
+            self._evidence_jobs.pop(cache_key, None)
+            self._evidence_started.pop(cache_key, None)
+            self._evidence_cache[cache_key] = (
+                now + self.evidence_cache_ttl, now, evidence
+            )
+        return evidence, now, False, None
+
     def current(
         self, now: datetime, *, as_of: date | None = None, limit: int = 12
     ) -> QuantStrategyDashboard:
-        overview = self.overview_service.current(now)
+        started_at = perf_counter()
+        stage_times: dict[str, int] = {}
+
+        def mark(stage: str) -> None:
+            stage_times[stage] = round((perf_counter() - started_at) * 1000)
+
+        def finish(result: QuantStrategyDashboard) -> QuantStrategyDashboard:
+            elapsed_ms = round((perf_counter() - started_at) * 1000)
+            self._record_shared_snapshot(result, latency_ms=elapsed_ms)
+            if elapsed_ms >= 1000:
+                LOGGER.warning(
+                    "quant strategy request slow elapsed_ms=%s stages=%s "
+                    "refresh_state=%s candidate_scan_state=%s",
+                    elapsed_ms,
+                    stage_times,
+                    result.refresh_state,
+                    result.candidate_scan_state,
+                )
+            return result
+
+        overview_pending = False
+        if self.defer_initial_overview:
+            self._start_deferred_overview(now)
+            overview, overview_pending = self._consume_deferred_overview(now)
+        else:
+            overview = self.overview_service.current(now)
+        mark("overview")
         selected_date = as_of or overview.as_of
         if selected_date != overview.as_of:
             raise ValueError(
                 "historical market regime is unavailable for the requested date"
             )
+        persisted = None
+        if self.snapshot_store is not None:
+            persisted = self.snapshot_store.load(
+                trading_date=selected_date,
+                formula_version="a-share-short-strategy-v2.0",
+            )
+        mark("snapshot_load")
+        if overview_pending and persisted is not None:
+            return finish(persisted.model_copy(update={
+                "refresh_state": "pending",
+                "snapshot_at": persisted.snapshot_at or persisted.generated_at,
+                "refresh_started_at": now,
+                "snapshot_source": "disk",
+                "missing_data": tuple(dict.fromkeys(
+                    (*persisted.missing_data, "market_overview_pending")
+                )),
+            }))
         cache_key = (selected_date, limit)
         cached = None
+        stale_cached = None
         candidate_scan_cached = False
         candidate_scan_at = now
         candidate_scan_state = "ready"
@@ -714,8 +1210,22 @@ class QuantStrategyService:
             with self._candidate_cache_lock:
                 cached = self._candidate_cache.get(cache_key)
                 if cached is not None and now >= cached[0]:
-                    self._candidate_cache.pop(cache_key, None)
+                    if self.defer_initial_scan:
+                        stale_cached = cached
+                    else:
+                        self._candidate_cache.pop(cache_key, None)
                     cached = None
+        fallback_snapshot = None
+        with self._candidate_cache_lock:
+            if cached is not None:
+                fallback_snapshot = self._candidate_fallback_snapshots.get(cache_key)
+        if fallback_snapshot is not None:
+            return finish(fallback_snapshot.model_copy(update={
+                "refresh_started_at": now,
+                "refresh_finished_at": None,
+                "snapshot_source": "disk",
+                "candidate_scan_cached": True,
+            }))
         if cached is None:
             if self.defer_initial_scan:
                 self._start_deferred_scan(cache_key, selected_date, limit, now)
@@ -723,6 +1233,7 @@ class QuantStrategyService:
                     board, names, candidate_scan_state,
                     candidate_scan_started_at, candidate_scan_error,
                 ) = self._consume_deferred_scan(cache_key, now)
+                mark("candidate_scan")
                 with self._candidate_cache_lock:
                     (
                         candidate_scan_phase,
@@ -732,17 +1243,89 @@ class QuantStrategyService:
                         cache_key, ("loading_history", None, None)
                     )
                 if board is None:
-                    board = CandidateBoard(
-                        as_of=selected_date,
-                        universe_size=0,
-                        eligible_size=0,
-                        sources=(),
-                        short_term=[],
-                        swing=[],
-                    )
-                    names = {}
+                    if persisted is not None and candidate_scan_state in {"pending", "failed"}:
+                        refresh_missing = list(persisted.missing_data)
+                        refresh_missing.append(
+                            f"candidate_scan_{candidate_scan_state}"
+                        )
+                        if overview_pending:
+                            refresh_missing.append("market_overview_pending")
+                        return finish(persisted.model_copy(update={
+                            "refresh_state": (
+                                "failed" if candidate_scan_state == "failed" else "pending"
+                            ),
+                            "snapshot_at": persisted.snapshot_at or persisted.generated_at,
+                            "refresh_started_at": now,
+                            "refresh_finished_at": None,
+                            "snapshot_source": "disk",
+                            "candidate_scan_at": persisted.candidate_scan_at or persisted.generated_at,
+                            "candidate_scan_cached": True,
+                            "candidate_scan_state": candidate_scan_state,
+                            "candidate_scan_started_at": candidate_scan_started_at,
+                            "candidate_scan_error": candidate_scan_error,
+                            "candidate_scan_phase": candidate_scan_phase,
+                            "candidate_scan_processed": candidate_scan_processed,
+                            "candidate_scan_total": candidate_scan_total,
+                            "missing_data": tuple(dict.fromkeys(refresh_missing)),
+                        }))
+                    if stale_cached is not None:
+                        _expires_at, candidate_scan_at, board, names = stale_cached
+                        candidate_scan_cached = True
+                    else:
+                        board = CandidateBoard(
+                            as_of=selected_date,
+                            universe_size=0,
+                            eligible_size=0,
+                            sources=(),
+                            short_term=[],
+                            swing=[],
+                        )
+                        names = {}
+                elif (
+                    persisted is not None
+                    and candidate_scan_state == "ready"
+                    and not board.short_term
+                    and board.latest_trade_date is None
+                ):
+                    # A completed scan with no latest bar is an evidence
+                    # failure, not a confirmed empty candidate pool. This is
+                    # common when a fragmented trading day only contains a
+                    # few partial symbols. Keep the last same-day snapshot
+                    # visible and mark the refresh as failed until a scan
+                    # with a confirmed factor date succeeds.
+                    refresh_missing = list(persisted.missing_data)
+                    refresh_missing.append("candidate_scan_insufficient_history")
+                    failed_snapshot = persisted.model_copy(update={
+                        "refresh_state": "failed",
+                        "snapshot_at": persisted.snapshot_at or persisted.generated_at,
+                        "refresh_started_at": now,
+                        "refresh_finished_at": None,
+                        "snapshot_source": "disk",
+                        "candidate_scan_at": persisted.candidate_scan_at or persisted.generated_at,
+                        "candidate_scan_cached": True,
+                        "candidate_scan_state": "failed",
+                        "candidate_scan_started_at": candidate_scan_started_at,
+                        "candidate_scan_error": SAFE_CANDIDATE_SCAN_ERROR,
+                        "candidate_scan_phase": "failed",
+                        "candidate_scan_processed": board.universe_size,
+                        "candidate_scan_total": board.universe_size,
+                        "missing_data": tuple(dict.fromkeys(refresh_missing)),
+                    })
+                    with self._candidate_cache_lock:
+                        self._candidate_cache[cache_key] = (
+                            now + self.cache_ttl, now, board, names
+                        )
+                        self._candidate_fallback_snapshots[cache_key] = failed_snapshot
+                        self._candidate_scan_progress[cache_key] = (
+                            "failed", board.universe_size, board.universe_size
+                        )
+                        self._candidate_scan_errors[cache_key] = (
+                            SAFE_CANDIDATE_SCAN_ERROR
+                        )
+                    return finish(failed_snapshot)
             else:
                 board, names = self._scan_candidates(cache_key, selected_date, limit)
+                mark("candidate_scan")
                 if self.cache_ttl > timedelta(0):
                     with self._candidate_cache_lock:
                         self._candidate_cache[cache_key] = (
@@ -766,6 +1349,9 @@ class QuantStrategyService:
         evidence: dict[str, TriggerEvidence] = {}
         trigger_evidence_cached = False
         trigger_evidence_at: datetime | None = None
+        extra_missing_data: list[str] = []
+        if overview_pending:
+            extra_missing_data.append("market_overview_pending")
         if self.trigger_evidence_source is not None:
             evidence_cached = None
             if self.evidence_cache_ttl > timedelta(0):
@@ -777,6 +1363,18 @@ class QuantStrategyService:
             if evidence_cached is not None:
                 _evidence_expires_at, trigger_evidence_at, evidence = evidence_cached
                 trigger_evidence_cached = True
+            elif self.defer_trigger_evidence:
+                stocks = {item.symbol: item for item in overview.market_stocks}
+                self._start_deferred_trigger_evidence(
+                    cache_key, selected_date, now, board, stocks
+                )
+                evidence, trigger_evidence_at, trigger_evidence_cached, evidence_error = (
+                    self._consume_deferred_trigger_evidence(cache_key, now)
+                )
+                if evidence_error:
+                    extra_missing_data.append(evidence_error)
+                elif trigger_evidence_at is None and board.short_term:
+                    extra_missing_data.append("trigger_evidence_pending")
             else:
                 stocks = {item.symbol: item for item in overview.market_stocks}
                 for item in board.short_term:
@@ -791,7 +1389,8 @@ class QuantStrategyService:
                             evidence,
                         )
                 trigger_evidence_at = now
-        return build_quant_strategy_dashboard(
+        mark("trigger_evidence")
+        dashboard = build_quant_strategy_dashboard(
             overview,
             board,
             names=names,
@@ -807,5 +1406,65 @@ class QuantStrategyService:
             candidate_scan_phase=candidate_scan_phase,
             candidate_scan_processed=candidate_scan_processed,
             candidate_scan_total=candidate_scan_total,
+            extra_missing_data=tuple(extra_missing_data),
             limit=limit,
         )
+        mark("dashboard_build")
+        refresh_state = (
+            "failed" if candidate_scan_error else
+            "pending" if overview_pending or candidate_scan_state == "pending" else
+            "ready"
+        )
+        dashboard = dashboard.model_copy(update={
+            "refresh_state": refresh_state,
+            "snapshot_at": persisted.snapshot_at if persisted is not None else None,
+            "refresh_started_at": now if refresh_state != "ready" else None,
+            "refresh_finished_at": now if refresh_state == "ready" else None,
+            "snapshot_source": "computed",
+        })
+        if self.snapshot_store is not None and refresh_state == "ready":
+            dashboard = dashboard.model_copy(update={"snapshot_at": now})
+            self.snapshot_store.save(dashboard)
+            mark("snapshot_save")
+        if self.shadow_ledger is not None and refresh_state == "ready":
+            self.shadow_ledger.freeze(dashboard)
+            mark("shadow_freeze")
+        return finish(dashboard)
+
+    def _record_shared_snapshot(
+        self, result: QuantStrategyDashboard, *, latency_ms: int
+    ) -> None:
+        registry = self.shared_snapshot_registry
+        if registry is None:
+            return
+        projection = result.model_dump(
+            mode="json",
+            exclude={
+                "generated_at", "observed_at", "next_refresh_at",
+                "refresh_started_at", "refresh_finished_at",
+                "candidate_scan_at", "trigger_evidence_at",
+            },
+        )
+        encoded = json.dumps(
+            projection, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        stages = {item.key: item.count for item in result.candidate_funnel.stages}
+        universe = stages.get("universe", 0)
+        factor_ready = stages.get("factor_ready", 0)
+        coverage = round(factor_ready / universe * 100, 2) if universe else None
+        try:
+            registry.record(
+                "quant_factors",
+                content_hash=hashlib.sha256(encoded).hexdigest(),
+                trade_date=result.as_of,
+                observed_at=result.observed_at,
+                coverage_percent=coverage,
+                freshness=result.refresh_mode,
+                source=result.snapshot_source,
+                reused=(
+                    result.snapshot_source == "disk" or result.candidate_scan_cached
+                ),
+                latency_ms=latency_ms,
+            )
+        except Exception:
+            return

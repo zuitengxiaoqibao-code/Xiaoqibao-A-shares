@@ -16,7 +16,7 @@ type Props = {
   strategyEnabled: boolean;
 };
 
-function ageSeconds(value: string | Date | null, now: number): number | null {
+function ageSeconds(value: string | Date | null | undefined, now: number): number | null {
   if (!value) return null;
   const timestamp = value instanceof Date ? value.getTime() : Date.parse(value);
   if (!Number.isFinite(timestamp)) return null;
@@ -55,6 +55,17 @@ function candidateScanDeterminate(strategy: QuantStrategyDashboard): { processed
   if (processed === null || total === null || total <= 0 || processed < 0) return null;
   const safeProcessed = Math.min(processed, total);
   return { processed: safeProcessed, total, percent: Math.round((safeProcessed / total) * 100) };
+}
+
+function snapshotLabel(strategy: QuantStrategyDashboard, now: number): string {
+  const age = ageSeconds(strategy.snapshot_at, now);
+  if (strategy.refresh_state === "pending") {
+    return `保留同日快照 · ${ageLabel(age)}`;
+  }
+  if (strategy.refresh_state === "failed") {
+    return `刷新失败 · 保留同日快照 · ${ageLabel(age)}`;
+  }
+  return `最新快照 · ${ageLabel(age)}`;
 }
 
 function statusLabel(status: QuantLiveStatus): string {
@@ -122,9 +133,11 @@ export function QuantLiveStatusBar({
           postclose: "盘后快照",
           stale: "行情陈旧",
         }[strategy.refresh_mode] : statusLabel(strategyStatus)}</b>
-        <small>{strategyEnabled ? `${ageLabel(strategyAge)} · ${strategy?.sources.slice(0, 2).join(" + ") || "本地通达信市场截面"}` : "当前页面未配置策略接口"}</small>
-        {strategyEnabled && strategy && <>
-          <em className="quant-cache-detail">候选扫描：{candidateScanLabel(strategy)} · 触发证据：{cacheLabel(strategy.trigger_evidence_cached, strategy.trigger_evidence_age_seconds)}{strategy.candidate_scan_error ? ` · ${strategy.candidate_scan_error}` : ""}</em>
+          <small>{strategyEnabled ? `${ageLabel(strategyAge)} · ${strategy?.sources.slice(0, 2).join(" + ") || "本地通达信市场截面"}` : "当前页面未配置策略接口"}</small>
+          {strategyEnabled && strategy && <>
+            <em className="quant-snapshot-detail">{snapshotLabel(strategy, now)} · {strategy.snapshot_source === "disk" ? "磁盘缓存" : "本次计算"}</em>
+            <em className="quant-evidence-detail">证据覆盖 {strategy.regime.coverage_percent}% · {strategy.regime.quality}</em>
+            <em className="quant-cache-detail">候选扫描：{candidateScanLabel(strategy)} · 触发证据：{cacheLabel(strategy.trigger_evidence_cached, strategy.trigger_evidence_age_seconds)}{strategy.candidate_scan_error ? ` · ${strategy.candidate_scan_error}` : ""}</em>
           {scanElapsed !== null && <div className="quant-scan-progress-wrap">
             <div
               className={`quant-scan-progress${scanDeterminate ? " determinate" : ""}`}

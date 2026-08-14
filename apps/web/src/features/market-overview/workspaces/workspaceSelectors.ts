@@ -40,6 +40,7 @@ export type WorkspaceMarketModel = {
   themes: DerivedTheme[];
   news: OverviewLiveFeedItem[];
   anomalies: OverviewAnomaly[];
+  stockNames: Map<string, string>;
 };
 
 export function numberValue(value: string | number | null | undefined): number | null {
@@ -142,13 +143,39 @@ function deriveThemes(data: MarketOverviewResponse): DerivedTheme[] {
 }
 
 export function buildWorkspaceMarketModel(data: MarketOverviewResponse): WorkspaceMarketModel {
+  const stockNames = new Map<string, string>();
+  const remember = (symbol: string, name: string | null | undefined) => {
+    const normalized = name?.trim();
+    if (symbol && normalized && normalized !== symbol) stockNames.set(symbol, normalized);
+  };
+  (data.market_stocks ?? []).forEach((item) => remember(item.symbol, item.name));
+  Object.values(data.sector_stocks ?? {}).flat().forEach((item) => remember(item.symbol, item.name));
+  data.large_order_flows?.forEach((item) => remember(item.symbol, item.name));
+  data.official_events?.forEach((item) => remember(item.code, item.name));
+  if (data.review) {
+    [
+      ...(data.review.consecutive_limit_up ?? []),
+      ...(data.review.first_limit_up ?? []),
+      ...(data.review.new_high_100 ?? []),
+      ...(data.review.previous_limit_up ?? []),
+      ...(data.review.volume_breakouts ?? []),
+      ...(data.review.previous_high_breakouts ?? []),
+      ...(data.review.low_position_volume ?? []),
+      ...(data.review.dragon_tiger ?? []),
+    ].forEach((item) => remember(item.symbol, item.name));
+  }
   return {
     stocks: deriveStocks(data),
     sectors: deriveSectors(data),
     themes: deriveThemes(data),
     news: [...data.live_feed].sort((a, b) => new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime()),
     anomalies: [...data.anomalies].sort((a, b) => new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime()),
+    stockNames,
   };
+}
+
+export function stockNameForSymbol(model: WorkspaceMarketModel, symbol: string): string {
+  return model.stockNames.get(symbol) ?? "名称待补齐";
 }
 
 export function stocksForVariant(model: WorkspaceMarketModel, variant: string): DerivedStock[] {
