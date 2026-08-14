@@ -93,6 +93,25 @@ class MarketSentimentRepository:
             );
             CREATE INDEX IF NOT EXISTS ix_market_sentiment_raw_expiry
             ON market_sentiment_raw_batches(expires_at, compressed_content);
+            CREATE TABLE IF NOT EXISTS market_regime_risk_snapshots (
+                sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                trading_date TEXT NOT NULL,
+                risk_score TEXT NOT NULL,
+                observed_at TEXT NOT NULL,
+                formula_version TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS ix_market_regime_risk_date
+            ON market_regime_risk_snapshots(trading_date, formula_version, sequence);
+            CREATE TRIGGER IF NOT EXISTS reject_update_market_regime_risk_snapshots
+            BEFORE UPDATE ON market_regime_risk_snapshots
+            BEGIN
+                SELECT RAISE(ABORT, 'append-only market regime risk snapshots');
+            END;
+            CREATE TRIGGER IF NOT EXISTS reject_delete_market_regime_risk_snapshots
+            BEFORE DELETE ON market_regime_risk_snapshots
+            BEGIN
+                SELECT RAISE(ABORT, 'append-only market regime risk snapshots');
+            END;
             CREATE TRIGGER IF NOT EXISTS reject_update_market_sentiment_snapshots
             BEFORE UPDATE ON market_sentiment_snapshots
             BEGIN
@@ -106,6 +125,56 @@ class MarketSentimentRepository:
             """
         )
         self.connection.commit()
+
+    def append_regime_risk(
+        self,
+        *,
+        trading_date: date,
+        risk_score: Decimal,
+        observed_at: datetime,
+        formula_version: str,
+    ) -> None:
+        if not Decimal("0") <= risk_score <= Decimal("100"):
+            raise ValueError("regime risk score must be between 0 and 100")
+        if not formula_version.strip():
+            raise ValueError("regime risk formula version must not be empty")
+        with self._lock, self.connection:
+            existing = self.connection.execute(
+                """SELECT 1 FROM market_regime_risk_snapshots
+                WHERE trading_date=? AND risk_score=? AND formula_version=?
+                LIMIT 1""",
+                (trading_date.isoformat(), str(risk_score), formula_version),
+            ).fetchone()
+            if existing is not None:
+                return
+            self.connection.execute(
+                """INSERT INTO market_regime_risk_snapshots(
+                    trading_date, risk_score, observed_at, formula_version
+                ) VALUES(?,?,?,?)""",
+                (
+                    trading_date.isoformat(), str(risk_score),
+                    self._utc_text(observed_at), formula_version,
+                ),
+            )
+
+    def previous_regime_risk(
+        self, trading_date: date, *, formula_version: str
+    ) -> Decimal | None:
+        with self._lock:
+            row = self.connection.execute(
+                """SELECT risk_score FROM market_regime_risk_snapshots
+                WHERE trading_date < ? AND formula_version=?
+                ORDER BY trading_date DESC, sequence DESC LIMIT 1""",
+                (trading_date.isoformat(), formula_version),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            return Decimal(str(row["risk_score"]))
+        except (ArithmeticError, ValueError):
+            raise MarketSentimentIntegrityError(
+                "stored regime risk score is invalid"
+            )
 
     def append(
         self,

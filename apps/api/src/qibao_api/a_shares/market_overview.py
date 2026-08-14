@@ -11,7 +11,10 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from qibao_api.a_shares.market_regime import assess_market_regime
+from qibao_api.a_shares.market_regime import (
+    REGIME_FORMULA_VERSION,
+    assess_market_regime,
+)
 from qibao_api.a_shares.unified_events import UnifiedEventProjectionService
 from qibao_api.a_shares.market_sentiment import FORMULA_VERSION
 from qibao_api.contracts.field_evidence import FieldEvidence
@@ -342,6 +345,17 @@ class MarketOverviewService:
         market_phase = self._market_phase(local_now)
         warnings: list[str] = []
         sources: list[str] = []
+        previous_risk_score = None
+        previous_risk_reader = getattr(
+            self.sentiment_repository, "previous_regime_risk", None
+        )
+        if callable(previous_risk_reader):
+            try:
+                previous_risk_score = previous_risk_reader(
+                    as_of, formula_version=REGIME_FORMULA_VERSION,
+                )
+            except (OSError, RuntimeError, ValueError):
+                warnings.append("previous_regime_risk_unavailable")
 
         snapshot = self.sentiment_repository.latest(
             trading_date=as_of, formula_version=FORMULA_VERSION
@@ -385,6 +399,19 @@ class MarketOverviewService:
         if local_market is not None:
             breadth = local_market.breadth
             limit_ecology = local_market.limit_ecology
+            flow_coverage = None
+            flow_coverage_reader = getattr(
+                self.fund_flow_repository, "coverage_percent", None
+            )
+            if callable(flow_coverage_reader):
+                try:
+                    flow_coverage = flow_coverage_reader(
+                        as_of,
+                        cutoff=now,
+                        universe_count=local_market.universe_count,
+                    )
+                except (OSError, RuntimeError, ValueError):
+                    warnings.append("fund_flow_coverage_unavailable")
             liquidity = OverviewLiquidity(
                 total_amount_yi=local_market.liquidity.total_amount_yi,
                 baseline_amount_yi=liquidity.baseline_amount_yi,
@@ -392,6 +419,7 @@ class MarketOverviewService:
             )
             regime_metrics = local_market.regime_metrics.model_copy(update={
                 "amt_heat": liquidity.relative_amount,
+                "net_positive_ratio_coverage_percent": flow_coverage,
                 "factor_coverage_percent": (
                     Decimal("90.91")
                     if liquidity.relative_amount is not None
@@ -453,7 +481,19 @@ class MarketOverviewService:
                 max_index_change_percent=max(
                     (item.change_percent for item in indices), default=None
                 ),
+                previous_risk_score=previous_risk_score,
             )
+            risk_writer = getattr(self.sentiment_repository, "append_regime_risk", None)
+            if callable(risk_writer) and regime.risk_score is not None:
+                try:
+                    risk_writer(
+                        trading_date=as_of,
+                        risk_score=regime.risk_score,
+                        observed_at=now,
+                        formula_version=REGIME_FORMULA_VERSION,
+                    )
+                except (OSError, RuntimeError, ValueError):
+                    warnings.append("regime_risk_persistence_unavailable")
         else:
             regime = OverviewRegimeAssessment()
 
@@ -582,6 +622,7 @@ class MarketOverviewService:
             breadth=breadth,
             limit_ecology=limit_ecology,
             liquidity=liquidity,
+            regime_metrics=regime_metrics,
             regime=regime,
             as_of=as_of,
         )
@@ -621,7 +662,7 @@ class MarketOverviewService:
     @staticmethod
     def _field_evidence(
         *, snapshot, local_market, market_data, sentiment, breadth,
-        limit_ecology, liquidity, regime, as_of,
+        limit_ecology, liquidity, regime_metrics, regime, as_of,
     ) -> tuple[FieldEvidence, ...]:
         market_observed_at = market_data.observed_at
         market_source = market_data.source
@@ -690,6 +731,21 @@ class MarketOverviewService:
         ):
             entries.append(market_field(path, source_field, value))
 
+        net_flow = regime_metrics.net_positive_ratio
+        entries.append(FieldEvidence(
+            field_path="regime_metrics.net_positive_ratio",
+            value=net_flow,
+            source="tdx-local-realtime" if net_flow is not None else "unavailable",
+            source_field="net_positive_ratio",
+            status="live" if net_flow is not None else "missing",
+            trade_date=(market_data.observed_at.astimezone(CHINA_TZ).date()
+                        if net_flow is not None and market_data.observed_at else None),
+            observed_at=market_data.observed_at if net_flow is not None else None,
+            coverage_percent=regime_metrics.net_positive_ratio_coverage_percent,
+            derived=False,
+            limitations=() if net_flow is not None else ("全市场资金流覆盖不足",),
+        ))
+
         relative_source = snapshot.observed_at if snapshot is not None else None
         entries.append(FieldEvidence(
             field_path="liquidity.relative_amount",
@@ -708,6 +764,7 @@ class MarketOverviewService:
         for path, value in (
             ("regime.emotion_score", regime.emotion_score),
             ("regime.risk_score", regime.risk_score),
+            ("regime.previous_risk_score", regime.previous_risk_score),
             ("regime.heat_score", regime.heat_score),
             ("regime.rotation_score", regime.rotation_score),
         ):
@@ -722,7 +779,11 @@ class MarketOverviewService:
                 coverage_percent=regime.coverage_percent if value is not None else None,
                 derived=value is not None,
                 formula=regime.formula_version if value is not None else None,
-                limitations=() if value is not None else ("tdx_local_market_unavailable",),
+                limitations=() if value is not None else (
+                    "previous_regime_snapshot_unavailable"
+                    if path == "regime.previous_risk_score"
+                    else "tdx_local_market_unavailable",
+                ),
             ))
         return tuple(entries)
 

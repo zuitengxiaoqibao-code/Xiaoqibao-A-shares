@@ -171,6 +171,24 @@ def _probe_result_is_usable(key: str, result: object, *, method: str | None = No
     return True
 
 
+def _probe_failure_reason(error: Exception) -> tuple[str, str]:
+    """Classify a probe failure without exposing vendor payloads."""
+    message = str(error).lower()
+    if isinstance(error, OSError):
+        if "unsupported" in message or "method" in message:
+            return "method_unavailable", "通达信未提供该只读方法或方法未初始化"
+        if "bridge" in message or "connect" in message or "refused" in message:
+            return "bridge_unavailable", "本地通达信只读桥不可达"
+        return "rpc_unavailable", "本地通达信只读调用失败"
+    if isinstance(error, ValueError):
+        if "empty" in message:
+            return "empty_response", "接口返回空数据包，暂时没有可验证字段"
+        if "professional" in message or "table" in message:
+            return "professional_payload_invalid", "专业接口返回包缺少可验证字段"
+        return "invalid_response", "接口返回结构无法验证"
+    return "probe_error", "只读能力探测失败"
+
+
 def probe_tdx_capabilities(rpc, *, stock_code: str = "600000.SH") -> dict[str, object]:
     """Probe only read-only TDX methods and return honest capability state.
 
@@ -217,13 +235,15 @@ def probe_tdx_capabilities(rpc, *, stock_code: str = "600000.SH") -> dict[str, o
             if not _probe_result_is_usable(key, result, method=method):
                 raise ValueError("empty or invalid response")
         except Exception as error:  # probe must continue and report each method independently
+            reason_code, detail = _probe_failure_reason(error)
             capabilities.append({
                 "key": key,
                 "label": label,
                 "method": method,
                 "status": "unavailable",
                 "semantic_status": "not_applicable",
-                "detail": f"接口不可用（{type(error).__name__}）",
+                "reason_code": reason_code,
+                "detail": detail,
             })
         else:
             capabilities.append({
@@ -232,6 +252,7 @@ def probe_tdx_capabilities(rpc, *, stock_code: str = "600000.SH") -> dict[str, o
                 "method": method,
                 "status": "ready",
                 "semantic_status": "detected_only" if key.startswith("professional_") else "not_applicable",
+                "reason_code": "verified_response",
                 "detail": (
                     "结构响应已验证；字段语义和单位尚未映射，不绑定业务菜单"
                     if key.startswith("professional_")

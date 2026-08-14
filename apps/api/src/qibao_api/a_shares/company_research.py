@@ -567,7 +567,8 @@ class CompanyResearchService:
                 selected_date=selected_date, generated_at=self.clock(),
                 coverage=coverage, base_score=base_score,
                 risk_penalty=risk_penalty, final_score=final_score,
-                history=history, valuation=valuation, reasons=tuple(reasons),
+                history=history, valuation=valuation, profile=profile,
+                reasons=tuple(reasons),
             ),
             sources=self._sources(diagnosis, history, profile),
             reasons=tuple(reasons),
@@ -579,7 +580,7 @@ class CompanyResearchService:
     @staticmethod
     def _field_evidence(
         *, selected_date, generated_at, coverage, base_score, risk_penalty,
-        final_score, history, valuation, reasons,
+        final_score, history, valuation, profile, reasons,
     ) -> tuple[FieldEvidence, ...]:
         coverage_percent = (coverage * Decimal("100")).quantize(Decimal("0.01"))
         final_limitations = tuple(reasons) or (("evidence_coverage_below_60_percent",) if final_score is None else ())
@@ -625,6 +626,44 @@ class CompanyResearchService:
                 coverage_percent=None, derived=False, formula=None,
                 limitations=() if value is not None else (f"{path}_unavailable",),
             ))
+        profile_source = profile.source if profile.source else "unavailable"
+        profile_observed = _observed(profile.observed_at)
+        profile_evidence_id = (_evidence_id(profile.source, "profile"),) if profile.observed_at else ()
+        for path, source_field, value, limitation in (
+            ("profile.company_overview", "company_overview", profile.company_overview, "company_overview_unavailable"),
+            ("profile.industry_analysis", "industry_analysis", profile.industry_analysis, "industry_analysis_unavailable"),
+            ("profile.latest_tips", "latest_tips", Decimal(len(profile.latest_tip_items)), "latest_tips_unavailable"),
+        ):
+            available = bool(value) if path != "profile.latest_tips" else value > 0
+            entries.append(FieldEvidence(
+                field_path=path,
+                value=value if available else None,
+                source=profile_source if available else "unavailable",
+                source_field=source_field,
+                status="cached" if available else "missing",
+                trade_date=selected_date,
+                observed_at=profile_observed if available else None,
+                coverage_percent=coverage_percent if available else None,
+                derived=False,
+                formula=None,
+                evidence_ids=profile_evidence_id if available else (),
+                limitations=() if available else (limitation,),
+            ))
+        forward_available = valuation.forward_pe_status in {"available", "low_confidence"} and valuation.forward_pe is not None
+        entries.append(FieldEvidence(
+            field_path="valuation.forward_pe",
+            value=valuation.forward_pe if forward_available else None,
+            source=valuation.source if forward_available else "unavailable",
+            source_field="forward_pe",
+            status="derived" if forward_available else "missing",
+            trade_date=selected_date,
+            observed_at=valuation.observed_at if forward_available else None,
+            coverage_percent=coverage_percent if forward_available else None,
+            derived=forward_available,
+            formula="price / forward_eps_median" if forward_available else None,
+            evidence_ids=(_evidence_id(valuation.source, "forward_pe"),) if forward_available else (),
+            limitations=() if forward_available else (valuation.forward_pe_reason,),
+        ))
         return tuple(entries)
 
     def _cached_enrichment(self, symbol: str) -> ResearchEnrichmentEvidence:

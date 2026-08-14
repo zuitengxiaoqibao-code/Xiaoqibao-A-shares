@@ -77,6 +77,18 @@ class SentimentRepository:
         return None
 
 
+class RegimeSentimentRepository(SentimentRepository):
+    def __init__(self):
+        super().__init__()
+        self.written = []
+
+    def previous_regime_risk(self, trading_date, **kwargs):
+        return Decimal("68") if trading_date > date(2026, 7, 28) else None
+
+    def append_regime_risk(self, **kwargs):
+        self.written.append(kwargs)
+
+
 def event(
     index: int,
     *,
@@ -247,6 +259,9 @@ class LocalMarketSource:
 
 
 class FundFlowRepository:
+    def coverage_percent(self, as_of, *, cutoff, universe_count):
+        return Decimal("0.02")
+
     def latest(self, symbol, as_of, *, cutoff=None):
         if symbol != "600001":
             return None
@@ -348,15 +363,28 @@ def service(
     clock=lambda: NOW,
     local_market_source=None,
     news_repository=None,
+    sentiment_repository=None,
     **kwargs,
 ) -> MarketOverviewService:
     return MarketOverviewService(
-        sentiment_repository=SentimentRepository(),
+        sentiment_repository=sentiment_repository or SentimentRepository(),
         news_repository=news_repository or NewsRepository(),
         first_limit_up_repository=FirstLimitRepository(), source=source, clock=clock,
         local_market_source=local_market_source,
         **kwargs,
     )
+
+
+def test_overview_uses_and_persists_verified_previous_regime_risk() -> None:
+    repository = RegimeSentimentRepository()
+    result = service(
+        Source(), local_market_source=LocalMarketSource(),
+        sentiment_repository=repository,
+    ).current(NOW)
+
+    assert result.regime.previous_risk_score == Decimal("68")
+    assert repository.written
+    assert repository.written[-1]["formula_version"] == "a-share-short-regime-v2.0"
 
 
 def test_overview_combines_local_sentiment_news_and_tencent_market_data() -> None:
@@ -463,7 +491,10 @@ def test_overview_reuses_snapshot_inside_five_second_window() -> None:
 
 
 def test_overview_prefers_independent_local_realtime_market_statistics() -> None:
-    result = service(Source(), local_market_source=LocalMarketSource()).current(NOW)
+    result = service(
+        Source(), local_market_source=LocalMarketSource(),
+        fund_flow_repository=FundFlowRepository(),
+    ).current(NOW)
 
     assert result.breadth.rising_count == 3000
     assert result.limit_ecology.limit_up_count == 66
@@ -483,6 +514,7 @@ def test_overview_prefers_independent_local_realtime_market_statistics() -> None
     assert result.regime.coverage_percent == Decimal("85.00")
     assert "net_positive_ratio" in result.regime.missing_factors
     assert result.regime.rule_matched is False
+    assert result.regime_metrics.net_positive_ratio_coverage_percent == Decimal("0.02")
     assert "tdx-local-realtime" in result.sources
     evidence = {item.field_path: item for item in result.field_evidence}
     assert evidence["breadth.rising_count"].value == 3000
@@ -493,6 +525,10 @@ def test_overview_prefers_independent_local_realtime_market_statistics() -> None
     assert evidence["sentiment.score"].formula == "a-share-sentiment-v2"
     assert evidence["regime.emotion_score"].derived is True
     assert evidence["regime.emotion_score"].formula == "a-share-short-regime-v2.0"
+    assert evidence["regime_metrics.net_positive_ratio"].status == "missing"
+    assert evidence["regime_metrics.net_positive_ratio"].limitations == (
+        "全市场资金流覆盖不足",
+    )
 
 
 def test_overview_marks_unavailable_market_fields_as_missing_evidence() -> None:

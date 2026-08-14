@@ -268,9 +268,9 @@ export function LocalSourceSettingsSection({ load, detect, save }: Props) {
             <AlertCircle size={15} />
             <span><strong>官方 TdxQuant Python 回退</strong><small>{rpcStatus.direct_python.detail}</small></span>
           </article>
-          {rpcStatus.capabilities.map((capability) => <article key={capability.key} data-status={capability.status}>
+          {rpcStatus.capabilities.map((capability) => <article key={capability.key} data-status={capability.status} data-reason={capability.reason_code ?? "unknown"}>
             {capability.status === "ready" ? <CheckCircle2 size={15} /> : capability.status === "disabled" ? <AlertCircle size={15} /> : <AlertCircle size={15} />}
-            <span><strong>{capability.label}</strong><small>{capability.status === "disabled" ? "桥接未启用" : capability.detail}</small>{capability.semantic_status === "detected_only" && <em>结构响应已验证 · 字段语义/单位未映射</em>}</span>
+            <span><strong>{capability.label}</strong><small>{capability.status === "disabled" ? "桥接未启用" : capability.detail}</small>{capability.status === "unavailable" && capability.reason_code && <em>诊断码：{capability.reason_code}</em>}{capability.semantic_status === "detected_only" && <em>结构响应已验证 · 字段语义/单位未映射</em>}</span>
           </article>)}
         </div>
         <footer>最近探测：{new Date(rpcStatus.observed_at).toLocaleString("zh-CN", { hour12: false })} · 仅探测只读接口，不连接券商、不下单</footer>

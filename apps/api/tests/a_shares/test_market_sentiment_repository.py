@@ -200,3 +200,46 @@ def test_current_formula_queries_never_return_another_formula_version(
     )
     assert baseline is None
     repository.close()
+
+
+def test_previous_postclose_is_read_only_and_filters_formula_version(tmp_path: Path) -> None:
+    repository = MarketSentimentRepository(tmp_path / "sentiment.sqlite3")
+    previous = snapshot(date(2026, 7, 17), phase="postclose")
+    current = snapshot(
+        date(2026, 7, 18), phase="postclose",
+        generated_at=NOW + timedelta(days=1),
+        previous_snapshot_id=previous.snapshot_id,
+    )
+    repository.append(previous, ())
+    repository.append(current, ())
+
+    assert repository.previous_postclose(
+        date(2026, 7, 19), formula_version="a-share-sentiment-v2"
+    ) == current
+    assert repository.previous_postclose(
+        date(2026, 7, 18), formula_version="a-share-sentiment-v2"
+    ) == previous
+    repository.close()
+
+
+def test_regime_risk_history_returns_only_prior_verified_trade_day(tmp_path: Path) -> None:
+    repository = MarketSentimentRepository(tmp_path / "sentiment.sqlite3")
+    repository.append_regime_risk(
+        trading_date=date(2026, 7, 17), risk_score=Decimal("68.5"),
+        observed_at=NOW, formula_version="a-share-short-regime-v2.0",
+    )
+    repository.append_regime_risk(
+        trading_date=date(2026, 7, 18), risk_score=Decimal("42.0"),
+        observed_at=NOW + timedelta(days=1), formula_version="a-share-short-regime-v2.0",
+    )
+
+    assert repository.previous_regime_risk(
+        date(2026, 7, 19), formula_version="a-share-short-regime-v2.0"
+    ) == Decimal("42.0")
+    assert repository.previous_regime_risk(
+        date(2026, 7, 18), formula_version="a-share-short-regime-v2.0"
+    ) == Decimal("68.5")
+    assert repository.previous_regime_risk(
+        date(2026, 7, 19), formula_version="other"
+    ) is None
+    repository.close()

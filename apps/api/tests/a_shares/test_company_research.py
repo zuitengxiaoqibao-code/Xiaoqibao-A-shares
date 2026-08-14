@@ -149,6 +149,19 @@ async def test_company_research_scores_only_verified_dimensions() -> None:
 
 
 @pytest.mark.asyncio
+async def test_company_research_field_evidence_covers_profile_tips_and_forward_valuation() -> None:
+    result = await CompanyResearchService(
+        DiagnosisService(diagnosis()), FinancialSource(financial_history()),
+        ProfileSource(), clock=lambda: NOW,
+    ).get("600519", date(2026, 8, 3))
+
+    evidence = {item.field_path: item for item in result.field_evidence}
+    assert {"profile.company_overview", "profile.industry_analysis", "profile.latest_tips"} <= evidence.keys()
+    assert "valuation.forward_pe" in evidence
+    assert evidence["profile.latest_tips"].source == "mootdx-f10"
+
+
+@pytest.mark.asyncio
 async def test_company_research_freezes_a_version_after_deterministic_analysis() -> None:
     appended = []
 

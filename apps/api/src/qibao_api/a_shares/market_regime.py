@@ -8,6 +8,7 @@ from qibao_api.contracts.market_overview import (
 
 HUNDRED = Decimal("100")
 TWO_PLACES = Decimal("0.01")
+REGIME_FORMULA_VERSION = "a-share-short-regime-v2.0"
 
 
 def _clamp(value: Decimal) -> Decimal:
@@ -192,6 +193,7 @@ def assess_market_regime(
         regime=regime,
         emotion_score=emotion,
         risk_score=risk,
+        previous_risk_score=previous_risk_score,
         heat_score=heat,
         rotation_score=rotation,
         coverage_percent=coverage,

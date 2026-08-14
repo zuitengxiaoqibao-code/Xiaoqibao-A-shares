@@ -615,6 +615,31 @@ class FundFlowRepository:
                 ).fetchone()[0]
             )
 
+    def coverage_percent(
+        self,
+        as_of: date,
+        *,
+        cutoff: datetime | None,
+        universe_count: int,
+    ) -> Decimal | None:
+        """Return verified symbol coverage; never infer a market flow ratio."""
+        if universe_count <= 0:
+            return None
+        clauses = ["latest_trade_date<=?"]
+        params: list[object] = [as_of.isoformat()]
+        if cutoff is not None:
+            clauses.append("observed_at<=?")
+            params.append(cutoff.astimezone(timezone.utc).isoformat())
+        with self._lock:
+            row = self.connection.execute(
+                f"SELECT COUNT(DISTINCT symbol) FROM fund_flow_snapshots WHERE {' AND '.join(clauses)}",
+                params,
+            ).fetchone()
+        count = int(row[0] or 0)
+        return (Decimal(count) / Decimal(universe_count) * Decimal("100")).quantize(
+            Decimal("0.01")
+        )
+
     def close(self) -> None:
         with self._lock:
             self.connection.close()

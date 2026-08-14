@@ -69,8 +69,8 @@ const missingLabels: Record<string, string> = {
   candidate_score: "候选分未达到阈值",
 };
 
-function number(value: string | null): number | null {
-  if (value === null) return null;
+function number(value: string | null | undefined): number | null {
+  if (value == null) return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -266,7 +266,11 @@ export function ShortTermStrategyWorkbench({ dashboard, loading, error }: Props)
       <header><div><Database size={15} /><h3>全市场指标扫描</h3></div><small>ClosePos = (最新价 - 最低价) / max(最高价 - 最低价, 0.01)</small></header>
       <div>{metricDefinitions.map((definition) => {
         const value = number(dashboard.metrics[definition.key]);
-        return <article className={value === null ? "missing" : "ready"} key={definition.key}><span>{definition.label}</span><strong>{value === null ? "--" : `${value.toFixed(definition.suffix === "x" ? 2 : 1)}${definition.suffix}`}</strong><small>{value === null ? "数据待补全" : definition.detail}</small></article>;
+        const flowCoverage = number(dashboard.metrics.net_positive_ratio_coverage_percent);
+        const unavailableDetail = definition.key === "net_positive_ratio" && flowCoverage !== null
+          ? `资金流仅覆盖 ${flowCoverage.toFixed(2)}%，未达到全市场计算门槛`
+          : "数据待补全";
+        return <article className={value === null ? "missing" : "ready"} key={definition.key}><span>{definition.label}</span><strong>{value === null ? "--" : `${value.toFixed(definition.suffix === "x" ? 2 : 1)}${definition.suffix}`}</strong><small>{value === null ? unavailableDetail : definition.detail}</small></article>;
       })}</div>
     </section>
 

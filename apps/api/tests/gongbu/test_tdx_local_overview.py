@@ -127,6 +127,31 @@ def test_market_statistics_cover_breadth_turnover_and_limit_ecology() -> None:
     assert statistics.regime_metrics.factor_coverage_percent == Decimal("81.82")
 
 
+def test_tdx_capability_probe_reports_actionable_failure_reason() -> None:
+    class Rpc:
+        def available(self) -> bool:
+            return True
+
+        def call(self, method, _params):
+            if method == "get_stock_list":
+                return {"ErrorId": "0", "Value": [{"Code": "600000.SH", "Name": "浦发银行"}]}
+            if method == "get_market_snapshot":
+                return {"ErrorId": "0", "Now": "10", "LastClose": "9.9"}
+            if method == "get_sector_list":
+                return {"ErrorId": "0", "Value": [{"Code": "BK001", "Name": "银行"}]}
+            raise OSError("unsupported method")
+
+        def close(self) -> None:
+            return None
+
+    report = probe_tdx_capabilities(Rpc())
+    capability = next(item for item in report["capabilities"] if item["key"] == "professional_stock_trade")
+
+    assert capability["status"] == "unavailable"
+    assert capability["reason_code"] == "method_unavailable"
+    assert "方法" in capability["detail"]
+
+
 def test_market_statistics_compute_close_position_panic_amplitude_and_failed_limit() -> None:
     quotes = (
         TdxRealtimeQuote(

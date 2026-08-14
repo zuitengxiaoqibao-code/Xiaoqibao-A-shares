@@ -113,6 +113,7 @@ export type QuantRegimeMetrics = {
   panic_ratio: string | null;
   amp_ratio: string | null;
   net_positive_ratio: string | null;
+  net_positive_ratio_coverage_percent?: string | null;
   large_amount_strong_close_ratio: string | null;
   factor_coverage_percent: string;
 };
@@ -150,6 +151,7 @@ export type QuantStrategyDashboard = {
     regime: "情绪主升" | "指数权重进攻" | "轮动震荡" | "冰点修复" | "高位退潮" | "缩量混沌" | null;
     emotion_score: string | null;
     risk_score: string | null;
+    previous_risk_score?: string | null;
     heat_score: string | null;
     rotation_score: string | null;
     coverage_percent: string;

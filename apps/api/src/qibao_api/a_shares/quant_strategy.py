@@ -711,6 +711,7 @@ def _strategy_field_evidence(
         for name, value in (
             ("emotion_score", overview.regime.emotion_score),
             ("risk_score", overview.regime.risk_score),
+            ("previous_risk_score", overview.regime.previous_risk_score),
             ("heat_score", overview.regime.heat_score),
             ("rotation_score", overview.regime.rotation_score),
         )

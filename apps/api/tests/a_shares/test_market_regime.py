@@ -40,3 +40,13 @@ def test_regime_engine_prioritizes_high_level_retreat_risk() -> None:
     assert result.risk_score >= Decimal("65")
     assert result.market_coef == Decimal("0.2")
     assert "空仓防守模型" in result.suitable_strategies
+
+
+def test_regime_engine_exposes_previous_risk_only_when_verified() -> None:
+    result = assess_market_regime(
+        metrics(net_positive_ratio=Decimal("52")),
+        previous_risk_score=Decimal("68"),
+    )
+
+    assert result.previous_risk_score == Decimal("68")
+    assert "previous_risk_score" not in result.missing_factors

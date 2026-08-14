@@ -58,6 +58,7 @@ class TdxRpcCapability(BaseModel):
     method: str
     status: Literal["ready", "unavailable", "disabled"]
     semantic_status: Literal["not_applicable", "detected_only", "verified"] = "not_applicable"
+    reason_code: str = "unknown"
     detail: str
 
 

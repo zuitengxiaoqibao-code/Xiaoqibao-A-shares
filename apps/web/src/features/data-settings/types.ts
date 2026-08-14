@@ -168,6 +168,7 @@ export type TdxRpcCapability = {
   method: string;
   status: "ready" | "unavailable" | "disabled";
   semantic_status?: "not_applicable" | "detected_only" | "verified";
+  reason_code?: string;
   detail: string;
 };
 export type TdxRpcStatus = {

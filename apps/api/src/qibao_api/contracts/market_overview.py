@@ -71,6 +71,9 @@ class OverviewRegimeMetrics(BaseModel):
     panic_ratio: Decimal | None = Field(default=None, ge=0, le=100)
     amp_ratio: Decimal | None = Field(default=None, ge=0, le=100)
     net_positive_ratio: Decimal | None = Field(default=None, ge=0, le=100)
+    net_positive_ratio_coverage_percent: Decimal | None = Field(
+        default=None, ge=0, le=100
+    )
     large_amount_strong_close_ratio: Decimal | None = Field(
         default=None, ge=0, le=100
     )
@@ -88,6 +91,7 @@ class OverviewRegimeAssessment(BaseModel):
     ] | None = None
     emotion_score: Decimal | None = Field(default=None, ge=0, le=100)
     risk_score: Decimal | None = Field(default=None, ge=0, le=100)
+    previous_risk_score: Decimal | None = Field(default=None, ge=0, le=100)
     heat_score: Decimal | None = Field(default=None, ge=0, le=100)
     rotation_score: Decimal | None = Field(default=None, ge=0, le=100)
     coverage_percent: Decimal = Field(

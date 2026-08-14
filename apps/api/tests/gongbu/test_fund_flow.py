@@ -392,6 +392,25 @@ async def test_repository_is_append_only_integrity_checked_and_cutoff_bounded(
 
 
 @pytest.mark.asyncio
+async def test_repository_reports_verified_symbol_coverage_without_inventing_ratio(
+    tmp_path,
+) -> None:
+    async def transport(_url, _params, _headers):
+        return response(daily_payload())
+
+    snapshot = await EastmoneyFundFlowSource(
+        transport=transport, clock=lambda: OBSERVED, minimum_interval=0
+    ).fetch("600519")
+    repository = FundFlowRepository(tmp_path / "fund-flow.sqlite3")
+    repository.append(snapshot)
+
+    assert repository.coverage_percent(
+        date(2026, 7, 17), cutoff=OBSERVED, universe_count=4
+    ) == Decimal("25.00")
+    repository.close()
+
+
+@pytest.mark.asyncio
 async def test_service_persists_source_snapshot(tmp_path) -> None:
     payloads = [response(daily_payload()), response(minute_payload())]
 
