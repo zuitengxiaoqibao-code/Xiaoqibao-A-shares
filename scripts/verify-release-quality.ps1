@@ -44,4 +44,19 @@ if ([string]::IsNullOrWhiteSpace([string]$Manifest.exe_sha256) -or $Manifest.exe
     throw "Release executable SHA-256 does not match release manifest"
 }
 
+$DomainStatus = $Manifest.quality_gates.domain_status
+if ($null -eq $DomainStatus) {
+    throw "Release manifest does not contain domain status evidence"
+}
+$AllowedDomainStates = @("ready", "partial", "unavailable", "stale", "error")
+foreach ($Name in @("overview", "quant_strategy", "company_research", "tdx_professional")) {
+    $Domain = $DomainStatus.PSObject.Properties[$Name].Value
+    if ($null -eq $Domain) {
+        throw "Release manifest omits domain status evidence: $Name"
+    }
+    if ([string]$Domain.status -notin $AllowedDomainStates) {
+        throw "Release manifest contains invalid domain status: $Name=$($Domain.status)"
+    }
+}
+
 Write-Host ("Release quality verified: {0}; commit={1}; exe_sha256={2}" -f $ResolvedRoot, $Manifest.commit, $ActualHash)

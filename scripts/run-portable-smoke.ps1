@@ -382,6 +382,52 @@ try {
     if ($UseReleaseData -and (Test-Path -LiteralPath $ReleaseManifestPath)) {
         try {
             $ReleaseManifest = Get-Content -LiteralPath $ReleaseManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $DomainStatus = [ordered]@{
+                overview = [ordered]@{
+                    status = $Overview.status
+                    coverage_percent = $CoveragePercent
+                    quote_count = $Overview.market_data.quote_count
+                    universe_count = $Overview.market_data.universe_count
+                    observed_at = $Overview.observed_at
+                }
+                source_health = [ordered]@{
+                    status = if ($SourceHealthStatus -eq "degraded") { "partial" } else { $SourceHealthStatus }
+                    source_count = @($SourceHealth.sources).Count
+                    ready_count = @($SourceHealth.sources | Where-Object { $_.status -eq "ready" }).Count
+                    observed_at = $SourceHealth.observed_at
+                }
+                quant_strategy = [ordered]@{
+                    status = $QuantStrategyStatus
+                    candidate_count = if ($null -eq $QuantStrategy) { 0 } else { $QuantStrategy.candidates.Count }
+                    coverage_percent = if ($null -eq $QuantStrategy) { $null } else { $QuantStrategy.regime.coverage_percent }
+                    formula_version = if ($null -eq $QuantStrategy) { $null } else { $QuantStrategy.formula_version }
+                    detail = $QuantDetail
+                }
+                portfolio_risk = [ordered]@{
+                    status = $PortfolioRisk.status
+                    position_count = $PortfolioRisk.positions.Count
+                    warning_count = $PortfolioRisk.warnings.Count
+                    detail = $PortfolioRiskDetail
+                }
+                company_research = [ordered]@{
+                    status = $CompanyResearchStatus
+                    symbol = if ($null -eq $CompanyResearch) { $null } else { $CompanyResearch.symbol }
+                    evidence_coverage = if ($null -eq $CompanyResearch) { $null } else { $CompanyResearch.evidence_coverage }
+                    counter_case_count = if ($null -eq $CompanyResearch) { 0 } else { $CompanyResearch.counter_case.Count }
+                    detail = $CompanyResearchDetail
+                }
+                tdx_professional = [ordered]@{
+                    status = $ProfessionalStatus
+                    probes = @($ProfessionalResults | ForEach-Object {
+                        [ordered]@{
+                            method = $_.method
+                            table = $_.table
+                            status = $_.status
+                            detail = $_.detail
+                        }
+                    })
+                }
+            }
             $QualityGateSummary = [ordered]@{
                 state = $QualityGateState
                 smoke = "pass"
@@ -390,6 +436,7 @@ try {
                 data_integrity_ratio = if ($null -eq $CoveragePercent) { $null } else { [Math]::Round($CoveragePercent / 100.0, 4) }
                 data_status = $Overview.status
                 warnings = @($QualityWarnings)
+                domain_status = $DomainStatus
                 observed_at = (Get-Date).ToUniversalTime().ToString("o")
             }
             if ($ReleaseManifest.PSObject.Properties.Name -contains "quality_gates") {

@@ -12,7 +12,16 @@ Describe "verify-release-quality" {
             source_state = "clean"
             exe_sha256 = $hash
             persistent_dirs = @("config", "data", "news", "cache", "logs", "models", "exports", "backups")
-        } | ConvertTo-Json
+            quality_gates = [ordered]@{
+                state = "pass"
+                domain_status = [ordered]@{
+                    overview = [ordered]@{ status = "ready" }
+                    quant_strategy = [ordered]@{ status = "partial" }
+                    company_research = [ordered]@{ status = "partial" }
+                    tdx_professional = [ordered]@{ status = "unavailable" }
+                }
+            }
+        } | ConvertTo-Json -Depth 10
         Set-Content -LiteralPath (Join-Path $script:fixture "release-manifest.json") -Value $manifest -Encoding UTF8
     }
 
@@ -24,6 +33,16 @@ Describe "verify-release-quality" {
 
     It "rejects a release missing persistent state" {
         Remove-Item -LiteralPath (Join-Path $script:fixture "news") -Recurse -Force
+        $failed = $false
+        try { & "$PSScriptRoot\verify-release-quality.ps1" -ReleaseRoot $script:fixture } catch { $failed = $true }
+        $failed | Should Be $true
+    }
+
+    It "rejects a release without domain status evidence" {
+        $manifestPath = Join-Path $script:fixture "release-manifest.json"
+        $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
+        $manifest.quality_gates.PSObject.Properties.Remove("domain_status")
+        Set-Content -LiteralPath $manifestPath -Value ($manifest | ConvertTo-Json -Depth 10) -Encoding UTF8
         $failed = $false
         try { & "$PSScriptRoot\verify-release-quality.ps1" -ReleaseRoot $script:fixture } catch { $failed = $true }
         $failed | Should Be $true
