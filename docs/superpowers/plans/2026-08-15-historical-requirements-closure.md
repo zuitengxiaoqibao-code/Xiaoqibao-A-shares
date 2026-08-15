@@ -89,9 +89,9 @@
 
 ### Final Verification
 
-- [ ] Current evidence ledger is updated from fresh test/smoke outputs.
-- [ ] API/Web/Ruff/build checks pass.
-- [ ] PowerShell/Pester tests pass, including startup performance and manifest validation.
-- [ ] Portable EXE rebuild preserves all eight persistent directories.
-- [ ] Real EXE smoke and release quality gate pass or explicitly report truthful warnings.
-- [ ] Project memory and Vault validation are updated from confirmed facts only.
+- [x] Current evidence ledger is updated from fresh test/smoke outputs.
+- [x] API/Web/Ruff/build checks pass.
+- [x] PowerShell/Pester tests pass, including startup performance and manifest validation.
+- [x] Portable EXE rebuild preserves all eight persistent directories.
+- [x] Real EXE smoke and release quality gate pass or explicitly report truthful warnings.
+- [x] Project memory and Vault validation are updated from confirmed facts only.
