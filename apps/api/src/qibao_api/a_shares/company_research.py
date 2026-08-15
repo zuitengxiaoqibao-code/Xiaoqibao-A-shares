@@ -6,6 +6,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from qibao_api.a_shares.diagnosis import AShareDiagnosis
+from qibao_api.a_shares.evidence_graph import build_evidence_graph
 from qibao_api.a_shares.point_in_time import as_of
 from qibao_api.contracts.company_research import (
     CompanyProfileEvidence,
@@ -615,6 +616,7 @@ class CompanyResearchService:
         research_sections = _research_sections(
             symbol, history, valuation, profile, enrichment, dimensions, counter_case,
         )
+        conclusions = _research_conclusions(research_sections, generated_at)
         response = CompanyResearchResponse(
             status=status,
             symbol=symbol,
@@ -633,7 +635,8 @@ class CompanyResearchService:
             enrichment=enrichment,
             decision_ledger=_decision_ledger(symbol, enrichment, valuation, profile, counter_case),
             research_sections=research_sections,
-            conclusions=_research_conclusions(research_sections, generated_at),
+            conclusions=conclusions,
+            evidence_graph=build_evidence_graph(conclusions),
             evidence_ledger=evidence_ledger,
             field_evidence=self._field_evidence(
                 selected_date=selected_date, generated_at=generated_at,

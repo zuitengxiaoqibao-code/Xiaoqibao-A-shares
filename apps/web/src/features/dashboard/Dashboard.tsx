@@ -11,7 +11,7 @@ import type { BacktestRunner } from "../backtest/types";
 import type { ResearchCard } from "./types";
 import type { AuditStatus, ComplianceStatus, RiskStatus } from "../governance/GovernanceViews";
 import type { BondCandidates, BondDashboard, BondDiagnosis, BondDiagnosisBatch } from "../convertible-bonds/types";
-import type { CorrectionInput, NewsIntelligenceBundle } from "../news-intelligence/types";
+import type { CorrectionInput, EventImpactReport, NewsIntelligenceBundle } from "../news-intelligence/types";
 import type { BackupRecord, BackupVerification, CacheCleanupResult, CleanupPreview, ObservabilitySnapshot, OperationsDiagnostics, OperationsStatus, PerformanceSummary } from "../operations/types";
 import type { AShareDiagnosis, CandidateBoard, CandidateScoreLoader } from "../a-shares/types";
 import type { DecisionResponse } from "../decision-workbench/types";
@@ -117,6 +117,7 @@ type Props = {
   loadBondCandidates?: (filters?: Record<string, string>) => Promise<BondCandidates>;
   diagnoseBondBatch?: (limit?: number) => Promise<BondDiagnosisBatch>;
   loadNewsIntelligence?: () => Promise<NewsIntelligenceBundle>;
+  loadEventImpact?: (eventId: string) => Promise<EventImpactReport>;
   syncNews?: (symbol?: string | null) => Promise<Record<string, number>>;
   syncHotspots?: () => Promise<Record<string, number>>;
   createNewsCorrection?: (input: CorrectionInput) => Promise<unknown>;
@@ -271,13 +272,14 @@ function ResearchPanel({ card }: { card: ResearchCard }) {
   );
 }
 
-function SelectedNewsWorkspace({ loadBundle, syncNews, syncHotspots, createCorrection, openNewsCompliance }: {
+function SelectedNewsWorkspace({ loadBundle, loadEventImpact, syncNews, syncHotspots, createCorrection, openNewsCompliance }: {
   loadBundle: () => Promise<NewsIntelligenceBundle>; syncNews: (symbol?: string | null) => Promise<Record<string, number>>;
+  loadEventImpact?: (eventId: string) => Promise<EventImpactReport>;
   syncHotspots?: () => Promise<Record<string, number>>;
   createCorrection: (input: CorrectionInput) => Promise<unknown>; openNewsCompliance: () => void;
 }) {
   const { symbol } = useSelectedInstrument();
-  return <NewsIntelligenceView selectedSymbol={symbol} loadBundle={loadBundle} syncNews={syncNews} syncHotspots={syncHotspots} createCorrection={createCorrection} openNewsCompliance={openNewsCompliance} />;
+  return <NewsIntelligenceView selectedSymbol={symbol} loadBundle={loadBundle} syncNews={syncNews} syncHotspots={syncHotspots} createCorrection={createCorrection} loadEventImpact={loadEventImpact} openNewsCompliance={openNewsCompliance} />;
 }
 
 export function RouteLoadingFallback() {
@@ -290,7 +292,7 @@ export function RouteLoadingFallback() {
   );
 }
 
-export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, analyzePortfolioRisk, loadWatchlistRisk, loadPortfolioRisk, savePortfolioPosition, removePortfolioPosition, loadCompliance, loadAudit, complianceAction, loadBondDashboard, loadBondDiagnosis, loadCachedBondDiagnosis, loadBondCandidates, diagnoseBondBatch, loadNewsIntelligence, syncNews, syncHotspots, createNewsCorrection, loadOperationsStatus, loadOperationsDiagnostics, loadObservability, setSchedulerPaused, createBackup, verifyBackup, runManualJob, cleanupCache, previewStorageCleanup, cleanupStorage, loadPerformanceSummary, loadAShareCandidates, loadAShareCandidateScores, loadAShareDiagnosis, loadDecisionCurrent, loadDecisionDate, loadMarketSentiment, refreshMarketSentiment, loadCandidateSentiments, refreshCandidateSentiments, searchAShareInstruments, loadStockCockpit, loadStockCockpitAI, loadStockTimeline, prepareStockData, loadAISettings, saveAISettings, deleteAISettings, loadLocalSourceSettings, detectLocalSourceSettings, saveLocalSourceSettings, syncAShareUniverse, loadSourceHealth, loadHistorySync, loadHistoryCoverage, loadHistoryRepairCenter, loadHistoryRepairAudits, startHistoryBackfill, pauseHistorySync, resumeHistorySync, loadTdxImport, scanTdxImport, startTdxImport, pauseTdxImport, resumeTdxImport, loadFirstLimitUp, refreshFirstLimitUp, loadQuantTicks, loadKronosForecast, loadWalkForward, loadQuantStrategy, loadQuantShadowDecisions, loadQuantShadowAnalytics, loadQuantCalibration, loadDecisionJournal, createDecisionJournal, loadTdxFormula, loadMarketOverview, loadMarketIntervalReview, loadBreakingNewsAlerts, loadSpeechSettings, loadSpeechVoices, saveSpeechSettings, synthesizeSpeech, loadCompanyResearch, compareCompanyResearch }: Props) {
+export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, analyzePortfolioRisk, loadWatchlistRisk, loadPortfolioRisk, savePortfolioPosition, removePortfolioPosition, loadCompliance, loadAudit, complianceAction, loadBondDashboard, loadBondDiagnosis, loadCachedBondDiagnosis, loadBondCandidates, diagnoseBondBatch, loadNewsIntelligence, loadEventImpact, syncNews, syncHotspots, createNewsCorrection, loadOperationsStatus, loadOperationsDiagnostics, loadObservability, setSchedulerPaused, createBackup, verifyBackup, runManualJob, cleanupCache, previewStorageCleanup, cleanupStorage, loadPerformanceSummary, loadAShareCandidates, loadAShareCandidateScores, loadAShareDiagnosis, loadDecisionCurrent, loadDecisionDate, loadMarketSentiment, refreshMarketSentiment, loadCandidateSentiments, refreshCandidateSentiments, searchAShareInstruments, loadStockCockpit, loadStockCockpitAI, loadStockTimeline, prepareStockData, loadAISettings, saveAISettings, deleteAISettings, loadLocalSourceSettings, detectLocalSourceSettings, saveLocalSourceSettings, syncAShareUniverse, loadSourceHealth, loadHistorySync, loadHistoryCoverage, loadHistoryRepairCenter, loadHistoryRepairAudits, startHistoryBackfill, pauseHistorySync, resumeHistorySync, loadTdxImport, scanTdxImport, startTdxImport, pauseTdxImport, resumeTdxImport, loadFirstLimitUp, refreshFirstLimitUp, loadQuantTicks, loadKronosForecast, loadWalkForward, loadQuantStrategy, loadQuantShadowDecisions, loadQuantShadowAnalytics, loadQuantCalibration, loadDecisionJournal, createDecisionJournal, loadTdxFormula, loadMarketOverview, loadMarketIntervalReview, loadBreakingNewsAlerts, loadSpeechSettings, loadSpeechVoices, saveSpeechSettings, synthesizeSpeech, loadCompanyResearch, compareCompanyResearch }: Props) {
   const selectedInstrument = useOptionalSelectedInstrument();
   const [state, setState] = useState<ViewState>({ kind: "idle" });
   const [symbol, setSymbol] = useState("600000");
@@ -392,7 +394,7 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, an
 
       {activeView === "bonds" && loadBondDashboard && loadBondDiagnosis && loadBondCandidates && <Suspense fallback={<RouteLoadingFallback />}><ConvertibleBondView loadDashboard={loadBondDashboard} loadDiagnosis={loadBondDiagnosis} loadCachedDiagnosis={loadCachedBondDiagnosis} loadCandidates={loadBondCandidates} diagnoseDiscovered={diagnoseBondBatch} openBondCompliance={() => navigate("settings")} /></Suspense>}
 
-      {activeView === "news" && loadNewsIntelligence && syncNews && createNewsCorrection && <Suspense fallback={<RouteLoadingFallback />}><SelectedNewsWorkspace loadBundle={loadNewsIntelligence} syncNews={syncNews} syncHotspots={syncHotspots} createCorrection={createNewsCorrection} openNewsCompliance={() => navigate("settings")} /></Suspense>}
+      {activeView === "news" && loadNewsIntelligence && syncNews && createNewsCorrection && <Suspense fallback={<RouteLoadingFallback />}><SelectedNewsWorkspace loadBundle={loadNewsIntelligence} loadEventImpact={loadEventImpact} syncNews={syncNews} syncHotspots={syncHotspots} createCorrection={createNewsCorrection} openNewsCompliance={() => navigate("settings")} /></Suspense>}
 
       {activeView === "history" && loadDecisionCurrent && <Suspense fallback={<RouteLoadingFallback />}><HistoryReview loadCurrent={loadDecisionCurrent} loadDate={loadDecisionDate} symbol={selectedInstrument?.symbol ?? selectedInstrument?.lastSymbol ?? null} runBacktest={runBacktest} /></Suspense>}
 

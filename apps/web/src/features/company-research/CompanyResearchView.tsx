@@ -19,6 +19,7 @@ import { CompanyResearchSections } from "./CompanyResearchSections";
 import { ResearchVersionChanges } from "./ResearchVersionChanges";
 import { CompanyResearchAIInsight } from "./CompanyResearchAIInsight";
 import { ResearchConclusionBlock } from "./ResearchConclusionBlock";
+import { ResearchEvidenceGraph } from "./ResearchEvidenceGraph";
 import { loadCompanyResearchAI, type CompanyResearchComparison } from "./api";
 import "./companyResearch.css";
 
@@ -165,6 +166,7 @@ function ResearchDashboard({ value, peers, comparison, onOpenAShare, onAddPeer }
       <ScoreGauge label="风险压力" value={risk === null ? null : risk * 4} suffix={risk === null ? "" : ` · 扣${risk.toFixed(1)}分`} tone="risk" />
     </section>
     <ResearchConclusionBlock conclusions={value.conclusions ?? []} />
+    <ResearchEvidenceGraph graph={value.evidence_graph} />
     <ResearchVersionChanges version={value.research_version} />
     <CompanyResearchSections sections={value.research_sections ?? []} />
     {value.research_version && <CompanyResearchAIInsight result={aiResult} loading={aiLoading} error={aiError} />}

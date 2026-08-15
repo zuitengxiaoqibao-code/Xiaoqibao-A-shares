@@ -276,6 +276,95 @@ class ResearchConclusion(BaseModel):
         return self
 
 
+EvidenceGraphNodeKind = Literal[
+    "evidence", "fact", "inference", "judgement", "unavailable"
+]
+
+
+class EvidenceGraphNode(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    node_id: str = Field(min_length=1)
+    kind: EvidenceGraphNodeKind
+    label: str = Field(min_length=1)
+    claim: str = Field(min_length=1)
+    evidence_ids: tuple[str, ...] = ()
+    observed_at: datetime | None = None
+    limitations: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_evidence_boundary(self) -> "EvidenceGraphNode":
+        if self.kind == "unavailable":
+            if self.evidence_ids or self.observed_at is not None:
+                raise ValueError("unavailable node cannot claim evidence")
+            if not self.limitations:
+                raise ValueError("unavailable node requires an explicit limitation")
+        elif self.kind != "evidence" and (not self.evidence_ids or self.observed_at is None):
+            raise ValueError("research graph node requires evidence and observation time")
+        return self
+
+
+class EvidenceGraphEdge(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    source_node_id: str = Field(min_length=1)
+    target_node_id: str = Field(min_length=1)
+    relation: Literal["supports", "derives_from"]
+
+
+class EvidenceGraph(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    nodes: tuple[EvidenceGraphNode, ...] = ()
+    edges: tuple[EvidenceGraphEdge, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_directed_graph(self) -> "EvidenceGraph":
+        node_ids = tuple(item.node_id for item in self.nodes)
+        if len(node_ids) != len(set(node_ids)):
+            raise ValueError("evidence graph node ids must be unique")
+        edge_keys = tuple(
+            (item.source_node_id, item.target_node_id, item.relation)
+            for item in self.edges
+        )
+        if len(edge_keys) != len(set(edge_keys)):
+            raise ValueError("evidence graph edges must be unique")
+        known = set(node_ids)
+        if any(
+            item.source_node_id not in known or item.target_node_id not in known
+            for item in self.edges
+        ):
+            raise ValueError("evidence graph edges must reference known graph nodes")
+        if any(item.source_node_id == item.target_node_id for item in self.edges):
+            raise ValueError("evidence graph cannot contain self edges")
+
+        adjacency: dict[str, list[str]] = {node_id: [] for node_id in node_ids}
+        for item in self.edges:
+            adjacency[item.source_node_id].append(item.target_node_id)
+        visiting: set[str] = set()
+        visited: set[str] = set()
+
+        def visit(node_id: str) -> None:
+            if node_id in visiting:
+                raise ValueError("evidence graph must be acyclic")
+            if node_id in visited:
+                return
+            visiting.add(node_id)
+            for target_id in adjacency[node_id]:
+                visit(target_id)
+            visiting.remove(node_id)
+            visited.add(node_id)
+
+        for node_id in node_ids:
+            visit(node_id)
+        return self
+
+
+ResearchEvidenceGraph = EvidenceGraph
+ResearchEvidenceNode = EvidenceGraphNode
+ResearchEvidenceEdge = EvidenceGraphEdge
+
+
 class CompanyResearchVersionChange(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -365,6 +454,7 @@ class CompanyResearchResponse(BaseModel):
     decision_ledger: tuple[ResearchDecisionLedgerRow, ...] = ()
     research_sections: tuple[CompanyResearchSection, ...] = ()
     conclusions: tuple[ResearchConclusion, ...] = ()
+    evidence_graph: EvidenceGraph = Field(default_factory=EvidenceGraph)
     research_version: CompanyResearchVersion | None = None
     evidence_ledger: tuple[EvidenceLedgerEntry, ...] = ()
     field_evidence: tuple[FieldEvidence, ...] = ()

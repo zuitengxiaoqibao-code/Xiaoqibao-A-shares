@@ -8,7 +8,7 @@ import { syncHistory } from "../features/data-status/api";
 import { runBacktest } from "../features/backtest/api";
 import { complianceAction, loadAudit, loadCompliance, loadRisk } from "../features/governance/api";
 import { diagnoseBondBatch, loadBondCandidates, loadBondDashboard, loadBondDiagnosis, loadCachedBondDiagnosis } from "../features/convertible-bonds/api";
-import { createNewsCorrection, loadNewsIntelligence, syncHotspots, syncNews } from "../features/news-intelligence/api";
+import { createNewsCorrection, loadEventImpact, loadNewsIntelligence, syncHotspots, syncNews } from "../features/news-intelligence/api";
 import { cleanupCache, cleanupStorage, createBackup, loadObservability, loadOperationsDiagnostics, loadOperationsStatus, loadPerformanceSummary, previewStorageCleanup, runManualJob, setSchedulerPaused, verifyBackup } from "../features/operations/api";
 import { loadAShareCandidateScores, loadAShareCandidates, loadAShareDiagnosis } from "../features/a-shares/api";
 import { loadCurrentDecision, loadDecisionDate } from "../features/decision-workbench/api";
@@ -69,7 +69,7 @@ export function App() {
     savePortfolioPosition={savePortfolioPosition}
     removePortfolioPosition={removePortfolioPosition}
     loadBondDashboard={loadBondDashboard} loadBondDiagnosis={loadBondDiagnosis} loadCachedBondDiagnosis={loadCachedBondDiagnosis} loadBondCandidates={loadBondCandidates} diagnoseBondBatch={diagnoseBondBatch}
-    loadNewsIntelligence={loadNewsIntelligence} syncNews={syncNews} syncHotspots={syncHotspots} createNewsCorrection={createNewsCorrection}
+    loadNewsIntelligence={loadNewsIntelligence} loadEventImpact={loadEventImpact} syncNews={syncNews} syncHotspots={syncHotspots} createNewsCorrection={createNewsCorrection}
     loadOperationsStatus={loadOperationsStatus} loadOperationsDiagnostics={loadOperationsDiagnostics} loadObservability={loadObservability} setSchedulerPaused={setSchedulerPaused} createBackup={createBackup} verifyBackup={verifyBackup} runManualJob={runManualJob} cleanupCache={cleanupCache} previewStorageCleanup={previewStorageCleanup} cleanupStorage={cleanupStorage} loadPerformanceSummary={loadPerformanceSummary}
     loadAShareCandidates={loadAShareCandidates} loadAShareCandidateScores={loadAShareCandidateScores} loadAShareDiagnosis={loadAShareDiagnosis}
     searchAShareInstruments={searchAShareInstruments}

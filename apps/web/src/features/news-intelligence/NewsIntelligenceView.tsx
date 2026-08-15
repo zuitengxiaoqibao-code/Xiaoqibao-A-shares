@@ -2,10 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, Clock3, FileSearch, RefreshCw, X } from "lucide-react";
 import { EvidenceLedger } from "../../shared/evidence/EvidenceLedger";
 
-import type { CorrectionInput, NewsEvent, NewsIntelligenceBundle } from "./types";
+import type { CorrectionInput, EventImpactReport, NewsEvent, NewsIntelligenceBundle } from "./types";
 import { friendlyError } from "../../shared/friendlyError";
 import { NewsEventGraph } from "./NewsEventGraph";
 import { NewsEventGrid } from "./NewsEventGrid";
+import { EventImpactPanel } from "./EventImpactPanel";
 
 type Props = {
   selectedSymbol?: string | null;
@@ -13,12 +14,13 @@ type Props = {
   syncNews: (symbol?: string | null) => Promise<Record<string, number>>;
   syncHotspots?: () => Promise<Record<string, number>>;
   createCorrection: (input: CorrectionInput) => Promise<unknown>;
+  loadEventImpact?: (eventId: string) => Promise<EventImpactReport>;
   openNewsCompliance?: () => void;
 };
 type Tab = "timeline" | "briefings" | "quality";
 const phaseName = { premarket: "盘前", intraday: "盘中", postclose: "盘后" };
 
-export function NewsIntelligenceView({ selectedSymbol, loadBundle, syncNews, syncHotspots, createCorrection, openNewsCompliance }: Props) {
+export function NewsIntelligenceView({ selectedSymbol, loadBundle, syncNews, syncHotspots, createCorrection, loadEventImpact, openNewsCompliance }: Props) {
   const [bundle, setBundle] = useState<NewsIntelligenceBundle | null>(null);
   const [tab, setTab] = useState<Tab>("timeline");
   const [selected, setSelected] = useState<NewsEvent | null>(null);
@@ -28,6 +30,9 @@ export function NewsIntelligenceView({ selectedSymbol, loadBundle, syncNews, syn
   const [saving, setSaving] = useState(false);
   const [hotspotLoading, setHotspotLoading] = useState(false);
   const [hotspotError, setHotspotError] = useState("");
+  const [eventImpact, setEventImpact] = useState<EventImpactReport | null>(null);
+  const [impactLoading, setImpactLoading] = useState(false);
+  const [impactError, setImpactError] = useState("");
   const requestVersion = useRef(0);
   function filterSelectedBundle(loaded: NewsIntelligenceBundle, symbol: string | null | undefined) {
     if (!symbol) return loaded;
@@ -45,7 +50,7 @@ export function NewsIntelligenceView({ selectedSymbol, loadBundle, syncNews, syn
   }
   useEffect(() => {
     requestVersion.current += 1;
-    setSelected(null); setReason(""); setBundle(null); setSaving(false); setHotspotLoading(false); setHotspotError("");
+    setSelected(null); setReason(""); setBundle(null); setSaving(false); setHotspotLoading(false); setHotspotError(""); setEventImpact(null); setImpactError("");
     void runBundleRequest(loadBundle, "新闻数据", "loading");
     return () => { requestVersion.current += 1; };
   }, [loadBundle, selectedSymbol]);
@@ -72,6 +77,13 @@ export function NewsIntelligenceView({ selectedSymbol, loadBundle, syncNews, syn
     if (await runBundleRequest(async () => { await createCorrection(correction); return loadBundle(); }, "新闻复核", "saving")) setReason("");
   }
   const selectedInterpretation = selected ? interpretationByEvent.get(selected.event_id) : undefined;
+  async function loadImpact() {
+    if (!selected || !loadEventImpact) return;
+    setImpactLoading(true); setImpactError("");
+    try { setEventImpact(await loadEventImpact(selected.event_id)); }
+    catch (cause) { setImpactError(friendlyError(cause, "事件影响复盘")); }
+    finally { setImpactLoading(false); }
+  }
   const contrary = selected?.citations.filter((item) => selectedInterpretation?.contrary_citation_ids.includes(item.citation_id)) ?? [];
   const verifiedNewsCount = bundle?.events.filter((event) => event.review_state === "verified" && event.event_type !== "market_hotspot").length ?? 0;
   const verifiedHotspotCount = bundle?.events.filter((event) => event.review_state === "verified" && event.event_type === "market_hotspot").length ?? 0;
@@ -86,6 +98,6 @@ export function NewsIntelligenceView({ selectedSymbol, loadBundle, syncNews, syn
     {tab === "timeline" && bundle && (bundle.events.length === 0 ? <div className="news-empty"><FileSearch size={28}/><b>暂无已归档事件</b></div> : <><NewsEventGraph events={bundle.events} interpretations={bundle.interpretations} unifiedEvents={bundle.unifiedEvents} onSelect={setSelected}/><NewsEventGrid events={bundle.events} interpretationByEvent={interpretationByEvent} onSelect={setSelected}/></>)}
     {tab === "briefings" && bundle && <section className="briefing-ledger">{bundle.briefings.length === 0 ? <div className="news-empty"><FileSearch size={28}/><b>暂无冻结简报</b></div> : bundle.briefings.map((item) => <article key={item.report_id}><div><span>{phaseName[item.phase]}</span><time>{item.trading_date}</time></div><strong>{item.sections.watchlist.length} 个观察标的</strong><small>{item.event_ids.length} 个事件 · {item.interpretation_ids.length} 条解释</small></article>)}</section>}
     {tab === "quality" && bundle && <section className="quality-console"><div><span>已核验新闻数</span><strong>{verifiedNewsCount}</strong></div><div><span>已核验热点数</span><strong>{verifiedHotspotCount}</strong></div><div><span>关联当前股票数</span><strong>{relatedStockCount}</strong></div><div><span>最近更新时间</span><strong>{latestUpdate ? new Date(latestUpdate).toLocaleString("zh-CN", { hour12: false }) : "暂无"}</strong></div></section>}
-    {selected && <div className="evidence-backdrop" onClick={() => setSelected(null)}><aside className="evidence-drawer" role="dialog" aria-label="事件证据" onClick={(event) => event.stopPropagation()}><header><div><p className="eyebrow">EVIDENCE CHAIN</p><h2>事件证据</h2></div><button aria-label="关闭证据" onClick={() => setSelected(null)}><X size={18}/></button></header><section><h3>来源引用</h3>{selected.citations.map((citation) => <a href={citation.canonical_url} target="_blank" rel="noreferrer" key={citation.citation_id}><span>{citation.publisher} · {new Date(citation.published_at).toLocaleString("zh-CN")}</span><p>{citation.quoted_text}</p></a>)}</section>{contrary.length > 0 && <section className="contrary-evidence"><h3>相反证据</h3>{contrary.map((citation) => <p key={citation.citation_id}>{citation.quoted_text}</p>)}</section>}{(selected.evidence_ledger?.length ?? 0) > 0 && <EvidenceLedger entries={selected.evidence_ledger!} defaultOpen />}<section className="human-review"><h3>人工复核</h3><label>复核理由<textarea aria-label="复核理由" value={reason} onChange={(event) => setReason(event.target.value)}/></label><button disabled={saving || !reason.trim()} onClick={() => void saveCorrection()}><CheckCircle2 size={15}/>{saving ? "存档中" : "确认并存档"}</button></section></aside></div>}
+    {selected && <div className="evidence-backdrop" onClick={() => setSelected(null)}><aside className="evidence-drawer" role="dialog" aria-label="事件证据" onClick={(event) => event.stopPropagation()}><header><div><p className="eyebrow">EVIDENCE CHAIN</p><h2>事件证据</h2></div><button aria-label="关闭证据" onClick={() => setSelected(null)}><X size={18}/></button></header><section><h3>来源引用</h3>{selected.citations.map((citation) => <a href={citation.canonical_url} target="_blank" rel="noreferrer" key={citation.citation_id}><span>{citation.publisher} · {new Date(citation.published_at).toLocaleString("zh-CN")}</span><p>{citation.quoted_text}</p></a>)}</section>{contrary.length > 0 && <section className="contrary-evidence"><h3>相反证据</h3>{contrary.map((citation) => <p key={citation.citation_id}>{citation.quoted_text}</p>)}</section>}{(selected.evidence_ledger?.length ?? 0) > 0 && <EvidenceLedger entries={selected.evidence_ledger!} defaultOpen />} {loadEventImpact && <section className="event-impact-drawer"><button type="button" onClick={() => void loadImpact()} disabled={impactLoading}>{impactLoading ? "读取影响复盘..." : "查看影响复盘"}</button>{impactError && <p role="alert">{impactError}</p>}{eventImpact && <EventImpactPanel report={eventImpact} />}</section>}<section className="human-review"><h3>人工复核</h3><label>复核理由<textarea aria-label="复核理由" value={reason} onChange={(event) => setReason(event.target.value)}/></label><button disabled={saving || !reason.trim()} onClick={() => void saveCorrection()}><CheckCircle2 size={15}/>{saving ? "存档中" : "确认并存档"}</button></section></aside></div>}
   </main>;
 }

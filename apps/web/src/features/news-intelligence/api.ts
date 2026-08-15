@@ -1,4 +1,4 @@
-import type { CorrectionInput, NewsIntelligenceBundle } from "./types";
+import type { CorrectionInput, EventImpactReport, NewsIntelligenceBundle } from "./types";
 
 async function read<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
@@ -32,3 +32,7 @@ export const syncHotspots = () => read<Record<string, number>>(
 export const createNewsCorrection = (input: CorrectionInput) => read("/api/v1/news/corrections", {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
 });
+
+export const loadEventImpact = (eventId: string) => read<EventImpactReport>(
+  `/api/v1/news/events/${encodeURIComponent(eventId)}/impact`,
+);

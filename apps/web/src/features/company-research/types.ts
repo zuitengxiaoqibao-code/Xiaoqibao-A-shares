@@ -178,6 +178,27 @@ export type ResearchConclusion = {
   limitations: string[];
 };
 
+export type EvidenceGraphNode = {
+  node_id: string;
+  kind: "evidence" | "fact" | "inference" | "judgement" | "unavailable";
+  label: string;
+  claim: string;
+  evidence_ids: string[];
+  observed_at: string | null;
+  limitations: string[];
+};
+
+export type EvidenceGraphEdge = {
+  source_node_id: string;
+  target_node_id: string;
+  relation: "supports" | "derives_from";
+};
+
+export type EvidenceGraph = {
+  nodes: EvidenceGraphNode[];
+  edges: EvidenceGraphEdge[];
+};
+
 export type CompanyResearchVersion = {
   snapshot_id: string;
   version_number: number;
@@ -230,6 +251,7 @@ export type CompanyResearchResponse = {
   decision_ledger?: ResearchDecisionLedgerRow[];
   research_sections?: CompanyResearchSection[];
   conclusions?: ResearchConclusion[];
+  evidence_graph?: EvidenceGraph;
   research_version?: CompanyResearchVersion | null;
   evidence_ledger?: EvidenceLedgerEntry[];
   field_evidence?: FieldEvidence[];

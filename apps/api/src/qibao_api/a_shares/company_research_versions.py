@@ -29,10 +29,14 @@ def _semantic_payload(
     value: CompanyResearchResponse,
     *,
     retain_legacy_provenance: bool = False,
+    include_evidence_graph: bool = False,
 ) -> dict:
+    excluded = {"generated_at", "research_version", "conclusions"}
+    if not include_evidence_graph:
+        excluded.add("evidence_graph")
     payload = value.model_dump(
         mode="json",
-        exclude={"generated_at", "research_version", "conclusions"},
+        exclude=excluded,
     )
 
     def strip_timestamps(item, *, in_evidence_ledger: bool = False):
@@ -55,11 +59,13 @@ def _encoded_semantics(
     value: CompanyResearchResponse,
     *,
     retain_legacy_provenance: bool = False,
+    include_evidence_graph: bool = False,
 ) -> str:
     return json.dumps(
         _semantic_payload(
             value,
             retain_legacy_provenance=retain_legacy_provenance,
+            include_evidence_graph=include_evidence_graph,
         ),
         ensure_ascii=False,
         sort_keys=True,
@@ -275,9 +281,20 @@ class CompanyResearchVersionRepository:
         legacy_semantic_hash = hashlib.sha256(
             _encoded_semantics(value, retain_legacy_provenance=True).encode("utf-8")
         ).hexdigest()
+        legacy_graph_semantic_hash = hashlib.sha256(
+            _encoded_semantics(
+                value,
+                retain_legacy_provenance=True,
+                include_evidence_graph=True,
+            ).encode("utf-8")
+        ).hexdigest()
         if not any(
             hmac.compare_digest(candidate, version.content_hash)
-            for candidate in (semantic_hash, legacy_semantic_hash)
+            for candidate in (
+                semantic_hash,
+                legacy_semantic_hash,
+                legacy_graph_semantic_hash,
+            )
         ):
             raise CompanyResearchVersionIntegrityError("company research semantic content differs")
         return value

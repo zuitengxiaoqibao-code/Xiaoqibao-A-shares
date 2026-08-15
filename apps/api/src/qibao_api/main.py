@@ -50,6 +50,7 @@ from qibao_api.a_shares.repository import AShareResearchRepository
 from qibao_api.a_shares.preparation import AStockPreparationService
 from qibao_api.a_shares.stock_timeline import StockTimelineService
 from qibao_api.a_shares.news_alerts import BreakingNewsAlertService
+from qibao_api.a_shares.event_impact import EventImpactService
 from qibao_api.gongbu.baidu_history import BaiduHistorySource
 from qibao_api.gongbu.data_service import FallbackHistorySource, MarketDataService
 from qibao_api.gongbu.full_market_history import FullMarketHistoryService
@@ -169,6 +170,7 @@ from qibao_api.routes.libu import router as libu_router
 from qibao_api.routes.dongchang import router as dongchang_router
 from qibao_api.routes.convertible_bonds import router as convertible_bonds_router
 from qibao_api.routes.news import router as news_router
+from qibao_api.routes.event_impact import router as event_impact_router
 from qibao_api.zhongshu.news_ai import (
     ReloadableNewsAIGateway,
 )
@@ -677,6 +679,9 @@ async def lifespan(application: FastAPI):
                 sample_count=getattr(settings, "kronos_sample_count", 20),
             )
             application.state.bar_repository = bar_repository
+            application.state.event_impact_service = EventImpactService(
+                news_repository, bar_repository
+            )
             application.state.market_data_service = MarketDataService(
                 FallbackHistorySource(history_sources),
                 bar_repository,
@@ -1451,6 +1456,7 @@ app.include_router(libu_router)
 app.include_router(dongchang_router)
 app.include_router(convertible_bonds_router)
 app.include_router(news_router)
+app.include_router(event_impact_router)
 app.include_router(briefings_router)
 app.include_router(operations_router)
 app.include_router(decisions_router)

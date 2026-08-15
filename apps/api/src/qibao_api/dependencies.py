@@ -80,6 +80,10 @@ def get_news_repository(request: Request):
     return request.app.state.news_repository
 
 
+def get_event_impact_service(request: Request):
+    return request.app.state.event_impact_service
+
+
 def get_news_alert_service(request: Request):
     return request.app.state.news_alert_service
 
