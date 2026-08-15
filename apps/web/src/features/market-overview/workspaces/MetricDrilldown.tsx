@@ -1,8 +1,9 @@
 import { BarChart3, Building2, Microscope, Radar, X } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 
 import type { MetricContract } from "../../../shared/evidence/metricContract";
 import { ScreenerWorkbench } from "../../../shared/screener/ScreenerWorkbench";
+import { rememberDrilldownSymbols } from "../../../shared/workspace/workspaceState";
 
 export type DrilldownStock = {
   symbol: string;
@@ -51,6 +52,9 @@ export function MetricDrilldownPanel({ selection, onClose, actions }: {
 }) {
   const stocks = selection.stocks ?? [];
   const contract = selection.contract;
+  useEffect(() => {
+    if (stocks.length > 0) rememberDrilldownSymbols(selection.label, stocks.map((stock) => stock.symbol));
+  }, [selection.label, stocks]);
   return <section className="metric-drilldown-panel" role="region" aria-label={`${selection.label} 明细`}>
     <header>
       <div><small>FILTER / EVIDENCE</small><h4>{selection.label} 明细</h4><p>{selection.source} · 统计值 {selection.value}</p></div>
@@ -71,7 +75,7 @@ export function MetricDrilldownPanel({ selection, onClose, actions }: {
     {selection.unavailableReason
       ? <div className="metric-drilldown-unavailable"><BarChart3 size={22} /><b>当前只有聚合统计</b><p>{selection.unavailableReason}</p></div>
       : stocks.length > 0
-        ? <ScreenerWorkbench rows={stocks}>{(filteredStocks) => <div className="metric-drilldown-stocks">{filteredStocks.map((stock) => <article key={`${selection.label}-${stock.symbol}`}>
+        ? <ScreenerWorkbench rows={stocks} storageScope={`metric-drilldown:${selection.label}`}>{(filteredStocks) => <div className="metric-drilldown-stocks">{filteredStocks.map((stock) => <article key={`${selection.label}-${stock.symbol}`}>
           <div><b>{stock.name}</b><code>{stock.symbol}</code><p>{stock.reason}</p></div>
           {stock.value !== undefined && <strong>{stock.value}</strong>}
           <nav aria-label={`${stock.symbol} ${stock.name} 研究入口`}>

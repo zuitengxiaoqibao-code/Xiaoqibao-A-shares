@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createInstrumentDirectory } from "./instrumentDirectory";
+import { createInstrumentDirectory, normalizeAShareSymbolSet } from "./instrumentDirectory";
 
 const items = [
   { symbol: "600519", name: "贵州茅台", short_name: "茅台", historical_names: ["贵州茅台酒"], search_aliases: ["gzmt", "maotai"], exchange: "sh" as const, observed_at: "2026-08-13T09:30:00+08:00", quote_quality: "ready" as const, industry: "白酒", sectors: ["消费"], trading_status: "active" as const },
@@ -8,6 +8,9 @@ const items = [
 ];
 
 describe("instrument directory", () => {
+  it("normalizes drilldown symbols to unique verified A-share codes", () => {
+    expect(normalizeAShareSymbolSet(["600519", "113065", "600519", "000001", "bad"])).toEqual(["600519", "000001"]);
+  });
   it("searches code, Chinese name and precomputed aliases synchronously", () => {
     const directory = createInstrumentDirectory(items);
     expect(directory.search("6005").map((item) => item.symbol)).toEqual(["600519"]);

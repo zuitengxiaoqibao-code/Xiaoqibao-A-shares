@@ -25,6 +25,7 @@ import { FieldEvidenceDetails } from "../../shared/evidence/FieldEvidenceDetails
 import { SectorHeatmapPanel } from "../../shared/visualization/SectorHeatmapPanel";
 import { featureDisplayLabel, featureMeta } from "./featureCatalog";
 import { appendUniqueEntities, mergeEntitySnapshot, resolveIncrementalResponse } from "../../shared/incrementalResource";
+import { loadWorkspaceState, updateWorkspaceFilter } from "../../shared/workspace/workspaceState";
 import "./overview.css";
 
 const expectedIndices = [
@@ -116,7 +117,9 @@ function defaultWorkspaceForSnapshot(response: MarketOverviewResponse): string {
 const MARKET_OVERVIEW_FEATURE_KEY = "qibao-market-overview-feature";
 
 function storedWorkspace(): string | null {
-  const stored = safeStorageGet(MARKET_OVERVIEW_FEATURE_KEY, "");
+  const legacy = safeStorageGet(MARKET_OVERVIEW_FEATURE_KEY, "");
+  const restored = loadWorkspaceState()?.filters["market-overview"]?.activeFeature;
+  const stored = legacy || (typeof restored === "string" ? restored : "");
   return featureMeta[stored as keyof typeof featureMeta] ? stored : null;
 }
 
@@ -230,6 +233,7 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, onOpenCompa
     hasAppliedDefaultFeatureRef.current = true;
     setActiveFeature(feature);
     safeStorageSet(MARKET_OVERVIEW_FEATURE_KEY, feature);
+    updateWorkspaceFilter("market-overview", { activeFeature: feature });
   };
 
   const focusedRegion = anomalyFeatures.has(activeFeature)

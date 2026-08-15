@@ -5,6 +5,12 @@ export type InstrumentDirectory = {
   resolve: (symbol: string) => AShareInstrument | undefined;
 };
 
+const A_SHARE_SYMBOL = /^(?:(?:000|001|002|003|300|301|600|601|603|605|688|689|920)\d{3}|[48]\d{5})$/;
+
+export function normalizeAShareSymbolSet(symbols: Iterable<string>): string[] {
+  return [...new Set([...symbols].filter((symbol) => symbol !== "000300" && A_SHARE_SYMBOL.test(symbol)))];
+}
+
 function terms(item: AShareInstrument): string[] {
   return [
     item.symbol, item.name, item.short_name ?? "", ...(item.historical_names ?? []),

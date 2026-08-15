@@ -1,5 +1,6 @@
 import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from "react";
 import { commitLocation, LOCATION_CHANGE_EVENT } from "./location";
+import { loadWorkspaceState, saveWorkspaceState } from "../../shared/workspace/workspaceState";
 
 export type SelectionSource = "candidate" | "search" | "watchlist" | "cache" | "url";
 
@@ -24,11 +25,12 @@ function symbolFromLocation(): string | null {
 }
 
 export function SelectedInstrumentProvider({ children }: { children: ReactNode }) {
-  const initialSymbol = symbolFromLocation();
+  const urlSymbol = symbolFromLocation();
+  const initialSymbol = urlSymbol ?? (window.location.pathname === "/convertible-bonds" ? null : loadWorkspaceState()?.symbol ?? null);
   const [lastSymbol, setLastSymbol] = useState(initialSymbol);
   const [state, setState] = useState<Pick<SelectedInstrument, "symbol" | "source" | "selectedAt">>({
     symbol: initialSymbol,
-    source: initialSymbol ? "url" : null,
+    source: initialSymbol ? urlSymbol ? "url" : "cache" : null,
     selectedAt: initialSymbol ? new Date().toISOString() : null,
   });
 
@@ -36,7 +38,10 @@ export function SelectedInstrumentProvider({ children }: { children: ReactNode }
     const restore = (event?: Event) => {
       const symbol = symbolFromLocation();
       const requestedSource = event instanceof CustomEvent ? event.detail?.source as SelectionSource | undefined : undefined;
-      if (symbol) setLastSymbol(symbol);
+      if (symbol) {
+        setLastSymbol(symbol);
+        saveWorkspaceState({ symbol });
+      }
       setState({ symbol, source: symbol ? requestedSource ?? "url" : null, selectedAt: symbol ? new Date().toISOString() : null });
     };
     window.addEventListener("popstate", restore);
@@ -57,6 +62,7 @@ export function SelectedInstrumentProvider({ children }: { children: ReactNode }
     clear() {
       const url = new URL(window.location.href);
       url.searchParams.delete("symbol");
+      saveWorkspaceState({ symbol: null });
       commitLocation(`${url.pathname}${url.search}${url.hash}`);
     },
   }), [lastSymbol, state]);

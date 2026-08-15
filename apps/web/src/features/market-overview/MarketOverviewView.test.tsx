@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MarketOverviewView } from "./MarketOverviewView";
 import { writeMarketOverviewCache } from "./marketOverviewCache";
+import { loadWorkspaceState } from "../../shared/workspace/workspaceState";
 import type { MarketOverviewResponse } from "./types";
 import type { BreakingNewsAlertResponse } from "../news-alerts/types";
 
@@ -377,6 +378,7 @@ describe("MarketOverviewView", () => {
     expect(screen.getByRole("button", { name: "炸板" })).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(screen.getByRole("button", { name: "板块涨停" }));
     expect(localStorage.getItem("qibao-market-overview-feature")).toBe("板块涨停");
+    expect(loadWorkspaceState()?.filters["market-overview"]?.activeFeature).toBe("板块涨停");
   });
 
   it("shows the same-day cache immediately while the newest snapshot is still loading", async () => {

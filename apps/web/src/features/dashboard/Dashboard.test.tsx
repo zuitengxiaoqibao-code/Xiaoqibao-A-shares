@@ -8,6 +8,7 @@ import type { FirstLimitUpBoard } from "../first-limit-up/types";
 import type { MarketOverviewResponse } from "../market-overview/types";
 import type { StockCockpitSnapshot } from "../stock-cockpit/types";
 import type { QuantStrategyDashboard } from "../quant-analysis/types";
+import { loadWorkspaceState, saveWorkspaceState } from "../../shared/workspace/workspaceState";
 
 const card = {
   asset: "a_share" as const, symbol: "600000", action: "observe" as const, quality: "fresh" as const,
@@ -165,6 +166,21 @@ describe("Dashboard beginner shell", () => {
     expect(window.location.pathname).toBe("/");
     expect(await screen.findByRole("heading", { name: "信息总览" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "信息总览" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("restores the last valid primary menu on a fresh root launch", async () => {
+    saveWorkspaceState({ route: "/today-decision", menu: "dashboard", symbol: "600519", scrollTop: 320 });
+    render(<SelectedInstrumentProvider><Dashboard
+      loadSnapshot={() => Promise.resolve(card)}
+      loadDecisionCurrent={() => Promise.resolve(emptyDecision)}
+      loadMarketSentiment={() => Promise.resolve(marketSentiment)}
+    /></SelectedInstrumentProvider>);
+
+    expect(await screen.findByRole("region", { name: "A 股监控首页" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "今日研判" })).toHaveAttribute("aria-current", "page");
+    expect(window.location.pathname).toBe("/today-decision");
+    expect(new URL(window.location.href).searchParams.get("symbol")).toBe("600519");
+    expect(loadWorkspaceState()?.route).toBe("/today-decision");
   });
 
   it("keeps today decision available on its own stable route", async () => {

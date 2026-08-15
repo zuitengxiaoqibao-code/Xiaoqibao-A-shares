@@ -26,6 +26,7 @@ import { StockDecisionCockpit } from "../stock-cockpit/StockDecisionCockpit";
 import type { InstrumentSearchResponse, StockCockpitSnapshot } from "../stock-cockpit/types";
 import { commitLocation } from "../instrument-selection/location";
 import { useOptionalSelectedInstrument, useSelectedInstrument } from "../instrument-selection/SelectedInstrumentProvider";
+import { loadWorkspaceState, saveWorkspaceState } from "../../shared/workspace/workspaceState";
 import { BeginnerNavigation, type BeginnerView } from "../beginner-shell/BeginnerNavigation";
 import type { FirstLimitUpBoard } from "../first-limit-up/types";
 import type { DecisionJournalCreator, DecisionJournalLoader, QuantCalibrationLoader, QuantForecastLoader, QuantShadowAnalyticsLoader, QuantShadowLoader, QuantStrategyLoader, QuantTickLoader, QuantWalkForwardLoader, TdxFormulaLoader } from "../quant-analysis/types";
@@ -219,6 +220,13 @@ function viewFromPath(path: string): ActiveView {
   return "market_overview";
 }
 
+const pathsForView: Record<ActiveView, string> = {
+  market_overview: "/market-overview", dashboard: "/today-decision", a_shares: "/a-shares",
+  company_research: "/company-research", first_limit_up: "/first-limit-up",
+  quant_analysis: "/first-limit-up/quant-analysis", risk: "/risk", history: "/history",
+  settings: "/settings", operations: "/operations", bonds: "/convertible-bonds", news: "/news-intelligence",
+};
+
 const sourceNames: Record<string, string> = { tencent: "腾讯行情" };
 
 function formatObservedAt(value: string): string {
@@ -297,7 +305,13 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, an
   const [state, setState] = useState<ViewState>({ kind: "idle" });
   const [symbol, setSymbol] = useState("600000");
   const [dataState, setDataState] = useState<DataStatusState>({ kind: "idle" });
-  const [activeView, setActiveView] = useState<ActiveView>(viewFromPath(window.location.pathname));
+  const [activeView, setActiveView] = useState<ActiveView>(() => {
+    if (window.location.pathname === "/") {
+      const restored = loadWorkspaceState();
+      if (restored?.route) return viewFromPath(restored.route);
+    }
+    return viewFromPath(window.location.pathname);
+  });
   const [cockpitRefreshToken, setCockpitRefreshToken] = useState(0);
   const [latestCockpit, setLatestCockpit] = useState<StockCockpitSnapshot | null>(null);
   const [candidateSentiments, setCandidateSentiments] = useState<CandidateSentimentBatch | null>(null);
@@ -306,6 +320,14 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, an
     candidateSentiments,
     selectedSymbol,
   );
+  useEffect(() => {
+    if (window.location.pathname !== "/") return;
+    const restored = loadWorkspaceState();
+    if (!restored?.route || restored.route === "/" || restored.route === "/market-overview") return;
+    const next = new URL(restored.route, window.location.origin);
+    if (restored.symbol && restored.route !== "/convertible-bonds") next.searchParams.set("symbol", restored.symbol);
+    window.history.replaceState({}, "", `${next.pathname}${next.search}`);
+  }, []);
   useEffect(() => { if (latestCockpit && latestCockpit.symbol !== selectedSymbol) setLatestCockpit(null); }, [latestCockpit, selectedSymbol]);
   useEffect(() => {
     const syncPath = () => setActiveView(viewFromPath(window.location.pathname));
@@ -319,27 +341,42 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, an
   useEffect(() => {
     if (activeView !== "a_shares") setCandidateSentiments(null);
   }, [activeView]);
+  useEffect(() => {
+    const restored = loadWorkspaceState();
+    if (import.meta.env.MODE !== "test" && restored?.route === pathsForView[activeView] && restored.scrollTop > 0) {
+      window.requestAnimationFrame(() => window.scrollTo({ top: restored.scrollTop, behavior: "auto" }));
+    }
+    const saveScroll = () => saveWorkspaceState({
+      route: pathsForView[activeView], menu: activeView,
+      symbol: selectedSymbol, scrollTop: window.scrollY,
+    });
+    window.addEventListener("scroll", saveScroll, { passive: true });
+    return () => window.removeEventListener("scroll", saveScroll);
+  }, [activeView, selectedSymbol]);
   function navigate(view: ActiveView) {
-    const paths: Record<ActiveView, string> = { market_overview: "/market-overview", dashboard: "/today-decision", a_shares: "/a-shares", company_research: "/company-research", first_limit_up: "/first-limit-up", quant_analysis: "/first-limit-up/quant-analysis", risk: "/risk", history: "/history", settings: "/settings", operations: "/operations", bonds: "/convertible-bonds", news: "/news-intelligence" };
-    const next = new URL(paths[view], window.location.origin);
+    const next = new URL(pathsForView[view], window.location.origin);
     const selectedSymbol = new URL(window.location.href).searchParams.get("symbol") ?? selectedInstrument?.lastSymbol;
     if (view !== "bonds" && selectedSymbol) next.searchParams.set("symbol", selectedSymbol);
     commitLocation(`${next.pathname}${next.search}`);
+    saveWorkspaceState({ route: next.pathname, menu: view, symbol: selectedSymbol ?? null, scrollTop: 0 });
     setActiveView(view);
   }
 
   function openOverviewStock(symbol: string) {
     commitLocation(`/a-shares?symbol=${encodeURIComponent(symbol)}`);
+    saveWorkspaceState({ route: "/a-shares", menu: "a_shares", symbol, scrollTop: 0 });
     setActiveView("a_shares");
   }
 
   function openCompanyResearch(symbol: string) {
     commitLocation(`/company-research?symbol=${encodeURIComponent(symbol)}`);
+    saveWorkspaceState({ route: "/company-research", menu: "company_research", symbol, scrollTop: 0 });
     setActiveView("company_research");
   }
 
   function openQuantAnalysis(symbol: string) {
     commitLocation(`/first-limit-up/quant-analysis?symbol=${encodeURIComponent(symbol)}`);
+    saveWorkspaceState({ route: "/first-limit-up/quant-analysis", menu: "quant_analysis", symbol, scrollTop: 0 });
     setActiveView("quant_analysis");
   }
 

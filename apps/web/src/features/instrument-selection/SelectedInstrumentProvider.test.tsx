@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { SelectedInstrumentProvider, useSelectedInstrument } from "./SelectedInstrumentProvider";
 import { commitLocation } from "./location";
+import { saveWorkspaceState } from "../../shared/workspace/workspaceState";
 
 function Probe() {
   const selection = useSelectedInstrument();
@@ -16,7 +17,17 @@ function Probe() {
 }
 
 describe("SelectedInstrumentProvider", () => {
-  beforeEach(() => window.history.replaceState({}, "", "/"));
+  beforeEach(() => {
+    window.history.replaceState({}, "", "/");
+    localStorage.clear();
+  });
+
+  it("restores the last valid A-share when the URL has no symbol", () => {
+    saveWorkspaceState({ route: "/company-research", menu: "公司研究", symbol: "600519" });
+    render(<SelectedInstrumentProvider><Probe /></SelectedInstrumentProvider>);
+    expect(screen.getByText("600519")).toBeInTheDocument();
+    expect(screen.getByText("cache")).toBeInTheDocument();
+  });
 
   it("restores the selected A-share from the symbol query parameter", () => {
     window.history.replaceState({}, "", "/?symbol=600000");
