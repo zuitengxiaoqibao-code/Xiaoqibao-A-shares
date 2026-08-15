@@ -14,6 +14,7 @@ import { QuantChart } from "./QuantChart";
 import { ShortTermStrategyWorkbench } from "./ShortTermStrategyWorkbench";
 import { QuantShadowLedgerPanel } from "./QuantShadowLedgerPanel";
 import { TdxFormulaPanel } from "./TdxFormulaPanel";
+import { WalkForwardEvidenceStrip } from "./WalkForwardEvidenceStrip";
 import { StockEventKline } from "../stock-timeline/StockEventKline";
 import { DataWatermarkStrip } from "../../shared/evidence/DataWatermarkStrip";
 import { buildFactorOption } from "../../shared/visualization/chartOptions";
@@ -33,6 +34,7 @@ import type {
   QuantShadowAnalyticsLoader,
   QuantShadowLoader,
   QuantTickLoader,
+  QuantWalkForwardLoader,
   TdxFormulaLoader,
 } from "./types";
 
@@ -50,6 +52,7 @@ type Props = {
   createDecisionJournal?: DecisionJournalCreator;
   loadTdxFormula?: TdxFormulaLoader;
   loadTimeline?: StockTimelineLoader;
+  loadWalkForward?: QuantWalkForwardLoader;
   selectedSymbol?: string | null;
   searchInstruments?: (query: string) => Promise<InstrumentSearchResponse>;
   onSelectSymbol?: (symbol: string) => void;
@@ -157,11 +160,14 @@ function candidatesFrom(board: FirstLimitUpBoard | null): FirstLimitUpCandidate[
   });
 }
 
-export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, runBacktest, loadKronosForecast, loadQuantStrategy, loadQuantShadowDecisions, loadQuantShadowAnalytics, loadQuantCalibration, loadDecisionJournal, createDecisionJournal, loadTdxFormula, loadTimeline, selectedSymbol, searchInstruments, onSelectSymbol }: Props) {
+export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, runBacktest, loadKronosForecast, loadQuantStrategy, loadQuantShadowDecisions, loadQuantShadowAnalytics, loadQuantCalibration, loadDecisionJournal, createDecisionJournal, loadTdxFormula, loadTimeline, loadWalkForward, selectedSymbol, searchInstruments, onSelectSymbol }: Props) {
   const [selected, setSelected] = useState<string | null>(selectedSymbol ?? null);
   const [selectedIdentity, setSelectedIdentity] = useState<AShareInstrument | null>(null);
   const [backtest, setBacktest] = useState<BacktestResult | null>(null);
   const [backtestError, setBacktestError] = useState("");
+  const [walkForward, setWalkForward] = useState<Awaited<ReturnType<QuantWalkForwardLoader>> | null>(null);
+  const [walkForwardLoading, setWalkForwardLoading] = useState(false);
+  const [walkForwardError, setWalkForwardError] = useState("");
   const [forecast, setForecast] = useState<KronosForecastResponse | null>(null);
   const [forecastLoading, setForecastLoading] = useState(false);
   const [forecastError, setForecastError] = useState("");
@@ -311,6 +317,29 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
   }, [boardAsOf, runBacktest, selected]);
 
   useEffect(() => {
+    if (!selected || !boardAsOf || !loadWalkForward) {
+      setWalkForward(null);
+      setWalkForwardLoading(false);
+      setWalkForwardError("");
+      return;
+    }
+    let active = true;
+    const controller = new AbortController();
+    setWalkForward(null);
+    setWalkForwardLoading(true);
+    setWalkForwardError("");
+    void loadWalkForward(selected, controller.signal)
+      .then((value) => { if (active && value.symbol === selected) setWalkForward(value); })
+      .catch((reason) => {
+        if (active && !(reason instanceof DOMException && reason.name === "AbortError")) {
+          setWalkForwardError("样本外验证暂不可用");
+        }
+      })
+      .finally(() => { if (active) setWalkForwardLoading(false); });
+    return () => { active = false; controller.abort(); };
+  }, [boardAsOf, loadWalkForward, selected]);
+
+  useEffect(() => {
     if (!selected || !boardAsOf || !loadKronosForecast) {
       setForecast(null);
       setForecastLoading(false);
@@ -414,6 +443,12 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
 
       <KronosForecastPanel forecast={selectedForecast} loading={forecastLoading} error={forecastError} />
     </div>
+
+    {loadWalkForward && <WalkForwardEvidenceStrip
+      report={walkForward?.symbol === selected ? walkForward : null}
+      loading={walkForwardLoading}
+      error={walkForwardError}
+    />}
 
     {loadQuantStrategy && <ShortTermStrategyWorkbench
       dashboard={strategyDashboard}

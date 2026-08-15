@@ -150,6 +150,7 @@ from qibao_api.routes.settings import router as settings_router
 from qibao_api.routes.market_sentiment import router as market_sentiment_router
 from qibao_api.routes.market_overview import router as market_overview_router
 from qibao_api.routes.quant_strategy import router as quant_strategy_router
+from qibao_api.routes.walk_forward import router as walk_forward_router
 from qibao_api.routes.portfolio_risk import router as portfolio_risk_router
 from qibao_api.routes.first_limit_up import router as first_limit_up_router
 from qibao_api.routes.tdx_local import router as tdx_local_router
@@ -1457,6 +1458,7 @@ app.include_router(settings_router)
 app.include_router(market_sentiment_router)
 app.include_router(market_overview_router)
 app.include_router(quant_strategy_router)
+app.include_router(walk_forward_router)
 app.include_router(portfolio_risk_router)
 app.include_router(watchlist_risk_router)
 app.include_router(first_limit_up_router)

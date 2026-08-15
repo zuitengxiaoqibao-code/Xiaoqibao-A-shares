@@ -1,4 +1,4 @@
-import type { DecisionJournalCreate, DecisionJournalEntry, IntradayTick, KronosForecastResponse, QuantCalibrationReport, QuantShadowAnalytics, QuantShadowDecisionRecord, QuantStrategyDashboard, TdxFormulaResponse } from "./types";
+import type { DecisionJournalCreate, DecisionJournalEntry, IntradayTick, KronosForecastResponse, QuantCalibrationReport, QuantShadowAnalytics, QuantShadowDecisionRecord, QuantStrategyDashboard, TdxFormulaResponse, WalkForwardReport } from "./types";
 import { coalescedFetch } from "../../shared/coalescedFetch";
 import { requestLedger } from "../../shared/performance/requestLedger";
 
@@ -32,6 +32,29 @@ export async function loadKronosForecast(
     throw new Error(`Kronos 预测请求失败 (${response.status})`);
   }
   return response.json() as Promise<KronosForecastResponse>;
+}
+
+export async function loadWalkForward(
+  symbol: string,
+  signal?: AbortSignal,
+): Promise<WalkForwardReport> {
+  return requestLedger.run(`walk-forward:${symbol}`, async () => {
+    const response = await fetch(`/api/v1/a-shares/${encodeURIComponent(symbol)}/walk-forward`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        backtest: { strategy: "sma_cross", fast_window: 5, slow_window: 20 },
+        train_bars: 120,
+        validation_bars: 60,
+        test_bars: 60,
+        step_bars: 60,
+        minimum_closed_trades: 5,
+      }),
+      signal,
+    });
+    if (!response.ok) throw new Error(`样本外验证请求失败 (${response.status})`);
+    return response.json() as Promise<WalkForwardReport>;
+  }, { domain: "walk-forward" });
 }
 
 export async function loadQuantStrategy(limit = 12): Promise<QuantStrategyDashboard> {

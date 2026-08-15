@@ -54,6 +54,47 @@ export type QuantForecastLoader = (
   horizon?: number,
 ) => Promise<KronosForecastResponse>;
 
+export type WalkForwardReport = {
+  symbol: string;
+  status: "ready" | "partial" | "unavailable";
+  generated_at: string;
+  source: string;
+  window_count: number;
+  windows: Array<{
+    index: number;
+    train_start: string;
+    train_end: string;
+    validation_start: string;
+    validation_end: string;
+    test_start: string;
+    test_end: string;
+    train_return: string;
+    validation_return: string;
+    test_return: string;
+    test_max_drawdown: string;
+    test_closed_trade_count: number;
+  }>;
+  closed_trade_count: number;
+  minimum_closed_trades: number;
+  win_rate: string | null;
+  profit_loss_ratio: string | null;
+  max_drawdown: string | null;
+  sharpe_ratio: string | null;
+  average_test_return: string | null;
+  strategy_score: string | null;
+  score_formula: string | null;
+  factor_decay: Array<{ horizon: 1 | 3 | 5 | 10 | 20; sample_count: number; average_return: string | null; hit_rate: string | null }>;
+  parameter_policy: "frozen_before_validation";
+  out_of_sample_tuning: "prohibited";
+  parameter_snapshot_hash: string;
+  limitations: string[];
+};
+
+export type QuantWalkForwardLoader = (
+  symbol: string,
+  signal?: AbortSignal,
+) => Promise<WalkForwardReport>;
+
 export type QuantStrategyCandidate = {
   symbol: string;
   name: string;
