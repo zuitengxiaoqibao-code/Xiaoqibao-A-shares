@@ -6,6 +6,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from qibao_api.a_shares.diagnosis import AShareDiagnosis
+from qibao_api.a_shares.point_in_time import as_of
 from qibao_api.contracts.company_research import (
     CompanyProfileEvidence,
     CompanyResearchDimension,
@@ -380,6 +381,12 @@ def _observed(value: datetime | date | None) -> datetime | None:
     return None
 
 
+def _observed_as_of(value: datetime | date | None, selected_date: date) -> datetime | None:
+    observed = _observed(value)
+    cutoff = datetime.combine(selected_date, time.max, tzinfo=timezone.utc)
+    return _observed(as_of({"observed_at": observed}, cutoff)) if observed is not None else None
+
+
 def _financial_unavailable(reason: str) -> FinancialHistory:
     return FinancialHistory(
         status="unavailable", periods=(), annual_periods=(), latest_period=None,
@@ -459,6 +466,15 @@ class CompanyResearchService:
                 })
             raise diagnosis_result
         diagnosis: AShareDiagnosis = diagnosis_result
+        research_cutoff = datetime.combine(selected_date, time.max, tzinfo=timezone.utc)
+        if (
+            history_observed := _observed(getattr(financial_result, "observed_at", None))
+        ) is not None and history_observed > research_cutoff:
+            financial_result = _financial_unavailable("财务证据晚于研究截止时间，未纳入历史结论")
+        if (
+            profile_observed := _observed(getattr(profile_result, "observed_at", None))
+        ) is not None and profile_observed > research_cutoff:
+            profile_result = _profile_unavailable("F10证据晚于研究截止时间，未纳入历史结论")
         history = (
             _financial_unavailable(f"新浪财务历史不可用：{financial_result}")
             if isinstance(financial_result, Exception) else financial_result

@@ -35,6 +35,7 @@ from qibao_api.contracts.quant_strategy import (
 from qibao_api.contracts.evidence_ledger import EvidenceLedgerEntry
 from qibao_api.contracts.field_evidence import FieldEvidence
 from qibao_api.a_shares.quant_strategy_snapshot import QuantStrategySnapshotStore
+from qibao_api.a_shares.point_in_time import filter_as_of
 from qibao_api.a_shares.quant_candidate_process import (
     scan_candidate_board_from_local_bars,
 )
@@ -158,9 +159,12 @@ class ArchivedTriggerEvidenceSource:
         cutoff: datetime,
         stock: OverviewFeatureStock | None,
     ) -> TriggerEvidence:
-        ticks = tuple(self.poll_repository.intraday_snapshots(
-            symbol, trading_date, cutoff=cutoff,
-        ))
+        ticks = filter_as_of(
+            self.poll_repository.intraday_snapshots(
+                symbol, trading_date, cutoff=cutoff,
+            ),
+            cutoff,
+        )
         ticks = tuple(sorted(ticks, key=lambda item: item.observed_at))
         latest = ticks[-1] if ticks else None
         sampled_vwap = self._sampled_vwap(ticks)
