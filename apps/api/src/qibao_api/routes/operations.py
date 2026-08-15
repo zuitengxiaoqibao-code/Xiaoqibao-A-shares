@@ -31,6 +31,7 @@ from qibao_api.dependencies import (
     get_scheduler,
     get_task_progress_registry,
     get_performance_store,
+    get_precompute_snapshot_store,
     get_observability_store,
     get_replay_snapshot_store,
     get_shared_snapshot_registry,
@@ -237,6 +238,34 @@ def performance_summary(
         "metrics": store.summary(),
         "snapshots": store.snapshot_summary(),
     }
+
+
+@router.get("/precompute-snapshots")
+def precompute_snapshot_inventory(
+    store: Annotated[object, Depends(get_precompute_snapshot_store)],
+):
+    return {
+        "generated_at": datetime.now(timezone.utc),
+        "snapshots": store.summary(),
+    }
+
+
+@router.get("/precompute-snapshots/{domain}")
+def precompute_snapshot(
+    domain: str,
+    store: Annotated[object, Depends(get_precompute_snapshot_store)],
+    trade_date: date | None = None,
+    data_version: str | None = Query(default=None, min_length=1, max_length=128),
+):
+    try:
+        snapshot = store.latest_complete(
+            domain, trade_date=trade_date, data_version=data_version
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail="未知的预计算域") from error
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail="尚无可用的完整预计算快照")
+    return snapshot.to_dict()
 
 
 @router.get("/observability")

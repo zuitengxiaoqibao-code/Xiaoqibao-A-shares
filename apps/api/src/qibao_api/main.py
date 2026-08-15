@@ -190,6 +190,10 @@ from qibao_api.tasks.progress import TaskProgressRegistry
 from qibao_api.bootstrap.lazy_service import AsyncLazyService
 from qibao_api.a_shares.company_research_tasks import CompanyResearchTaskService
 from qibao_api.operations.performance_store import PerformanceStore
+from qibao_api.operations.precompute_snapshots import (
+    PrecomputeSnapshotService,
+    PrecomputeSnapshotStore,
+)
 from qibao_api.operations.observability import ObservabilityStore
 from qibao_api.operations.shared_snapshots import SharedSnapshotRegistry
 from qibao_api.storage.replay_snapshot_store import ReplaySnapshotStore
@@ -456,6 +460,10 @@ async def lifespan(application: FastAPI):
         settings.data_dir / "performance.sqlite3",
         shared_snapshot_registry=shared_snapshot_registry,
     )
+    precompute_snapshot_store = PrecomputeSnapshotStore(
+        settings.data_dir / "precomputed-snapshots.sqlite3"
+    )
+    application.state.precompute_snapshot_store = precompute_snapshot_store
     observability_store = ObservabilityStore(settings.data_dir / "observability.sqlite3")
     application.state.observability_store = observability_store
     ai_settings_repository = AISettingsRepository(settings.data_dir)
@@ -972,6 +980,11 @@ async def lifespan(application: FastAPI):
             application.state.history_sync_repository = history_sync_repository
             application.state.tdx_import_repository = tdx_import_repository
             application.state.history_sync_executor = history_sync_executor
+            application.state.precompute_snapshot_service = PrecomputeSnapshotService(
+                precompute_snapshot_store,
+                executor=history_sync_executor,
+                performance_store=application.state.performance_store,
+            )
             application.state.tdx_import_executor = history_sync_executor
             application.state.tdx_import_service = TdxLocalImportService(
                 bar_repository,

@@ -139,6 +139,10 @@ def get_performance_store(request: Request):
     return request.app.state.performance_store
 
 
+def get_precompute_snapshot_store(request: Request):
+    return request.app.state.precompute_snapshot_store
+
+
 def get_observability_store(request: Request):
     return request.app.state.observability_store
 
