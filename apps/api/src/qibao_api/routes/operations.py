@@ -4,6 +4,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from qibao_api.contracts.briefing import BriefingPhase
+from qibao_api.contracts.data_lineage import DataLineageResponse
 from qibao_api.contracts.data_quality_matrix import DataQualityItem, DataQualityMatrix
 from qibao_api.contracts.source_health import SourceHealthResponse
 from qibao_api.contracts.task_progress import TaskProgress
@@ -15,6 +16,7 @@ from qibao_api.contracts.replay_snapshot import (
 )
 from qibao_api.dependencies import (
     get_backup_service,
+    get_data_lineage_repository,
     get_operations_read_model,
     get_operations_repository,
     get_tdx_auto_import_monitor,
@@ -30,6 +32,29 @@ from qibao_api.operations.freshness import DEFAULT_FRESHNESS_POLICIES
 
 
 router = APIRouter(prefix="/api/v1/operations", tags=["工部运维"])
+
+
+@router.get("/data-lineage", response_model=DataLineageResponse)
+def data_lineage(
+    repository: Annotated[object, Depends(get_data_lineage_repository)],
+    domain: str | None = Query(default=None, min_length=1, max_length=128),
+    field: str | None = Query(default=None, min_length=1, max_length=128),
+    symbol: str | None = Query(default=None, min_length=1, max_length=32),
+    trade_date: date | None = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+) -> DataLineageResponse:
+    records = repository.list(
+        domain=domain,
+        field=field,
+        symbol=symbol,
+        trade_date=trade_date,
+        limit=limit,
+    )
+    return DataLineageResponse(
+        generated_at=datetime.now(timezone.utc),
+        count=len(records),
+        records=tuple(records),
+    )
 
 
 @router.get("/tasks/{task_id}", response_model=TaskProgress)

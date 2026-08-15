@@ -182,6 +182,7 @@ from qibao_api.routes.briefings import router as briefings_router
 from qibao_api.shangshu.postclose_context import RepositoryPostcloseContextSource
 from qibao_api.shangshu.operations_repository import OperationsRepository
 from qibao_api.operations.read_model import OperationsReadModel
+from qibao_api.operations.data_lineage import DataLineageRepository
 from qibao_api.tasks.progress import TaskProgressRegistry
 from qibao_api.bootstrap.lazy_service import AsyncLazyService
 from qibao_api.a_shares.company_research_tasks import CompanyResearchTaskService
@@ -588,6 +589,9 @@ async def lifespan(application: FastAPI):
     operations_repository = OperationsRepository(
         settings.data_dir / "operations.sqlite3"
     )
+    data_lineage_repository = DataLineageRepository(
+        settings.data_dir / "data-lineage.sqlite3"
+    )
     source_health_snapshot_task = asyncio.create_task(
         _source_health_snapshot_loop(
             operations_repository, observability=observability_store
@@ -596,6 +600,7 @@ async def lifespan(application: FastAPI):
     )
     tdx_auto_import_task = None
     application.state.operations_repository = operations_repository
+    application.state.data_lineage_repository = data_lineage_repository
     application.state.operations_read_model = OperationsReadModel(portable_root)
     log_startup_stage("repositories-ready")
 
@@ -1383,6 +1388,7 @@ async def lifespan(application: FastAPI):
                 compliance.close()
                 audit_repository.close()
                 operations_repository.close()
+                data_lineage_repository.close()
                 replay_snapshot_store.close()
                 observability_store.close()
                 candidate_sentiment_repository.close()

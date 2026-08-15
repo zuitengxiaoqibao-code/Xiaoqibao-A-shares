@@ -104,6 +104,10 @@ def get_operations_repository(request: Request):
     return request.app.state.operations_repository
 
 
+def get_data_lineage_repository(request: Request):
+    return request.app.state.data_lineage_repository
+
+
 def get_operations_read_model(request: Request):
     configured = getattr(request.app.state, "operations_read_model", None)
     if configured is not None:
