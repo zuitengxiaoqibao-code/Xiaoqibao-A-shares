@@ -1,50 +1,172 @@
-# Task 5 Implementation Report
+# Task 5 Report: 公司研究证据图谱与事件影响
 
-Base commit: `6677263`
+## 实现摘要
 
-## Delivered
+- 新增公司研究有向证据图：以原始证据、事实、推导、判断和不可用结论为节点，使用 `supports` / `derives_from` 有向边连接；模型校验未知节点、重复边、自环、环路及不可用节点伪造证据。
+- `CompanyResearchService` 在确定性研究结论后生成 `evidence_graph`；展示型证据图不改变既有公司研究语义哈希，并兼容字段新增前后的历史快照校验口径。
+- 新增新闻事件影响契约、计算服务和 API：`GET /api/v1/news/events/{event_id}/impact`。报告使用引用中的首次发布时间、事件类型、真实关联股票/板块和本地真实日线计算 1/3/5/20 个交易日收益。
+- 重复新闻通过 `NewsRepository` 聚类显式标注；关联置信度低于 0.70、待复核/拒绝关联、缺少基准日线或完整收益窗口均保持 `partial` / `unavailable`，不填充代理值。
+- 板块缺少可验证的板块/指数日线时生成显式 `unavailable` 目标，不使用成分股均值代替板块收益。
+- 公司研究页新增证据图面板；新闻事件证据抽屉新增按需影响复盘。正收益使用市场上涨红色，负收益使用市场下跌绿色，缺失窗口显示“不可用”。
+- 应用入口已接入事件影响请求；FastAPI 生命周期注册 `EventImpactService`，桌面 EXE 构建包含新增路由和前端。
 
-- Preserved the selected A-share `symbol` across dashboard, A-share research, news, risk, compliance, audit, and backtest routes.
-- Added production routes for `/risk`, `/compliance`, `/audit`, and `/backtest`, including browser history restoration.
-- Removed `symbol` when entering `/convertible-bonds`; the bond workspace does not consume A-share selection state.
-- Displayed the selected A-share in news; governance pages explicitly identify their data as global or asset-level and show any A-share code only as navigation context.
-- Filtered news events to the selected A-share while retaining market-wide events with no instrument binding; isolated stale news responses after same-route symbol changes.
-- Made backtest default to the selected A-share without overwriting a symbol explicitly edited by the user. Input changes abort and invalidate older requests, results identify their own symbol, and bond/index codes are rejected.
-- Updated README and V1 roadmap with candidate/search/watchlist workflow, explicit degradation behavior, asset isolation, observation-only boundary, and current completion state.
-- Connected the A-share research workspace to the same URL-backed global selection, including direct URL diagnosis restore and candidate-to-global selection updates.
-- Corrected the cockpit quote DTO mapping to prefer backend `market.metrics.price`, with an explicit legacy `latest_price` fallback.
-- Isolated retained cockpit snapshots by `(symbol, live|historical date)` so only same-context refresh failures may show stale data.
-- Preserved specific unavailable explanations alongside normalized section reason codes.
-- Added cutoff-aware instrument identity resolution; historical cockpits cannot use an identity observed after their snapshot cutoff.
+## 提交 SHA
 
-## TDD Evidence
+`19307cb97525876a613d1f93cb1ab7bf1fdb2e02`
 
-- Added failing tests first for news selection/filtering, stale response isolation, backtest default/edit behavior, cross-workspace deep links, browser history, and bond symbol removal.
-- Focused final-review tests: `43 backend` and `19 frontend` passed after red/green implementation.
-- Full frontend suite: `107 passed`.
+提交：`feat: add evidence graph and news event impact review`
 
-## Verification
+## TDD 红灯记录
 
-- API tests: `532 passed in 40.24s` with ASCII-only `QIBAO_DATA_DIR`.
-- Ruff: all checks passed.
-- Frontend tests: `107 passed`.
-- Frontend production build: TypeScript and Vite build passed (`1606 modules transformed`).
-- Mojibake scan: no matches.
-- `git diff --check`: clean.
+### 后端 RED
 
-Browser acceptance at `1440x900` and `390x844` is intentionally left to the controller as requested.
+命令：
 
-## On-demand assessment integration
+```powershell
+& '.venv/Scripts/python.exe' -m pytest tests/a_shares/test_evidence_graph.py tests/a_shares/test_event_impact.py -q
+```
 
-- README and the V1 roadmap now separate deterministic assessment for any verified A-share from the candidate-only simulation layer.
-- Documentation lists `QIBAO_AI_BASE_URL`, `QIBAO_AI_API_KEY`, and `QIBAO_AI_MODEL` without claiming that AI is configured.
-- Unconfigured or failed AI preserves the deterministic assessment. The system does not connect to brokers, execute trades, or constitute investment advice.
-- The service integration test covers one candidate and two non-candidates: all retain an assessment, while non-candidates have no current ledger advice or simulation-plan reference.
-- A FastAPI `TestClient` integration test now exercises `research_router`, dependency overrides, the real cockpit service, and Pydantic JSON serialization for the same candidate/non-candidate contract.
-- The explicit premarket cutoff regression now verifies that a recovery starting one microsecond after the cutoff still passes the frozen `window_end`, remains unblocked, and uses no observation after that boundary.
+原始结果：
 
-Initial assessment integration verification: API `567 passed`; Ruff clean; frontend `116 passed`; TypeScript and Vite production build passed; focused cockpit and premarket tests `38 passed`; mojibake scan and `git diff --check` clean. Review follow-up verification is recorded in the subsequent commit.
+```text
+ERROR tests/a_shares/test_evidence_graph.py
+ModuleNotFoundError: No module named 'qibao_api.a_shares.evidence_graph'
+ERROR tests/a_shares/test_event_impact.py
+ModuleNotFoundError: No module named 'qibao_api.a_shares.event_impact'
+2 errors in 0.41s
+```
 
-Review follow-up verification: route, cockpit-service, and premarket focused suites `66 passed`; full API suite `569 passed`; Ruff clean; mojibake scan and `git diff --check` clean.
+### 前端 RED
 
-Real-browser acceptance at `1440x900` and `390x844` remains assigned to the controller and is not claimed here.
+命令：
+
+```powershell
+npm test -- --run src/features/company-research/ResearchEvidenceGraph.test.tsx src/features/news-intelligence/EventImpactPanel.test.tsx
+```
+
+原始结果：
+
+```text
+Failed to resolve import "./ResearchEvidenceGraph"
+Failed to resolve import "./EventImpactPanel"
+Test Files 2 failed (2)
+```
+
+## 验证命令与原始结果
+
+### API 全量测试
+
+```powershell
+& '.venv/Scripts/python.exe' -m pytest -q
+```
+
+```text
+1409 passed, 1 skipped, 5 warnings in 42.90s
+```
+
+5 个 warning 均来自 `exchange_calendars` / pandas timedelta 的第三方 DeprecationWarning。
+
+### 新增契约、边界和历史兼容聚焦测试
+
+```powershell
+& '.venv/Scripts/python.exe' -m pytest tests/a_shares/test_evidence_graph.py tests/a_shares/test_event_impact.py tests/a_shares/test_company_research_versions.py -q
+```
+
+```text
+10 passed in 0.74s
+```
+
+### Ruff
+
+```powershell
+& '.venv/Scripts/python.exe' -m ruff check src tests/a_shares/test_evidence_graph.py tests/a_shares/test_event_impact.py
+```
+
+```text
+All checks passed!
+```
+
+### Web 全量测试
+
+```powershell
+npm test -- --run
+```
+
+```text
+Test Files 117 passed (117)
+Tests 663 passed (663)
+Duration 19.78s
+```
+
+### Web 关键集成复测
+
+```powershell
+npm test -- --run src/features/dashboard/Dashboard.test.tsx src/features/news-intelligence/NewsIntelligenceView.test.tsx src/features/company-research/CompanyResearchView.test.tsx src/features/company-research/ResearchEvidenceGraph.test.tsx src/features/news-intelligence/EventImpactPanel.test.tsx
+```
+
+```text
+Test Files 5 passed (5)
+Tests 58 passed (58)
+Duration 6.82s
+```
+
+### TypeScript / Vite 生产构建
+
+```powershell
+npm run build
+```
+
+```text
+tsc -b && vite build
+2280 modules transformed
+built in 4.56s
+```
+
+Vite 保留既有大 chunk 警告；构建退出码为 0。
+
+### UTF-8 / diff 检查
+
+```powershell
+rg -n "�" <本任务修改的 API 与 Web 源文件>
+git diff --check
+```
+
+```text
+无匹配；git diff --check 通过。
+```
+
+### 便携 EXE 构建与 smoke
+
+```powershell
+./scripts/build-portable.ps1 -SkipTests
+./scripts/run-portable-smoke.ps1 -Port 18805 -UseReleaseData -ReleaseRootOverride <staged-release>
+```
+
+```text
+Portable smoke passed; window visible in 360ms; API ready in 6648ms;
+verification completed in 22641ms; overview ready coverage=99.94%;
+quant strategy partial (candidates=12; coverage=85.00%);
+company research partial (symbol=600519; coverage=0.65; counter_case=10);
+tdx professional unavailable.
+```
+
+现有便携 EXE 正由用户打开（PID 34308），构建脚本未覆盖、关闭或控制该进程，而是生成 staged release：
+
+`D:\Users\90090\Documents\金融财经\.worktrees\a-share-daily-research\dist\XiaoQiBao-Portable-staged-85d0da80e8784354887506020a08e61a\XiaoQiBao-Portable\xiaoqibao.exe`
+
+该 staged release 将在现有窗口退出后的下次启动自动应用。smoke 仅启动并结束 staged EXE 测试实例，未启动、关闭或控制通达信。
+
+## 已知限制
+
+- 事件收益以首次发布时间为锚点：盘中发布使用前一交易日收盘为基准，收盘后发布使用当日收盘为基准；本地日线不足时相应 1/3/5/20 日窗口保持 `unavailable`。
+- 当前本地仓库没有经过同一口径验证的板块/指数日线，因此板块目标只展示关联和 `unavailable`，不以成分股平均收益作为代理值。
+- 重复标记依赖已冻结的 `NewsRepository` 聚类；尚未入库或未聚类的外部转载无法在当前点时报告中推断为重复。
+- 现有 live release 因用户正在使用而未覆盖；已完成 staged EXE smoke，自动替换将在用户正常退出后下一次启动发生。
+
+## 控制器审查修复
+
+- 事件影响面板不再直接显示内部限制码；1/3/5/20 日窗口、关联状态和板块缺口均显示中文原因，未知内部码安全降级为“状态原因待核验”。
+- 切换或关闭新闻事件时立即清空上一事件的影响报告，并以请求版本隔离迟到响应，避免旧结果挂到新事件。
+- 新增事件影响 API 路由契约测试，覆盖响应模型与中文 404 错误。
+- 新增面板文字由 12px 提升到 13px，保留紧凑布局并改善可读性。
+- 控制器聚焦复测：API 30 项、Web 33 项、事件切换与限制码专项 18 项通过；Ruff 通过。最终全量与 EXE 验收仍留到 v9 全部任务完成后统一执行。
