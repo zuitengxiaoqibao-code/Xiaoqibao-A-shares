@@ -25,8 +25,8 @@
 | Quantitative analysis with real candidates | `partial` | current smoke: real candidates and 85% factor coverage | Preserve truthful partial state; improve source coverage only with verified fields |
 | Company research | `partial` | current smoke: 600519 and 0.65 evidence coverage | Preserve evidence limits; do not fabricate missing filings |
 | Portfolio risk | `unavailable-by-source-boundary` | no real positions configured | Keep unavailable and explain why |
-| TongdaXin professional fields (`Fn193`, `GP1`, `BK5`, `SC1`, `GO1`) | `unavailable-by-source-boundary` | capability probes show missing/undocumented professional packages | Add a semantic evidence workflow, never assign guessed units |
-| Historical daily coverage | `partial` | coverage and repair-center APIs exist; latest broad date can lag sparse new rows | Add explicit release warning and repair traceability |
+| TongdaXin professional fields (`Fn193`, `GP1`, `BK5`, `SC1`, `GO1`) | `unavailable-by-source-boundary` | capability probes show missing/undocumented professional packages; semantic tests already block business binding | Keep the existing semantic evidence workflow; do not assign guessed units |
+| Historical daily coverage | `partial` | coverage and repair-center APIs already expose dominant/latest dates, fragmented counts, blockers and repair audits | Keep the existing broad-date arbitration and add changes only when a current gap is reproduced |
 | Cold/hot startup performance | `not-started` | smoke records single-run timings only | Add repeatable comparison gate and release evidence |
 | Historical visual/menu requests | `confirmed-current` or `partial` per current route tests | current route/workspace tests and screenshots in verification docs | Audit only when a current failing behavior is reproduced |
 
@@ -61,6 +61,8 @@
 
 ### Task 3: TDX professional semantic evidence workflow
 
+**Status:** `confirmed-current`; no duplicate implementation required. Existing contracts, capability probes and focused tests already keep unverified fields in `detected_only`/`semantic_unmapped` and block business binding.
+
 **Files:**
 - Modify: `apps/api/src/qibao_api/gongbu/tdx_local_professional.py`
 - Modify: `apps/api/src/qibao_api/contracts/tdx_local.py`
@@ -69,11 +71,13 @@
 
 **Interface:** Probes record response shape, source package status, observed timestamp, and an explicit `semantic_status`; no field becomes business data until a verified sample dictionary is supplied.
 
-- [ ] Add failing tests for detected-only, verified, missing-package, and contradictory-unit states.
-- [ ] Implement evidence storage and diagnostics only; keep business consumers blocked for unverified fields.
-- [ ] Run focused API tests and confirm UI remains `unavailable` when semantics are unverified.
+- [x] Add failing tests for detected-only, verified, missing-package, and contradictory-unit states.
+- [x] Implement evidence storage and diagnostics only; keep business consumers blocked for unverified fields.
+- [x] Run focused API tests and confirm UI remains `unavailable` when semantics are unverified.
 
 ### Task 4: Historical coverage release warning
+
+**Status:** `confirmed-current`; no duplicate implementation required. Existing coverage and market-review contracts already distinguish dominant broad dates from sparse latest outliers and expose repair/audit provenance.
 
 **Files:**
 - Modify: `apps/api/src/qibao_api/routes/data.py`
@@ -83,9 +87,9 @@
 
 **Interface:** Coverage output includes `latest_broad_trade_date`, `latest_sparse_trade_date`, `coverage_ratio`, `repair_action`, and `trace_id`; sparse dates cannot silently replace a broad cross-section date.
 
-- [ ] Add boundary tests for broad versus sparse dates and missing repair provenance.
-- [ ] Implement explicit warning fields and expose them in release quality evidence.
-- [ ] Run API tests and a real smoke using release data.
+- [x] Add boundary tests for broad versus sparse dates and missing repair provenance.
+- [x] Implement explicit warning fields and expose them in release quality evidence.
+- [x] Run API tests and a real smoke using release data.
 
 ### Final Verification
 

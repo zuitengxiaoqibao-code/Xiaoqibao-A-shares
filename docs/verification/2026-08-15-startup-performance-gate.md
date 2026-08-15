@@ -28,3 +28,7 @@ This change closes a previously unmeasured part of the historical backlog: repea
 ## Data boundary
 
 The release remains `ready` for the market overview, `partial` for quantitative candidates and company research, `unavailable` for portfolio risk without configured positions, and `unavailable` for unverified TongdaXin professional packages. No simulated values were added.
+
+## Historical audit follow-up
+
+Focused API regression for the two remaining audit candidates passed `42 tests`: the existing TongdaXin semantic evidence workflow keeps professional fields `detected_only`/`semantic_unmapped` until independently verified, and the existing history contracts preserve the dominant broad trade date when a sparse later date appears. These areas are therefore classified as `confirmed-current` in the closure plan rather than reimplemented.
