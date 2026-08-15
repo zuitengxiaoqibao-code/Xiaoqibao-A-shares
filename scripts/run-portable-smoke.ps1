@@ -2,7 +2,8 @@
     [int]$Port = 18765,
     [switch]$KeepSmokeRoot,
     [switch]$UseReleaseData,
-    [string]$ReleaseRootOverride = ""
+    [string]$ReleaseRootOverride = "",
+    [string]$PortableRootOverride = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -18,6 +19,11 @@ $ReleaseRoot = if ($ReleaseRootOverride) {
 $Exe = Join-Path $ReleaseRoot "xiaoqibao.exe"
 $PersistentNames = @("config", "data", "news", "cache", "logs", "models", "exports", "backups")
 . "$PSScriptRoot\release-manifest.ps1"
+
+if ($UseReleaseData -and $PortableRootOverride) {
+    throw "UseReleaseData and PortableRootOverride cannot be used together"
+}
+$ExternalPortableRoot = -not [string]::IsNullOrWhiteSpace($PortableRootOverride)
 
 function Repair-Utf8Text([string]$Text) {
     if ([string]::IsNullOrEmpty($Text)) { return $Text }
@@ -38,7 +44,18 @@ function Assert-NoManifestMojibake([string]$Text) {
         throw "Release manifest contains invalid UTF-8 diagnostic text"
     }
 }
-if ($UseReleaseData) {
+if ($ExternalPortableRoot) {
+    $SmokeRoot = (Resolve-Path -LiteralPath $PortableRootOverride).Path
+    foreach ($Name in $PersistentNames) {
+        if (-not (Test-Path -LiteralPath (Join-Path $SmokeRoot $Name) -PathType Container)) {
+            throw "External portable root is missing persistent directory: $Name"
+        }
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $SmokeRoot "web") -PathType Container)) {
+        throw "External portable root is missing web assets"
+    }
+    Write-Host ("External portable root mode: {0}" -f $SmokeRoot)
+} elseif ($UseReleaseData) {
     $SmokeRoot = $ReleaseRoot
     if (-not (Test-Path -LiteralPath $SmokeRoot)) {
         throw "Portable release directory was not found: $SmokeRoot"
@@ -496,7 +513,7 @@ try {
     foreach ($Child in $SmokeChildProcesses) {
         Stop-Process -Id $Child.ProcessId -Force -ErrorAction SilentlyContinue
     }
-    if (-not $UseReleaseData) {
+    if (-not $UseReleaseData -and -not $ExternalPortableRoot) {
         $ResolvedTempRoot = [IO.Path]::GetFullPath($env:TEMP).TrimEnd('\') + '\'
         $ResolvedSmokeRoot = [IO.Path]::GetFullPath($SmokeRoot)
         $IsSmokeDirectory = (Split-Path -Leaf $ResolvedSmokeRoot) -like `
@@ -528,8 +545,11 @@ try {
         if ($KeepSmokeRoot) {
             Write-Host ("Portable smoke root retained: {0}" -f $SmokeRoot)
         }
-    } else {
+    } elseif ($UseReleaseData) {
         Update-ReleaseManifestRuntimeEvidence -ReleaseRoot $SmokeRoot
+        & "$PSScriptRoot\sign-release-manifest.ps1" -ReleaseRoot $SmokeRoot
         Write-Host ("Release data mode: persistent data retained at {0}" -f $SmokeRoot)
+    } else {
+        Write-Host ("External portable root retained: {0}" -f $SmokeRoot)
     }
 }

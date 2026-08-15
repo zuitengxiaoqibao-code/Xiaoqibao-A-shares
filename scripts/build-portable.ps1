@@ -212,6 +212,34 @@ $ExePath = Join-Path $BuiltRelease "xiaoqibao.exe"
 if (Test-Path -LiteralPath $ExePath) {
     $ExeHash = (Get-FileHash -LiteralPath $ExePath -Algorithm SHA256).Hash
 }
+$LatestBackup = Get-ChildItem -LiteralPath (Join-Path $BuiltRelease "backups") -Directory -Filter "backup-*" -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTimeUtc -Descending |
+    Select-Object -First 1
+$BackupBaseline = if ($null -eq $LatestBackup) {
+    [ordered]@{
+        status = "unavailable"
+        latest_backup = $null
+        file_count = 0
+        bytes = 0
+        observed_at = (Get-Date).ToUniversalTime().ToString("o")
+    }
+} else {
+    $BackupFiles = @(Get-ChildItem -LiteralPath $LatestBackup.FullName -Recurse -File -Force)
+    [ordered]@{
+        status = "ready"
+        latest_backup = $LatestBackup.Name
+        file_count = $BackupFiles.Count
+        bytes = [long](($BackupFiles | Measure-Object Length -Sum).Sum)
+        observed_at = $LatestBackup.LastWriteTimeUtc.ToString("o")
+    }
+}
+$Toolchain = [ordered]@{
+    powershell = $PSVersionTable.PSVersion.ToString()
+    python = (& $Python --version 2>&1 | Select-Object -First 1).ToString().Trim()
+    node = (& node.exe --version 2>&1 | Select-Object -First 1).ToString().Trim()
+    pnpm = (& pnpm.cmd --version 2>&1 | Select-Object -First 1).ToString().Trim()
+    pyinstaller = (& $Python -m PyInstaller --version 2>&1 | Select-Object -Last 1).ToString().Trim()
+}
 $ReleaseManifest = [ordered]@{
     version = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
     generated_at = (Get-Date).ToUniversalTime().ToString("o")
@@ -220,6 +248,13 @@ $ReleaseManifest = [ordered]@{
     working_tree_dirty = if ($SourceState -eq "dirty") { $true } elseif ($SourceState -eq "clean") { $false } else { $null }
     dependency_lock_hash = $LockHash
     migration_version = $MigrationVersion
+    toolchain = $Toolchain
+    backup_baseline = $BackupBaseline
+    restore_drill = [ordered]@{
+        status = "pending"
+        mode = "temporary-copy"
+        critical_api_status = "pending"
+    }
     database_files = $DatabaseFiles
     persistent_dirs = $PersistentNames
     exe_sha256 = $ExeHash
@@ -235,6 +270,7 @@ $ReleaseManifest = [ordered]@{
     $ReleaseManifest,
     [Text.UTF8Encoding]::new($false)
 )
+& "$PSScriptRoot\sign-release-manifest.ps1" -ReleaseRoot $BuiltRelease
 Write-Host ("Portable release: {0}" -f $BuiltRelease)
 if ($ReleaseInUse.Count -gt 0) {
     Write-Host "The live release was left untouched because it is currently open."

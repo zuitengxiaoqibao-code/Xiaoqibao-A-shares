@@ -14,6 +14,11 @@ Describe "verify-release-quality" {
             exe_sha256 = $hash
             database_files = @()
             persistent_dirs = @("config", "data", "news", "cache", "logs", "models", "exports", "backups")
+            restore_drill = [ordered]@{
+                status = "pass"
+                mode = "temporary-copy"
+                critical_api_status = "pass"
+            }
             quality_gates = [ordered]@{
                 state = "pass"
                 domain_status = [ordered]@{
@@ -24,7 +29,12 @@ Describe "verify-release-quality" {
                 }
             }
         } | ConvertTo-Json -Depth 10
-        Set-Content -LiteralPath (Join-Path $script:fixture "release-manifest.json") -Value $manifest -Encoding UTF8
+        [IO.File]::WriteAllText(
+            (Join-Path $script:fixture "release-manifest.json"),
+            $manifest,
+            [Text.UTF8Encoding]::new($false)
+        )
+        & "$PSScriptRoot\sign-release-manifest.ps1" -ReleaseRoot $script:fixture
     }
 
     It "accepts a complete release" {
@@ -44,7 +54,33 @@ Describe "verify-release-quality" {
         $manifestPath = Join-Path $script:fixture "release-manifest.json"
         $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
         $manifest.quality_gates.PSObject.Properties.Remove("domain_status")
-        Set-Content -LiteralPath $manifestPath -Value ($manifest | ConvertTo-Json -Depth 10) -Encoding UTF8
+        $manifest.PSObject.Properties.Remove("manifest_signature")
+        [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
+        & "$PSScriptRoot\sign-release-manifest.ps1" -ReleaseRoot $script:fixture
+        $failed = $false
+        try { & "$PSScriptRoot\verify-release-quality.ps1" -ReleaseRoot $script:fixture } catch { $failed = $true }
+        $failed | Should Be $true
+    }
+
+    It "rejects a manifest changed after signing" {
+        $manifestPath = Join-Path $script:fixture "release-manifest.json"
+        $manifest = [IO.File]::ReadAllText($manifestPath, [Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+        $manifest.commit = "tampered"
+        [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
+
+        $failed = $false
+        try { & "$PSScriptRoot\verify-release-quality.ps1" -ReleaseRoot $script:fixture } catch { $failed = $true }
+        $failed | Should Be $true
+    }
+
+    It "rejects a release whose restore drill has not passed" {
+        $manifestPath = Join-Path $script:fixture "release-manifest.json"
+        $manifest = [IO.File]::ReadAllText($manifestPath, [Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+        $manifest.restore_drill.status = "pending"
+        $manifest.PSObject.Properties.Remove("manifest_signature")
+        [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
+        & "$PSScriptRoot\sign-release-manifest.ps1" -ReleaseRoot $script:fixture
+
         $failed = $false
         try { & "$PSScriptRoot\verify-release-quality.ps1" -ReleaseRoot $script:fixture } catch { $failed = $true }
         $failed | Should Be $true

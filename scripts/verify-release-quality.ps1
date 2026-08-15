@@ -17,6 +17,8 @@ if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) {
     throw "Release manifest is missing: $ManifestPath"
 }
 
+& "$PSScriptRoot\sign-release-manifest.ps1" -ReleaseRoot $ResolvedRoot -Verify
+
 $Manifest = [IO.File]::ReadAllText($ManifestPath, [Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
 $ManifestText = [IO.File]::ReadAllText($ManifestPath, [Text.UTF8Encoding]::new($false))
 if ($ManifestText -match '\uFFFD|[\u00C3\u00C2\u00E5\u00E6\u00E7\u00E8\u00E9\u00EF\u00F0][^\r\n]{0,2}[\u0080-\u00BF]') {
@@ -33,6 +35,12 @@ if (-not $AllowDirtySource -and $Manifest.source_state -ne "clean") {
 }
 if ($null -eq $Manifest.migration_version -or [int]$Manifest.migration_version -lt 1) {
     throw "Release manifest contains an invalid migration version"
+}
+if ($null -eq $Manifest.restore_drill -or [string]$Manifest.restore_drill.status -ne "pass") {
+    throw "Release restore drill has not passed"
+}
+if ([string]$Manifest.restore_drill.critical_api_status -ne "pass") {
+    throw "Release restore drill did not verify critical APIs"
 }
 foreach ($Database in @($Manifest.database_files)) {
     $DatabasePath = Join-Path $ResolvedRoot ([string]$Database.path).Replace('/', '\')
