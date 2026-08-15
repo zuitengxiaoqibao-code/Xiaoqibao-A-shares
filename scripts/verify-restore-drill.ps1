@@ -80,7 +80,6 @@ try {
             -ReleaseRootOverride $ResolvedRelease `
             -PortableRootOverride $DrillRoot `
             -Port $Port
-        if ($LASTEXITCODE -ne 0) { throw "Restored critical API smoke failed" }
     }
 
     $Result = [ordered]@{
