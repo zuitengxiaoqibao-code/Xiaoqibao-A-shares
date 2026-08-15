@@ -12,9 +12,12 @@
 
 ## 提交 SHA
 
-`19307cb97525876a613d1f93cb1ab7bf1fdb2e02`
+最终实现 SHA：`5c67451c29b96777ab61847b3823a9c646a1105c`
 
-提交：`feat: add evidence graph and news event impact review`
+- `19307cb97525876a613d1f93cb1ab7bf1fdb2e02` `feat: add evidence graph and news event impact review`
+- `5c67451c29b96777ab61847b3823a9c646a1105c` `fix: keep event impact evidence scoped and readable`
+
+报告记录提交为 `55556bc1e61cbd5fd420cbc084bcd63e674d902b`；该提交只更新任务报告，不改变应用源码。
 
 ## TDD 红灯记录
 
@@ -69,11 +72,11 @@ Test Files 2 failed (2)
 ### 新增契约、边界和历史兼容聚焦测试
 
 ```powershell
-& '.venv/Scripts/python.exe' -m pytest tests/a_shares/test_evidence_graph.py tests/a_shares/test_event_impact.py tests/a_shares/test_company_research_versions.py -q
+& '.venv/Scripts/python.exe' -m pytest tests/a_shares/test_evidence_graph.py tests/a_shares/test_event_impact.py tests/routes/test_event_impact.py tests/a_shares/test_company_research_versions.py -q
 ```
 
 ```text
-10 passed in 0.74s
+12 passed in 0.72s
 ```
 
 ### Ruff
@@ -106,8 +109,8 @@ npm test -- --run src/features/dashboard/Dashboard.test.tsx src/features/news-in
 
 ```text
 Test Files 5 passed (5)
-Tests 58 passed (58)
-Duration 6.82s
+Tests 59 passed (59)
+Duration 6.34s
 ```
 
 ### TypeScript / Vite 生产构建
@@ -127,7 +130,7 @@ Vite 保留既有大 chunk 警告；构建退出码为 0。
 ### UTF-8 / diff 检查
 
 ```powershell
-rg -n "�" <本任务修改的 API 与 Web 源文件>
+rg -n "\x{FFFD}" <本任务修改的 API 与 Web 源文件>
 git diff --check
 ```
 
@@ -139,12 +142,12 @@ git diff --check
 
 ```powershell
 ./scripts/build-portable.ps1 -SkipTests
-./scripts/run-portable-smoke.ps1 -Port 18805 -UseReleaseData -ReleaseRootOverride <staged-release>
+./scripts/run-portable-smoke.ps1 -Port 18806 -UseReleaseData -ReleaseRootOverride <staged-release>
 ```
 
 ```text
-Portable smoke passed; window visible in 360ms; API ready in 6648ms;
-verification completed in 22641ms; overview ready coverage=99.94%;
+Portable smoke passed; window visible in 89ms; API ready in 2789ms;
+verification completed in 16139ms; overview ready coverage=99.94%;
 quant strategy partial (candidates=12; coverage=85.00%);
 company research partial (symbol=600519; coverage=0.65; counter_case=10);
 tdx professional unavailable.
@@ -152,7 +155,7 @@ tdx professional unavailable.
 
 现有便携 EXE 正由用户打开（PID 34308），构建脚本未覆盖、关闭或控制该进程，而是生成 staged release：
 
-`D:\Users\90090\Documents\金融财经\.worktrees\a-share-daily-research\dist\XiaoQiBao-Portable-staged-85d0da80e8784354887506020a08e61a\XiaoQiBao-Portable\xiaoqibao.exe`
+`D:\Users\90090\Documents\金融财经\.worktrees\a-share-daily-research\dist\XiaoQiBao-Portable-staged-087b1d36f3ae4567bc80884915b93e75\XiaoQiBao-Portable\xiaoqibao.exe`
 
 该 staged release 将在现有窗口退出后的下次启动自动应用。smoke 仅启动并结束 staged EXE 测试实例，未启动、关闭或控制通达信。
 
@@ -169,4 +172,4 @@ tdx professional unavailable.
 - 切换或关闭新闻事件时立即清空上一事件的影响报告，并以请求版本隔离迟到响应，避免旧结果挂到新事件。
 - 新增事件影响 API 路由契约测试，覆盖响应模型与中文 404 错误。
 - 新增面板文字由 12px 提升到 13px，保留紧凑布局并改善可读性。
-- 控制器聚焦复测：API 30 项、Web 33 项、事件切换与限制码专项 18 项通过；Ruff 通过。最终全量与 EXE 验收仍留到 v9 全部任务完成后统一执行。
+- 跟进修复聚焦复测：API 12 项、Web 59 项通过；Ruff 通过。最终全量 API、Web、生产构建与 staged EXE 验收均已完成。
