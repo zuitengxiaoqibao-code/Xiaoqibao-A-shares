@@ -1,10 +1,15 @@
 from datetime import date, datetime, timezone
+import hashlib
+import json
+from concurrent.futures import Executor
+from zoneinfo import ZoneInfo
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from qibao_api.contracts.briefing import BriefingPhase
 from qibao_api.contracts.data_lineage import DataLineageResponse
+from qibao_api.contracts.data_gap_repair import DataGapRepairRequest, DataGapRepairResponse
 from qibao_api.contracts.data_quality_matrix import DataQualityItem, DataQualityMatrix
 from qibao_api.contracts.source_health import SourceHealthResponse
 from qibao_api.contracts.task_progress import TaskProgress
@@ -17,6 +22,9 @@ from qibao_api.contracts.replay_snapshot import (
 from qibao_api.dependencies import (
     get_backup_service,
     get_data_lineage_repository,
+    get_full_market_history_service,
+    get_history_sync_executor,
+    get_server_time,
     get_operations_read_model,
     get_operations_repository,
     get_tdx_auto_import_monitor,
@@ -32,6 +40,39 @@ from qibao_api.operations.freshness import DEFAULT_FRESHNESS_POLICIES
 
 
 router = APIRouter(prefix="/api/v1/operations", tags=["工部运维"])
+
+
+@router.post("/data-gaps/repair", response_model=DataGapRepairResponse, status_code=202)
+def repair_data_gaps(
+    request: DataGapRepairRequest,
+    service: Annotated[object, Depends(get_full_market_history_service)],
+    executor: Annotated[Executor, Depends(get_history_sync_executor)],
+    now: Annotated[datetime, Depends(get_server_time)],
+) -> DataGapRepairResponse:
+    current = service.current_job()
+    if current is not None and current.state in {"pending", "running", "paused"}:
+        raise HTTPException(status_code=409, detail="已有全市场日线同步任务")
+    today = now.astimezone(ZoneInfo("Asia/Shanghai")).date()
+    if request.target_date > today:
+        raise HTTPException(status_code=422, detail="不能修复未来交易日缺口")
+    symbols = tuple(dict.fromkeys(item.symbol for item in request.gaps))
+    job = service.jobs.create_job("incremental", request.target_date, symbols)
+    executor.submit(service.run, job.job_id)
+    canonical = json.dumps(
+        request.model_dump(mode="json"), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    job_state = getattr(job, "state", "pending")
+    return DataGapRepairResponse(
+        job_id=job.job_id,
+        state=job_state,
+        target_date=request.target_date,
+        source=request.source,
+        symbols=symbols,
+        gap_count=len(request.gaps),
+        content_hash=hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+        written_rows=0,
+        submitted_at=now.astimezone(timezone.utc),
+    )
 
 
 @router.get("/data-lineage", response_model=DataLineageResponse)
