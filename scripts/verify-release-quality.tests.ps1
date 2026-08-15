@@ -27,6 +27,14 @@ Describe "verify-release-quality" {
                     company_research = [ordered]@{ status = "partial" }
                     tdx_professional = [ordered]@{ status = "unavailable" }
                 }
+                startup_metrics = [ordered]@{
+                    kind = "hot"
+                    state = "pass"
+                    window_visible_ms = 100
+                    api_ready_ms = 2000
+                    full_verification_ms = 3000
+                    observed_at = "2026-08-15T00:00:00Z"
+                }
             }
         } | ConvertTo-Json -Depth 10
         [IO.File]::WriteAllText(
@@ -54,6 +62,18 @@ Describe "verify-release-quality" {
         $manifestPath = Join-Path $script:fixture "release-manifest.json"
         $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
         $manifest.quality_gates.PSObject.Properties.Remove("domain_status")
+        $manifest.PSObject.Properties.Remove("manifest_signature")
+        [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
+        & "$PSScriptRoot\sign-release-manifest.ps1" -ReleaseRoot $script:fixture
+        $failed = $false
+        try { & "$PSScriptRoot\verify-release-quality.ps1" -ReleaseRoot $script:fixture } catch { $failed = $true }
+        $failed | Should Be $true
+    }
+
+    It "rejects a release without startup performance evidence" {
+        $manifestPath = Join-Path $script:fixture "release-manifest.json"
+        $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
+        $manifest.quality_gates.PSObject.Properties.Remove("startup_metrics")
         $manifest.PSObject.Properties.Remove("manifest_signature")
         [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
         & "$PSScriptRoot\sign-release-manifest.ps1" -ReleaseRoot $script:fixture

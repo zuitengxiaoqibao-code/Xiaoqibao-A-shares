@@ -90,6 +90,20 @@ foreach ($Name in @("overview", "quant_strategy", "company_research", "tdx_profe
     }
 }
 
+$StartupMetrics = $Manifest.quality_gates.startup_metrics
+if ($null -eq $StartupMetrics) {
+    throw "Release manifest omits startup performance evidence"
+}
+foreach ($Name in @("window_visible_ms", "api_ready_ms", "full_verification_ms")) {
+    $Property = $StartupMetrics.PSObject.Properties[$Name]
+    if ($null -eq $Property -or $null -eq $Property.Value -or [int]$Property.Value -lt 0) {
+        throw "Release startup performance evidence is invalid: $Name"
+    }
+}
+if ([string]$StartupMetrics.state -ne "pass") {
+    throw "Release startup performance smoke did not pass"
+}
+
 $SourceHealth = $Manifest.quality_gates.domain_status.source_health
 if ($null -ne $SourceHealth) {
     foreach ($Name in @("probed_count", "ready_count", "degraded_count", "unavailable_count")) {

@@ -3,7 +3,8 @@
     [switch]$KeepSmokeRoot,
     [switch]$UseReleaseData,
     [string]$ReleaseRootOverride = "",
-    [string]$PortableRootOverride = ""
+    [string]$PortableRootOverride = "",
+    [ValidateSet("auto", "cold", "hot")][string]$StartupKind = "auto"
 )
 
 $ErrorActionPreference = "Stop"
@@ -75,6 +76,16 @@ if ($ExternalPortableRoot) {
         -Destination (Join-Path $SmokeRoot "web") -Recurse
 }
 $LogPath = Join-Path $SmokeRoot "logs\xiaoqibao.log"
+$StartupEvidenceDirectory = Join-Path $SmokeRoot "logs"
+New-Item -ItemType Directory -Force -Path $StartupEvidenceDirectory | Out-Null
+$StartupRunKind = $StartupKind
+if ($StartupRunKind -eq "auto") {
+    $ExistingStartupEvidence = @(Get-ChildItem -LiteralPath $StartupEvidenceDirectory -Filter "startup-smoke-*.json" -File -ErrorAction SilentlyContinue)
+    $StartupRunKind = if ($ExistingStartupEvidence.Count -eq 0) { "cold" } else { "hot" }
+}
+$StartupEvidencePath = Join-Path $StartupEvidenceDirectory (
+    "startup-smoke-{0}-{1}.json" -f (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssfffZ"), [guid]::NewGuid().ToString("N")
+)
 $LogStartOffset = if (Test-Path -LiteralPath $LogPath) {
     (Get-Item -LiteralPath $LogPath).Length
 } else {
@@ -479,6 +490,14 @@ try {
                 warnings = @($QualityWarnings)
                 domain_status = $DomainStatus
                 observed_at = (Get-Date).ToUniversalTime().ToString("o")
+                startup_metrics = [ordered]@{
+                    kind = $StartupRunKind
+                    state = "pass"
+                    window_visible_ms = [int]$WindowVisibleMs
+                    api_ready_ms = [int]$ApiReadyMs
+                    full_verification_ms = [int]$StartedAt.ElapsedMilliseconds
+                    observed_at = (Get-Date).ToUniversalTime().ToString("o")
+                }
             }
             if ($ReleaseManifest.PSObject.Properties.Name -contains "quality_gates") {
                 $ReleaseManifest.quality_gates = $QualityGateSummary
@@ -492,6 +511,16 @@ try {
             Write-Warning "Release manifest quality gate summary could not be updated."
         }
     }
+    $StartupEvidence = [ordered]@{
+        schema_version = 1
+        kind = $StartupRunKind
+        state = "pass"
+        window_visible_ms = [int]$WindowVisibleMs
+        api_ready_ms = [int]$ApiReadyMs
+        full_verification_ms = [int]$StartedAt.ElapsedMilliseconds
+        observed_at = (Get-Date).ToUniversalTime().ToString("o")
+    } | ConvertTo-Json -Depth 8
+    [IO.File]::WriteAllText($StartupEvidencePath, $StartupEvidence, [Text.UTF8Encoding]::new($false))
     $CoverageDisplay = if ($null -eq $CoveragePercent) { "--" } else { $CoveragePercent }
     Write-Host ("Quality gates: {0}; data coverage={1}% (partial is warning, never fabricated as ready)" -f $QualityGateState, $CoverageDisplay)
     Write-Host ("Portable smoke passed; window visible in {0}ms; API ready in {1}ms; verification completed in {2}ms; requests home={3}ms overview={4}ms quant={5}ms portfolio={6}ms research={7}ms professional={8}ms; overview {9} coverage={10}%; source health {11}; quant strategy {12} ({13}); portfolio risk {14} ({15}); company research {16} ({17}); tdx professional {18} ({19})" -f `
