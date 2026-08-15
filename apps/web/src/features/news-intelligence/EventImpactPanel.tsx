@@ -5,6 +5,22 @@ import type { EventImpactReport, EventImpactTarget, EventImpactWindow } from "./
 const horizons: EventImpactWindow["horizon_days"][] = [1, 3, 5, 20];
 const impactStatus = { ready: "已核验", partial: "部分可用", unavailable: "不可用" } as const;
 
+function reasonCopy(reason: string): string {
+  const windowMatch = reason.match(/^(1|3|5|20)_day_market_window_unavailable$/);
+  if (windowMatch) return `${windowMatch[1]}日行情窗口不足`;
+  const known: Record<string, string> = {
+    event_baseline_daily_bar_unavailable: "缺少事件前基准日线",
+    sector_daily_bar_series_unavailable: "板块日线收益不可用",
+    low_confidence_association: "关联置信度不足，收益仅作事件后复盘",
+    association_rejected: "关联已被人工驳回",
+    association_unavailable: "未找到可核验的关联标的",
+    event_impact_targets_unavailable: "关联标的收益窗口不可用",
+    window_missing: "行情窗口不可用",
+  };
+  if (known[reason]) return known[reason];
+  return /[\u3400-\u9fff]/.test(reason) ? reason : "状态原因待核验";
+}
+
 function ReturnValue({ window }: { window: EventImpactWindow }) {
   if (window.status !== "ready" || window.return_percent === null) {
     return <span className="event-impact-value unavailable">不可用</span>;
@@ -21,7 +37,7 @@ function Target({ target }: { target: EventImpactTarget }) {
     <div className="event-impact-windows">
       {horizons.map((horizon) => {
         const window = target.windows.find((item) => item.horizon_days === horizon);
-        return <div key={horizon} data-status={window?.status ?? "unavailable"}><span>{horizon}日</span><ReturnValue window={window ?? { horizon_days: horizon, status: "unavailable", baseline_trade_date: null, end_trade_date: null, baseline_close: null, end_close: null, return_percent: null, reason: "window_missing" }} />{window?.reason && <small>{window.reason.includes("sector_daily") ? "板块日线收益不可用" : window.reason}</small>}</div>;
+        return <div key={horizon} data-status={window?.status ?? "unavailable"}><span>{horizon}日</span><ReturnValue window={window ?? { horizon_days: horizon, status: "unavailable", baseline_trade_date: null, end_trade_date: null, baseline_close: null, end_close: null, return_percent: null, reason: "window_missing" }} />{window?.reason && <small>{reasonCopy(window.reason)}</small>}</div>;
       })}
     </div>
   </article>;
@@ -32,6 +48,6 @@ export function EventImpactPanel({ report }: { report: EventImpactReport }) {
     <header><div><span>EVENT IMPACT REVIEW</span><h3>事件影响复盘</h3></div><small>{impactStatus[report.status]}</small></header>
     <div className="event-impact-meta"><span><Link2 size={14} />{report.duplicate_status === "duplicate_cluster" ? `重复新闻 ${report.duplicate_article_count} 篇` : "单一来源"}</span><span>{report.association_status === "low_confidence" ? "关联置信度低" : report.association_status === "verified" ? "关联已核验" : "关联不可用"}</span><time>首次发布时间 {new Date(report.first_published_at).toLocaleString("zh-CN", { hour12: false })}</time></div>
     {report.targets.length > 0 ? <div className="event-impact-targets">{report.targets.map((target) => <Target key={`${target.target_type}-${target.target_id}`} target={target} />)}</div> : <div className="event-impact-empty"><AlertTriangle size={15} />没有真实关联标的，收益窗口不可用。</div>}
-    {report.limitations.length > 0 && <footer>{report.limitations.join(" · ")}</footer>}
+    {report.limitations.length > 0 && <footer>{report.limitations.map(reasonCopy).join(" · ")}</footer>}
   </section>;
 }

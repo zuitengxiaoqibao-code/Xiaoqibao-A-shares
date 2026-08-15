@@ -55,6 +55,34 @@ describe("NewsIntelligenceView", () => {
     expect(screen.getByRole("dialog", { name: "事件证据" })).toBeInTheDocument();
   });
 
+  it("clears a previous impact report when another event is selected", async () => {
+    const twoEvents: NewsIntelligenceBundle = {
+      ...bundle,
+      events: [
+        bundle.events[0],
+        { ...bundle.events[0], event_id: "event-2", headline: "第二条已核验事件" },
+      ],
+    };
+    const loadEventImpact = vi.fn().mockResolvedValue({
+      status: "unavailable", event_id: "event-1", headline: "先进制造专项政策发布",
+      event_type: "policy", first_published_at: "2026-07-14T01:00:00Z",
+      affected_symbols: [], related_sectors: [], association_confidence: "0",
+      association_status: "unavailable", duplicate_status: "unique",
+      duplicate_article_count: 1, targets: [], evidence_ledger: [],
+      limitations: ["association_unavailable"],
+    });
+    render(<NewsIntelligenceView loadBundle={() => Promise.resolve(twoEvents)} loadEventImpact={loadEventImpact} syncNews={() => Promise.resolve({})} createCorrection={() => Promise.resolve()} />);
+
+    await screen.findByRole("heading", { name: "第二条已核验事件" });
+    fireEvent.click(screen.getAllByRole("button", { name: /先进制造专项政策发布/ })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "查看影响复盘" }));
+    expect(await screen.findByRole("region", { name: "新闻事件影响复盘" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "关闭证据" }));
+    fireEvent.click(screen.getAllByRole("button", { name: /第二条已核验事件/ })[0]);
+
+    expect(screen.queryByRole("region", { name: "新闻事件影响复盘" })).not.toBeInTheDocument();
+  });
+
   it("filters compact news cards by evidence-based categories", async () => {
     const categorized: NewsIntelligenceBundle = {
       ...bundle,

@@ -2157,27 +2157,27 @@ body { font-size: 14px; }
 .event-impact-drawer > p[role="alert"] { color: var(--focus-danger-soft); }
 .event-impact-panel { margin-top: 10px; overflow: hidden; border: 1px solid var(--line); background: #0b1319; }
 .event-impact-panel > header { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; padding: 11px 12px; border-bottom: 1px solid var(--line); }
-.event-impact-panel > header span { color: var(--focus-info); font: 12px var(--font-data); }
+.event-impact-panel > header span { color: var(--focus-info); font: 13px var(--font-data); }
 .event-impact-panel > header h3 { margin: 3px 0 0; font-size: 14px; }
-.event-impact-panel > header small { color: var(--focus-warning); font-size: 12px; }
-.event-impact-meta { display: flex; flex-wrap: wrap; gap: 6px 10px; padding: 9px 12px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+.event-impact-panel > header small { color: var(--focus-warning); font-size: 13px; }
+.event-impact-meta { display: flex; flex-wrap: wrap; gap: 6px 10px; padding: 9px 12px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 13px; }
 .event-impact-meta span { display: inline-flex; align-items: center; gap: 5px; }
 .event-impact-targets { display: grid; gap: 8px; padding: 10px; }
 .event-impact-target { border: 1px solid var(--line); background: var(--ink-2); }
 .event-impact-target > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 9px; border-bottom: 1px solid var(--line); }
 .event-impact-target > header div { display: flex; align-items: baseline; gap: 7px; }
-.event-impact-target > header span, .event-impact-target > header small { color: var(--muted); font-size: 12px; }
+.event-impact-target > header span, .event-impact-target > header small { color: var(--muted); font-size: 13px; }
 .event-impact-windows { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .event-impact-windows > div { min-width: 0; padding: 8px; border-right: 1px solid var(--line); }
 .event-impact-windows > div:last-child { border-right: 0; }
-.event-impact-windows > div > span:first-child, .event-impact-windows > div small { display: block; color: var(--muted); font-size: 12px; }
+.event-impact-windows > div > span:first-child, .event-impact-windows > div small { display: block; color: var(--muted); font-size: 13px; }
 .event-impact-windows > div small { margin-top: 4px; overflow-wrap: anywhere; }
 .event-impact-value { display: inline-flex; align-items: center; gap: 4px; margin-top: 5px; font: 600 13px var(--font-data); }
 .event-impact-value.positive { color: var(--market-up); }
 .event-impact-value.negative { color: var(--market-down); }
 .event-impact-value.neutral { color: var(--text-soft); }
 .event-impact-value.unavailable { color: var(--focus-warning); }
-.event-impact-panel > footer, .event-impact-empty { padding: 9px 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.event-impact-panel > footer, .event-impact-empty { padding: 9px 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
 @media (max-width: 650px) { .event-impact-windows { grid-template-columns: repeat(2, minmax(0, 1fr)); } .event-impact-windows > div:nth-child(2) { border-right: 0; } }
 
 /* Quant evidence summary uses six equal domains on wide screens. */

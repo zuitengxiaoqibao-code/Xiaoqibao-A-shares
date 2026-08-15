@@ -48,5 +48,8 @@ describe("EventImpactPanel", () => {
     expect(screen.getByText("+5.00%")).toHaveClass("positive");
     expect(screen.getAllByText("5日")[0].nextElementSibling).toHaveTextContent("不可用");
     expect(screen.getAllByText("板块日线收益不可用").length).toBeGreaterThan(0);
+    expect(screen.getByText("5日行情窗口不足")).toBeInTheDocument();
+    expect(screen.getByText(/关联置信度不足/)).toBeInTheDocument();
+    expect(screen.queryByText(/5_day_market_window_unavailable|low_confidence_association/)).not.toBeInTheDocument();
   });
 });

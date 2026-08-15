@@ -34,6 +34,7 @@ export function NewsIntelligenceView({ selectedSymbol, loadBundle, syncNews, syn
   const [impactLoading, setImpactLoading] = useState(false);
   const [impactError, setImpactError] = useState("");
   const requestVersion = useRef(0);
+  const impactRequestVersion = useRef(0);
   function filterSelectedBundle(loaded: NewsIntelligenceBundle, symbol: string | null | undefined) {
     if (!symbol) return loaded;
     return { ...loaded, events: loaded.events.filter((event) => event.affected_instruments.length === 0 || event.affected_instruments.some(([asset, code]) => asset === "a_share" && code === symbol)) };
@@ -50,6 +51,7 @@ export function NewsIntelligenceView({ selectedSymbol, loadBundle, syncNews, syn
   }
   useEffect(() => {
     requestVersion.current += 1;
+    impactRequestVersion.current += 1;
     setSelected(null); setReason(""); setBundle(null); setSaving(false); setHotspotLoading(false); setHotspotError(""); setEventImpact(null); setImpactError("");
     void runBundleRequest(loadBundle, "新闻数据", "loading");
     return () => { requestVersion.current += 1; };
@@ -77,12 +79,35 @@ export function NewsIntelligenceView({ selectedSymbol, loadBundle, syncNews, syn
     if (await runBundleRequest(async () => { await createCorrection(correction); return loadBundle(); }, "新闻复核", "saving")) setReason("");
   }
   const selectedInterpretation = selected ? interpretationByEvent.get(selected.event_id) : undefined;
+  function selectEvent(event: NewsEvent) {
+    impactRequestVersion.current += 1;
+    setSelected(event);
+    setEventImpact(null);
+    setImpactError("");
+    setImpactLoading(false);
+  }
+  function closeEventDrawer() {
+    impactRequestVersion.current += 1;
+    setSelected(null);
+    setEventImpact(null);
+    setImpactError("");
+    setImpactLoading(false);
+  }
   async function loadImpact() {
     if (!selected || !loadEventImpact) return;
+    const request = ++impactRequestVersion.current;
+    const eventId = selected.event_id;
     setImpactLoading(true); setImpactError("");
-    try { setEventImpact(await loadEventImpact(selected.event_id)); }
-    catch (cause) { setImpactError(friendlyError(cause, "事件影响复盘")); }
-    finally { setImpactLoading(false); }
+    try {
+      const report = await loadEventImpact(eventId);
+      if (request === impactRequestVersion.current) setEventImpact(report);
+    }
+    catch (cause) {
+      if (request === impactRequestVersion.current) setImpactError(friendlyError(cause, "事件影响复盘"));
+    }
+    finally {
+      if (request === impactRequestVersion.current) setImpactLoading(false);
+    }
   }
   const contrary = selected?.citations.filter((item) => selectedInterpretation?.contrary_citation_ids.includes(item.citation_id)) ?? [];
   const verifiedNewsCount = bundle?.events.filter((event) => event.review_state === "verified" && event.event_type !== "market_hotspot").length ?? 0;
@@ -95,9 +120,9 @@ export function NewsIntelligenceView({ selectedSymbol, loadBundle, syncNews, syn
     {error && <div className="news-error" role="alert"><AlertTriangle size={17}/><span>{error}</span>{error === "数据源尚未配置，请在数据设置中检查连接。" && openNewsCompliance && <button onClick={openNewsCompliance}>打开数据设置</button>}<button onClick={() => void collect()}>重试</button></div>}
     {hotspotError && <div className="news-error hotspot-error" role="alert"><AlertTriangle size={17}/><span>{hotspotError}</span>{hotspotError === "数据源尚未配置，请在数据设置中检查连接。" && openNewsCompliance && <button onClick={openNewsCompliance}>打开数据设置</button>}<button onClick={() => void collectHotspots()}>重试热点</button></div>}
     {loading && !bundle && <div className="news-loading" role="status" aria-busy="true"><Clock3 size={18}/>正在读取冻结情报...</div>}
-    {tab === "timeline" && bundle && (bundle.events.length === 0 ? <div className="news-empty"><FileSearch size={28}/><b>暂无已归档事件</b></div> : <><NewsEventGraph events={bundle.events} interpretations={bundle.interpretations} unifiedEvents={bundle.unifiedEvents} onSelect={setSelected}/><NewsEventGrid events={bundle.events} interpretationByEvent={interpretationByEvent} onSelect={setSelected}/></>)}
+    {tab === "timeline" && bundle && (bundle.events.length === 0 ? <div className="news-empty"><FileSearch size={28}/><b>暂无已归档事件</b></div> : <><NewsEventGraph events={bundle.events} interpretations={bundle.interpretations} unifiedEvents={bundle.unifiedEvents} onSelect={selectEvent}/><NewsEventGrid events={bundle.events} interpretationByEvent={interpretationByEvent} onSelect={selectEvent}/></>)}
     {tab === "briefings" && bundle && <section className="briefing-ledger">{bundle.briefings.length === 0 ? <div className="news-empty"><FileSearch size={28}/><b>暂无冻结简报</b></div> : bundle.briefings.map((item) => <article key={item.report_id}><div><span>{phaseName[item.phase]}</span><time>{item.trading_date}</time></div><strong>{item.sections.watchlist.length} 个观察标的</strong><small>{item.event_ids.length} 个事件 · {item.interpretation_ids.length} 条解释</small></article>)}</section>}
     {tab === "quality" && bundle && <section className="quality-console"><div><span>已核验新闻数</span><strong>{verifiedNewsCount}</strong></div><div><span>已核验热点数</span><strong>{verifiedHotspotCount}</strong></div><div><span>关联当前股票数</span><strong>{relatedStockCount}</strong></div><div><span>最近更新时间</span><strong>{latestUpdate ? new Date(latestUpdate).toLocaleString("zh-CN", { hour12: false }) : "暂无"}</strong></div></section>}
-    {selected && <div className="evidence-backdrop" onClick={() => setSelected(null)}><aside className="evidence-drawer" role="dialog" aria-label="事件证据" onClick={(event) => event.stopPropagation()}><header><div><p className="eyebrow">EVIDENCE CHAIN</p><h2>事件证据</h2></div><button aria-label="关闭证据" onClick={() => setSelected(null)}><X size={18}/></button></header><section><h3>来源引用</h3>{selected.citations.map((citation) => <a href={citation.canonical_url} target="_blank" rel="noreferrer" key={citation.citation_id}><span>{citation.publisher} · {new Date(citation.published_at).toLocaleString("zh-CN")}</span><p>{citation.quoted_text}</p></a>)}</section>{contrary.length > 0 && <section className="contrary-evidence"><h3>相反证据</h3>{contrary.map((citation) => <p key={citation.citation_id}>{citation.quoted_text}</p>)}</section>}{(selected.evidence_ledger?.length ?? 0) > 0 && <EvidenceLedger entries={selected.evidence_ledger!} defaultOpen />} {loadEventImpact && <section className="event-impact-drawer"><button type="button" onClick={() => void loadImpact()} disabled={impactLoading}>{impactLoading ? "读取影响复盘..." : "查看影响复盘"}</button>{impactError && <p role="alert">{impactError}</p>}{eventImpact && <EventImpactPanel report={eventImpact} />}</section>}<section className="human-review"><h3>人工复核</h3><label>复核理由<textarea aria-label="复核理由" value={reason} onChange={(event) => setReason(event.target.value)}/></label><button disabled={saving || !reason.trim()} onClick={() => void saveCorrection()}><CheckCircle2 size={15}/>{saving ? "存档中" : "确认并存档"}</button></section></aside></div>}
+    {selected && <div className="evidence-backdrop" onClick={closeEventDrawer}><aside className="evidence-drawer" role="dialog" aria-label="事件证据" onClick={(event) => event.stopPropagation()}><header><div><p className="eyebrow">EVIDENCE CHAIN</p><h2>事件证据</h2></div><button aria-label="关闭证据" onClick={closeEventDrawer}><X size={18}/></button></header><section><h3>来源引用</h3>{selected.citations.map((citation) => <a href={citation.canonical_url} target="_blank" rel="noreferrer" key={citation.citation_id}><span>{citation.publisher} · {new Date(citation.published_at).toLocaleString("zh-CN")}</span><p>{citation.quoted_text}</p></a>)}</section>{contrary.length > 0 && <section className="contrary-evidence"><h3>相反证据</h3>{contrary.map((citation) => <p key={citation.citation_id}>{citation.quoted_text}</p>)}</section>}{(selected.evidence_ledger?.length ?? 0) > 0 && <EvidenceLedger entries={selected.evidence_ledger!} defaultOpen />} {loadEventImpact && <section className="event-impact-drawer"><button type="button" onClick={() => void loadImpact()} disabled={impactLoading}>{impactLoading ? "读取影响复盘..." : "查看影响复盘"}</button>{impactError && <p role="alert">{impactError}</p>}{eventImpact && <EventImpactPanel report={eventImpact} />}</section>}<section className="human-review"><h3>人工复核</h3><label>复核理由<textarea aria-label="复核理由" value={reason} onChange={(event) => setReason(event.target.value)}/></label><button disabled={saving || !reason.trim()} onClick={() => void saveCorrection()}><CheckCircle2 size={15}/>{saving ? "存档中" : "确认并存档"}</button></section></aside></div>}
   </main>;
 }
