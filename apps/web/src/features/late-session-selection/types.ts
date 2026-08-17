@@ -30,6 +30,20 @@ export type LateSessionRule = {
   detail: string;
 };
 
+export type LateSessionAIAnalysis = {
+  status: "ready" | "unconfigured" | "no_candidates" | "error";
+  mode: "ai" | "rule_interpretation" | "unavailable";
+  title: string;
+  summary: string;
+  key_points: string[];
+  risk_points: string[];
+  data_gaps: string[];
+  candidate_count: number;
+  source_evidence: string[];
+  observed_at: string;
+  reason: string | null;
+};
+
 export type LateSessionCandidate = {
   quote: {
     symbol: string;
@@ -70,6 +84,8 @@ export type LateSessionSelectionResponse = {
   quote_count: number;
   candidate_count: number;
   rules: LateSessionRule[];
+  data_state: "ready" | "partial" | "no_candidates" | "no_market_data";
+  no_data_reason: string | null;
   settings: LateSessionRuleSettings;
   default_settings: LateSessionRuleSettings;
   candidates: LateSessionCandidate[];
@@ -78,4 +94,7 @@ export type LateSessionSelectionResponse = {
   limitations: string[];
 };
 
-export type LateSessionSelectionLoader = (settings?: LateSessionRuleSettings) => Promise<LateSessionSelectionResponse>;
+export type LateSessionSelectionLoader = (settings?: LateSessionRuleSettings, onProgress?: LoadProgressCallback) => Promise<LateSessionSelectionResponse>;
+export type LateSessionAIAnalysisLoader = (selection: LateSessionSelectionResponse) => Promise<LateSessionAIAnalysis>;
+export type { LoadProgress };
+import type { LoadProgress, LoadProgressCallback } from "../../shared/fetchJsonWithProgress";

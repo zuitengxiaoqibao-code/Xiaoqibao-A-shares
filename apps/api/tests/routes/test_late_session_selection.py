@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from qibao_api.dependencies import get_late_session_selection_service, get_server_time
+from qibao_api.dependencies import get_effective_ai_settings, get_late_session_selection_service, get_server_time
 from qibao_api.contracts.late_session_selection import LateSessionRuleSettings, LateSessionSelectionResponse
 from qibao_api.routes.late_session_selection import router
 
@@ -22,7 +22,8 @@ class Service:
                 status="partial", trading_date="2026-08-17", server_time=NOW,
                 phase="live_monitor", refresh_interval_ms=1000, next_refresh_ms=1000,
                 source_quality="partial", universe_count=1, quote_count=1, candidate_count=0,
-                rules=[], candidates=[], behaviors=[], source_evidence=["通达信本地全市场实时快照"], limitations=["分时黄线不可用"],
+                rules=[], data_state="no_candidates", no_data_reason="分时黄线不可用导致严格筛选无法完成",
+                candidates=[], behaviors=[], source_evidence=["通达信本地全市场实时快照"], limitations=["分时黄线不可用"],
         )
 
 
@@ -57,3 +58,19 @@ def test_late_session_filter_route_accepts_custom_settings():
     assert response.status_code == 200
     assert service.calls[0][0:2] == (NOW, 20)
     assert service.calls[0][2].change_min == 1
+
+
+def test_late_session_ai_analysis_route_explains_no_data_reason():
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_effective_ai_settings] = lambda: None
+    selection = Service().current(NOW, limit=20)
+
+    response = TestClient(app).post(
+        "/api/v1/a-shares/late-session-selection/ai-analysis",
+        json=selection.model_dump(mode="json"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "no_candidates"
+    assert response.json()["reason"]

@@ -96,6 +96,8 @@ class LateSessionSelectionService:
             quote_count=len(evaluated),
             candidate_count=len(candidates),
             rules=self._summary_rules(evaluated, settings),
+            data_state=("ready" if candidates else "partial" if any(rule.status == "unavailable" for item in evaluated for rule in item.rules) else "no_candidates"),
+            no_data_reason=None if candidates else self._no_data_reason(evaluated, quotes_count=len(quotes), phase=phase, limitations=limitations),
             settings=settings,
             default_settings=DEFAULT_LATE_SESSION_RULE_SETTINGS,
             candidates=candidates,
@@ -103,6 +105,23 @@ class LateSessionSelectionService:
             source_evidence=("通达信本地全市场实时快照", "本地日线仓储20交易日窗口") + (("腾讯行情补充市值/换手率",) if self.tencent_source else ()),
             limitations=tuple(limitations),
         )
+
+    @staticmethod
+    def _no_data_reason(
+        results: list[LateSessionCandidateResult],
+        *,
+        quotes_count: int,
+        phase: str,
+        limitations: list[str],
+    ) -> str:
+        unavailable = sorted({rule.label for item in results for rule in item.rules if rule.status == "unavailable"})
+        if unavailable:
+            return f"已扫描全市场 {quotes_count} 只，但 { '、'.join(unavailable) } 的真实字段覆盖不足，严格规则无法完成筛选"
+        if phase == "pre_screen":
+            return f"已扫描全市场 {quotes_count} 只，当前规则下没有股票通过 14:30 前预筛"
+        if limitations:
+            return f"已扫描全市场 {quotes_count} 只，当前规则没有产生候选；限制原因：{ '；'.join(limitations) }"
+        return f"已扫描全市场 {quotes_count} 只，但当前规则没有股票满足全部条件"
 
     def _enrich(self, quotes: tuple[object, ...], now: datetime) -> dict[str, dict[str, Decimal | None]]:
         if self.tencent_source is None:
@@ -207,4 +226,4 @@ class LateSessionSelectionService:
     def _unavailable(trading_date: date, now: datetime, phase: str, detail: str) -> LateSessionSelectionResponse:
         # The local snapshot may still be warming up. Retry quickly so the
         # page does not remain on a misleading 0/0 state for 15 seconds.
-        return LateSessionSelectionResponse(status="unavailable", trading_date=trading_date, server_time=now, phase=phase, refresh_interval_ms=1000, next_refresh_ms=1000, source_quality="unavailable", universe_count=0, quote_count=0, candidate_count=0, rules=(), behaviors=(), limitations=(detail,))
+        return LateSessionSelectionResponse(status="unavailable", trading_date=trading_date, server_time=now, phase=phase, refresh_interval_ms=1000, next_refresh_ms=1000, source_quality="unavailable", universe_count=0, quote_count=0, candidate_count=0, rules=(), data_state="no_market_data", no_data_reason=detail, behaviors=(), limitations=(detail,))

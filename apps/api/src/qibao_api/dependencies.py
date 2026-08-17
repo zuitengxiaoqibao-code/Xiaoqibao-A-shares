@@ -10,6 +10,7 @@ from qibao_api.libu_compliance.repository import ComplianceRepository
 from qibao_api.dongchang.repository import AuditFindingRepository
 from qibao_api.operations.read_model import OperationsReadModel
 from qibao_api.tasks.progress import TaskProgressRegistry
+from qibao_api.settings_repository import EffectiveAISettingsResolver
 
 
 _fallback_task_progress_registry = TaskProgressRegistry()
@@ -133,6 +134,10 @@ def get_task_progress_registry(request: Request) -> TaskProgressRegistry:
         "task_progress_registry",
         _fallback_task_progress_registry,
     )
+
+
+def get_effective_ai_settings(request: Request) -> EffectiveAISettingsResolver:
+    return request.app.state.effective_ai_settings
 
 
 def get_performance_store(request: Request):

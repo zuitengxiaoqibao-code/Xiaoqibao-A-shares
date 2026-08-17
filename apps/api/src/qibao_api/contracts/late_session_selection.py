@@ -7,6 +7,9 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validato
 
 LateSessionPhase = Literal["pre_screen", "live_monitor", "post_close"]
 RuleStatus = Literal["passed", "failed", "unavailable", "disabled"]
+LateSessionDataState = Literal["ready", "partial", "no_candidates", "no_market_data"]
+LateSessionAIStatus = Literal["ready", "unconfigured", "no_candidates", "error"]
+LateSessionAIMode = Literal["ai", "rule_interpretation", "unavailable"]
 
 
 class LateSessionRuleSettings(BaseModel):
@@ -109,6 +112,22 @@ class LateSessionBehavior(BaseModel):
     evidence: tuple[str, ...] = ()
 
 
+class LateSessionAIAnalysis(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    status: LateSessionAIStatus
+    mode: LateSessionAIMode
+    title: str
+    summary: str
+    key_points: tuple[str, ...] = ()
+    risk_points: tuple[str, ...] = ()
+    data_gaps: tuple[str, ...] = ()
+    candidate_count: int = Field(ge=0)
+    source_evidence: tuple[str, ...] = ()
+    observed_at: AwareDatetime
+    reason: str | None = None
+
+
 class LateSessionSelectionResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -123,6 +142,8 @@ class LateSessionSelectionResponse(BaseModel):
     quote_count: int = Field(ge=0)
     candidate_count: int = Field(ge=0)
     rules: tuple[LateSessionRuleResult, ...]
+    data_state: LateSessionDataState = "ready"
+    no_data_reason: str | None = None
     settings: LateSessionRuleSettings = DEFAULT_LATE_SESSION_RULE_SETTINGS
     default_settings: LateSessionRuleSettings = DEFAULT_LATE_SESSION_RULE_SETTINGS
     candidates: tuple[LateSessionCandidateResult, ...] = ()
