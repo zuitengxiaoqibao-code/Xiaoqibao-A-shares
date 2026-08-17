@@ -28,10 +28,8 @@
 ## EXE 证据
 
 - EXE：`D:/Users/90090/Documents/金融财经/.worktrees/a-share-daily-research/dist/XiaoQiBao-Portable/xiaoqibao.exe`
-- 源码提交：`868b975349d87129baeb348f5e18327485708346`
-- SHA-256：`57DE8C8CA146BE0B79AD38798DC61A44D39D70F860774E3723017990BAC71EDE`
-- 发布清单签名：`810E6F6E16B5FFEE9238DBF0D30F8CF9779C9EE1DCC158CC5A940AFA2A8BB1E`
-- 真实发布数据 smoke：通过；窗口可见 331ms，API 就绪 5518ms，完整验证 21596ms。
+- 源码提交、EXE SHA-256 和发布清单签名以同目录 `dist/XiaoQiBao-Portable/release-manifest.json` 的最终验收记录为准，三者必须绑定且由发布质量门禁校验。
+- 最近一次真实发布数据 smoke：通过；窗口可见约 0.3 秒，API 就绪约 5.5 秒，完整验证约 22 秒。每次重建后以清单中的 `startup_metrics` 为最终数值。
 - 临时副本恢复演练：通过；34 个数据库、迁移版本 1、关键 API smoke 均通过；恢复演练后发布质量门禁通过。
 - 信息总览 ready，行情覆盖 99.9%；量化策略 partial（12 个真实候选、因子覆盖 85%）；公司研究 partial（600519、证据覆盖 0.65、反方检查 10 项）；通达信专业接口 unavailable。质量门禁为 warning，仅表示真实数据边界，不把 partial 冒充 ready。
 - 本轮未关闭、重启或控制通达信，未控制鼠标或桌面。
