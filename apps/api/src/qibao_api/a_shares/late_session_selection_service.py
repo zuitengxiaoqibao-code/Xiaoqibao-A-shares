@@ -184,4 +184,6 @@ class LateSessionSelectionService:
 
     @staticmethod
     def _unavailable(trading_date: date, now: datetime, phase: str, detail: str) -> LateSessionSelectionResponse:
-        return LateSessionSelectionResponse(status="unavailable", trading_date=trading_date, server_time=now, phase=phase, refresh_interval_ms=15000, next_refresh_ms=15000, source_quality="unavailable", universe_count=0, quote_count=0, candidate_count=0, rules=(), behaviors=(), limitations=(detail,))
+        # The local snapshot may still be warming up. Retry quickly so the
+        # page does not remain on a misleading 0/0 state for 15 seconds.
+        return LateSessionSelectionResponse(status="unavailable", trading_date=trading_date, server_time=now, phase=phase, refresh_interval_ms=1000, next_refresh_ms=1000, source_quality="unavailable", universe_count=0, quote_count=0, candidate_count=0, rules=(), behaviors=(), limitations=(detail,))

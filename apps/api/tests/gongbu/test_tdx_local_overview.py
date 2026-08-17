@@ -232,6 +232,33 @@ def test_local_overview_uses_self_contained_fallback_when_rpc_is_absent(
     assert source.current() == expected
 
 
+def test_local_overview_keeps_fallback_quotes_for_downstream_screeners(tmp_path) -> None:
+    fallback_quote = quote(
+        "600000", "浦发银行", previous_close="9.19", price="9.28",
+        high="9.35", amount_wan="102935.42",
+    )
+    expected = build_market_statistics(
+        (fallback_quote,), observed_at=NOW, source="tencent-realtime+tdx-catalog"
+    )
+
+    class Fallback:
+        last_quotes = (fallback_quote,)
+
+        def fetch(self):
+            return expected
+
+    source = LocalTdxOverviewSource(
+        cache_path=tmp_path / "overview.json",
+        rpc=None,
+        fallback=Fallback(),
+        clock=lambda: NOW,
+    )
+
+    source.refresh()
+
+    assert source.current_quotes() == (fallback_quote,)
+
+
 def test_local_overview_does_not_create_an_rpc_client_when_disabled(
     tmp_path, monkeypatch
 ) -> None:

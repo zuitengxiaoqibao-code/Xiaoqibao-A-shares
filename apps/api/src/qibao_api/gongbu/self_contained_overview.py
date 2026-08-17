@@ -236,6 +236,7 @@ class SelfContainedOverviewProvider:
         self.batch_size = batch_size
         self.max_workers = max_workers
         self.minimum_coverage = minimum_coverage
+        self.last_quotes: tuple[TdxRealtimeQuote, ...] = ()
 
     def fetch(self):
         catalog = tuple(
@@ -265,6 +266,7 @@ class SelfContainedOverviewProvider:
                 f"Tencent full-market coverage too low: {len(quotes)}/{len(catalog)}; "
                 + ",".join(failures[:8])
             )
+        self.last_quotes = tuple(quotes.values())
         observed_at = max(
             (item.observed_at for item in quotes.values() if item.observed_at is not None),
             default=self.clock(),

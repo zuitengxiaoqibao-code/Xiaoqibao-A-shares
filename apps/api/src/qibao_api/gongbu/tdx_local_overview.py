@@ -668,9 +668,14 @@ class LocalTdxOverviewSource:
 
     def _accept_fallback(self) -> OverviewMarketSnapshot:
         snapshot = self.fallback.fetch()
+        fallback_quotes = tuple(getattr(self.fallback, "last_quotes", ()) or ())
         with self._lock:
             self._snapshot = snapshot
-            self._quotes = ()
+            # Self-contained fallback uses the same truthful realtime quote
+            # records as the local bridge. Preserve them for downstream
+            # screeners instead of publishing an empty quote set.
+            if fallback_quotes:
+                self._quotes = fallback_quotes
         self._save_cache(snapshot)
         return snapshot
 
