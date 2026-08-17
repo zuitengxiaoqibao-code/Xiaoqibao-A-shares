@@ -7,6 +7,7 @@ from qibao_api.a_shares.late_session_selection import (
     evaluate_candidate,
 )
 from qibao_api.contracts.late_session_selection import LateSessionQuote
+from qibao_api.contracts.late_session_selection import LateSessionRuleSettings
 
 
 def quote(**overrides) -> LateSessionQuote:
@@ -51,3 +52,25 @@ def test_missing_intraday_average_cannot_pass_by_proxy() -> None:
     assert result.passed is False
     assert average_rule.status == "unavailable"
     assert "分时黄线" in average_rule.detail
+
+
+def test_custom_rule_settings_change_thresholds_and_can_disable_rules() -> None:
+    settings = LateSessionRuleSettings(
+        time_enabled=False,
+        change_min=Decimal("1"),
+        change_max=Decimal("2"),
+        volume_ratio_enabled=False,
+        turnover_rate_enabled=False,
+        market_cap_enabled=False,
+        twenty_day_limit_up_enabled=False,
+        intraday_average_enabled=False,
+    )
+
+    result = evaluate_candidate(
+        quote(change_percent=Decimal("1.5"), volume_ratio=None),
+        settings=settings,
+    )
+
+    assert result.passed is True
+    assert next(rule for rule in result.rules if rule.key == "change_percent").status == "passed"
+    assert next(rule for rule in result.rules if rule.key == "volume_ratio").status == "disabled"

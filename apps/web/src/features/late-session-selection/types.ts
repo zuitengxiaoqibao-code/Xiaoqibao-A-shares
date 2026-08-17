@@ -1,9 +1,32 @@
+export type LateSessionRuleSettings = {
+  time_enabled: boolean;
+  start_time: string;
+  end_time: string;
+  change_enabled: boolean;
+  change_min: string | number;
+  change_max: string | number;
+  volume_ratio_enabled: boolean;
+  volume_ratio_min: string | number;
+  volume_ratio_max: string | number;
+  turnover_rate_enabled: boolean;
+  turnover_rate_min: string | number;
+  turnover_rate_max: string | number;
+  market_cap_enabled: boolean;
+  market_cap_min: string | number;
+  market_cap_max: string | number;
+  twenty_day_limit_up_enabled: boolean;
+  twenty_day_limit_up_min: number;
+  twenty_day_limit_up_max: number | null;
+  intraday_average_enabled: boolean;
+  intraday_relation: "above" | "below" | "any";
+};
+
 export type LateSessionRule = {
   key: string;
   label: string;
   actual?: string | number | null;
   target: string;
-  status: "passed" | "failed" | "unavailable";
+  status: "passed" | "failed" | "unavailable" | "disabled";
   detail: string;
 };
 
@@ -47,10 +70,12 @@ export type LateSessionSelectionResponse = {
   quote_count: number;
   candidate_count: number;
   rules: LateSessionRule[];
+  settings: LateSessionRuleSettings;
+  default_settings: LateSessionRuleSettings;
   candidates: LateSessionCandidate[];
   behaviors: LateSessionBehavior[];
   source_evidence: string[];
   limitations: string[];
 };
 
-export type LateSessionSelectionLoader = () => Promise<LateSessionSelectionResponse>;
+export type LateSessionSelectionLoader = (settings?: LateSessionRuleSettings) => Promise<LateSessionSelectionResponse>;

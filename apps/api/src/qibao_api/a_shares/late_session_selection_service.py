@@ -5,10 +5,12 @@ from zoneinfo import ZoneInfo
 
 from qibao_api.a_shares.late_session_selection import classify_behavior, classify_phase, evaluate_candidate
 from qibao_api.contracts.late_session_selection import (
+    DEFAULT_LATE_SESSION_RULE_SETTINGS,
     LateSessionBehavior,
     LateSessionCandidateResult,
     LateSessionQuote,
     LateSessionRuleResult,
+    LateSessionRuleSettings,
     LateSessionSelectionResponse,
 )
 
@@ -28,10 +30,16 @@ class LateSessionSelectionService:
         self._enrichment_observed_at: datetime | None = None
         self._enrichment: dict[str, object] = {}
 
-    def current(self, now: datetime | None = None, *, limit: int = 100) -> LateSessionSelectionResponse:
+    def current(
+        self,
+        now: datetime | None = None,
+        *,
+        limit: int = 100,
+        settings: LateSessionRuleSettings = DEFAULT_LATE_SESSION_RULE_SETTINGS,
+    ) -> LateSessionSelectionResponse:
         now = now or self.clock()
         local_now = now.astimezone(CHINA_TZ)
-        phase = classify_phase(local_now)
+        phase = classify_phase(local_now, start_time=settings.start_time, end_time=settings.end_time)
         trading_date = local_now.date()
         quotes = tuple(getattr(self.local_market_source, "current_quotes", lambda: ())())
         if not quotes:
@@ -56,14 +64,14 @@ class LateSessionSelectionService:
                 observed_at=raw.observed_at or now,
                 source="tdx-local-realtime" + ("+tencent" if data else ""),
             )
-            result = evaluate_candidate(quote)
+            result = evaluate_candidate(quote, settings=settings)
             above = None if average is None else raw.price > average
             tags = classify_behavior(change_percent=raw.change_percent, volume_ratio=quote.volume_ratio, above_average=above)
             evaluated.append(result.model_copy(update={"behavior_tags": tags}))
         passed = [item for item in evaluated if item.passed]
         pre_screened = [
             item for item in evaluated
-            if all(rule.status == "passed" for rule in item.rules if rule.key != "time_window")
+            if all(rule.status in {"passed", "disabled"} for rule in item.rules if rule.key != "time_window")
         ]
         candidates = tuple((passed if phase != "pre_screen" else pre_screened)[: max(1, limit)])
         source_quality = "ready" if all(item.quote.turnover_rate is not None and item.quote.market_cap_yi is not None for item in evaluated) else "partial"
@@ -87,7 +95,9 @@ class LateSessionSelectionService:
             universe_count=len(quotes),
             quote_count=len(evaluated),
             candidate_count=len(candidates),
-            rules=self._summary_rules(evaluated),
+            rules=self._summary_rules(evaluated, settings),
+            settings=settings,
+            default_settings=DEFAULT_LATE_SESSION_RULE_SETTINGS,
             candidates=candidates,
             behaviors=self._behaviors(phase, evaluated),
             source_evidence=("通达信本地全市场实时快照", "本地日线仓储20交易日窗口") + (("腾讯行情补充市值/换手率",) if self.tencent_source else ()),
@@ -148,10 +158,18 @@ class LateSessionSelectionService:
         return (current_volume / baseline).quantize(Decimal("0.01"))
 
     @staticmethod
-    def _summary_rules(results: list[LateSessionCandidateResult]) -> tuple[LateSessionRuleResult, ...]:
+    def _summary_rules(results: list[LateSessionCandidateResult], settings: LateSessionRuleSettings) -> tuple[LateSessionRuleResult, ...]:
         keys = ("time_window", "change_percent", "volume_ratio", "turnover_rate", "market_cap", "twenty_day_limit_up", "above_intraday_average")
         labels = {"time_window": "监控时间", "change_percent": "涨幅", "volume_ratio": "量比", "turnover_rate": "换手率", "market_cap": "总市值", "twenty_day_limit_up": "20日涨停", "above_intraday_average": "分时黄线"}
-        targets = {"time_window": "14:30–15:00", "change_percent": "3%–6%", "volume_ratio": "2–5", "turnover_rate": "6%–15%", "market_cap": "60–300亿元", "twenty_day_limit_up": "近20日≥1次", "above_intraday_average": "最新价>真实分时均价"}
+        targets = {
+            "time_window": f"{settings.start_time.strftime('%H:%M')}–{settings.end_time.strftime('%H:%M')}",
+            "change_percent": f"{settings.change_min}%–{settings.change_max}%",
+            "volume_ratio": f"{settings.volume_ratio_min}–{settings.volume_ratio_max}",
+            "turnover_rate": f"{settings.turnover_rate_min}%–{settings.turnover_rate_max}%",
+            "market_cap": f"{settings.market_cap_min}–{settings.market_cap_max}亿元",
+            "twenty_day_limit_up": f"近20日 {settings.twenty_day_limit_up_min}–{settings.twenty_day_limit_up_max if settings.twenty_day_limit_up_max is not None else '不限'} 次",
+            "above_intraday_average": {"above": "最新价>真实分时均价", "below": "最新价<真实分时均价", "any": "不限制黄线方向"}[settings.intraday_relation],
+        }
         rows: list[LateSessionRuleResult] = []
         for key in keys:
             matched = [next((rule for rule in item.rules if rule.key == key), None) for item in results]
@@ -162,6 +180,9 @@ class LateSessionSelectionService:
             elif any(rule.status == "unavailable" for rule in matched):
                 status = "unavailable"
                 detail = "字段覆盖不足，未使用代理值"
+            elif all(rule.status == "disabled" for rule in matched):
+                status = "disabled"
+                detail = "该规则已停用"
             elif any(rule.status == "passed" for rule in matched):
                 status = "passed"
                 detail = f"{sum(rule.status == 'passed' for rule in matched)} / {len(matched)} 只通过"

@@ -11,3 +11,23 @@
 @media (max-width: 1100px) { .late-session-rule-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }.late-session-behavior-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 760px) { .late-session-page { padding: 14px; }.late-session-hero { flex-direction: column; }.late-session-phase { width: 100%; }.late-session-status-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }.late-session-status-strip span:nth-child(2) { border-right: 0; }.late-session-rule-grid, .late-session-behavior-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 480px) { .late-session-rule-grid, .late-session-behavior-grid { grid-template-columns: minmax(0, 1fr); }.late-session-status-strip { grid-template-columns: minmax(0, 1fr); }.late-session-status-strip span { border-right: 0; border-bottom: 1px solid var(--line); } }
+.late-session-rule-editor { margin-top: 14px; border: 1px solid rgba(77, 205, 239, .28); background: rgba(8, 16, 24, .92); }
+.late-session-rule-editor > header { display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; padding: 15px 16px; border-bottom: 1px solid var(--line); }
+.late-session-rule-editor h2 { display: flex; align-items: center; gap: 7px; margin: 3px 0 0; font-size: 17px; }
+.late-session-rule-editor header small { display: block; margin-top: 5px; color: var(--muted); font-size: 12px; }
+.late-session-rule-editor-actions { display: flex; gap: 8px; }
+.late-session-rule-editor-actions button { min-height: 34px; padding: 0 11px; border: 1px solid var(--line-strong); background: var(--ink-2); color: var(--text); cursor: pointer; }
+.late-session-rule-editor-actions button.primary { border-color: rgba(77, 205, 239, .65); background: rgba(77, 205, 239, .14); color: #bceefa; }
+.late-session-rule-editor-actions button:disabled { cursor: wait; opacity: .65; }
+.late-session-rule-editor-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; padding: 12px; }
+.late-session-rule-editor-row, .late-session-time-editor, .late-session-count-editor, .late-session-relation-editor { min-width: 0; display: grid; gap: 8px; padding: 10px; border: 1px solid var(--line); background: rgba(15, 26, 36, .76); }
+.late-session-rule-toggle { display: inline-flex; align-items: center; gap: 7px; color: #d7e8ef; font-size: 13px; cursor: pointer; }
+.late-session-rule-toggle input { accent-color: #55d6ef; }
+.late-session-rule-range, .late-session-time-editor > div, .late-session-count-editor > div { display: flex; align-items: center; gap: 7px; }
+.late-session-rule-range input, .late-session-time-editor input, .late-session-count-editor input, .late-session-relation-editor select { min-width: 0; flex: 1; padding: 7px 8px; border: 1px solid var(--line-strong); background: var(--ink-0); color: var(--text); font: 13px var(--font-data); }
+.late-session-rule-range input:disabled, .late-session-time-editor input:disabled, .late-session-count-editor input:disabled, .late-session-relation-editor select:disabled { opacity: .45; }
+.late-session-rule-range span, .late-session-time-editor span, .late-session-count-editor span { color: var(--muted); font-size: 12px; }
+.late-session-rule-range em, .late-session-count-editor em { color: var(--muted); font-size: 12px; font-style: normal; white-space: nowrap; }
+.late-session-time-editor small { color: var(--muted); font-size: 12px; }
+.late-session-relation-editor select { width: 100%; }
+@media (max-width: 760px) { .late-session-rule-editor > header { align-items: flex-start; flex-direction: column; }.late-session-rule-editor-actions { width: 100%; }.late-session-rule-editor-actions button { flex: 1; }.late-session-rule-editor-grid { grid-template-columns: 1fr; } }

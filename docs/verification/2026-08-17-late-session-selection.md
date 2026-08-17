@@ -7,6 +7,8 @@
 - 七项规则严格判定：14:30–15:00 时间窗口、涨幅 3%–6%、量比 2–5、换手率 6%–15%、市值 60–300 亿元、近 20 个交易日出现涨停、最新价高于真实分时均价。
 - 14:30 前返回预筛候选；14:30–15:00 返回实时监控状态；15:00 后冻结收盘状态。
 - 六类尾盘行为使用观察/风险提示/待核验标签，缺失分时或指数证据时不使用代理值。
+- 页面底部新增“自由设定筛选规则”编辑器：时间窗口、涨幅、量比、换手率、总市值、20 日涨停次数和分时黄线关系均可独立启用/停用并修改范围；“恢复默认”保留原七项规则，“按当前规则筛选”通过 POST `/api/v1/a-shares/late-session-selection/filter` 重新扫描全盘真实 A 股。
+- 自定义规则只改变筛选阈值，不改变数据源和字段真实性；被停用的规则标记为 `disabled`，缺失字段仍显示 `unavailable`，没有股票满足规则时明确提示“当前规则下没有候选”，不冒充接口故障。
 
 ## 0/0 数据显示修复
 
@@ -16,17 +18,17 @@
 
 ## 测试证据
 
-- API 全量：1419 passed, 1 skipped, 5 warnings。
+- API 聚焦：6 passed；API 全量：1422 passed, 1 skipped, 5 warnings。
 - Web 全量：120 test files, 676 passed。
 - Web TypeScript/Vite 生产构建：通过。
-- Ruff、`git diff --check`、UTF-8/乱码扫描：通过。
+- Ruff、`git diff --check`、UTF-8/乱码扫描：通过；全站字号门禁保持 12px 可读性下限。
 
 ## EXE 证据
 
 - EXE：`D:/Users/90090/Documents/金融财经/.worktrees/a-share-daily-research/dist/XiaoQiBao-Portable/xiaoqibao.exe`
-- SHA-256：`92DE1C32CFD861DDE0A5536EED58AE0CA2E6F88226090CC3D841B8AE0BB15C03`
-- 发布清单签名：`C42969A31EFE73810B9F0C06A50410E50A4B0105AC384BF6DBA92CAC30E33B29`
-- 真实发布数据 smoke：通过；窗口可见 334ms，API 就绪 5562ms，完整验证 22750ms。
+- SHA-256：`D96AF1EE41102AFBDC9613DA7B9B0EC5D17D481D77794E2825FFC69A742D3902`
+- 发布清单签名：`A7576A8FBD164D62088A1E6821F669215821415E7F0E513BEA5B07CBF8B46785`
+- 真实发布数据 smoke：通过；窗口可见 818ms，API 就绪 5990ms，完整验证 24911ms。
 - 信息总览 ready，行情覆盖 99.9%；量化策略 partial（12 个真实候选、因子覆盖 85%）；公司研究 partial（600519、证据覆盖 0.65、反方检查 10 项）；通达信专业接口 unavailable。质量门禁为 warning，仅表示真实数据边界，不把 partial 冒充 ready。
 - 本轮未关闭、重启或控制通达信，未控制鼠标或桌面。
 

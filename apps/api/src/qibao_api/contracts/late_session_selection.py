@@ -1,12 +1,59 @@
-from datetime import date
+from datetime import date, time
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 
 LateSessionPhase = Literal["pre_screen", "live_monitor", "post_close"]
-RuleStatus = Literal["passed", "failed", "unavailable"]
+RuleStatus = Literal["passed", "failed", "unavailable", "disabled"]
+
+
+class LateSessionRuleSettings(BaseModel):
+    """User-editable thresholds; defaults mirror the original screenshot rules."""
+
+    model_config = ConfigDict(frozen=True)
+
+    time_enabled: bool = True
+    start_time: time = time(14, 30)
+    end_time: time = time(15, 0)
+    change_enabled: bool = True
+    change_min: Decimal = Field(default=Decimal("3"), ge=-100, le=100)
+    change_max: Decimal = Field(default=Decimal("6"), ge=-100, le=100)
+    volume_ratio_enabled: bool = True
+    volume_ratio_min: Decimal = Field(default=Decimal("2"), ge=0)
+    volume_ratio_max: Decimal = Field(default=Decimal("5"), ge=0)
+    turnover_rate_enabled: bool = True
+    turnover_rate_min: Decimal = Field(default=Decimal("6"), ge=0)
+    turnover_rate_max: Decimal = Field(default=Decimal("15"), ge=0)
+    market_cap_enabled: bool = True
+    market_cap_min: Decimal = Field(default=Decimal("60"), ge=0)
+    market_cap_max: Decimal = Field(default=Decimal("300"), ge=0)
+    twenty_day_limit_up_enabled: bool = True
+    twenty_day_limit_up_min: int = Field(default=1, ge=0)
+    twenty_day_limit_up_max: int | None = Field(default=None, ge=0)
+    intraday_average_enabled: bool = True
+    intraday_relation: Literal["above", "below", "any"] = "above"
+
+    @model_validator(mode="after")
+    def validate_ranges(self) -> "LateSessionRuleSettings":
+        pairs = (
+            ("change_min", self.change_min, "change_max", self.change_max),
+            ("volume_ratio_min", self.volume_ratio_min, "volume_ratio_max", self.volume_ratio_max),
+            ("turnover_rate_min", self.turnover_rate_min, "turnover_rate_max", self.turnover_rate_max),
+            ("market_cap_min", self.market_cap_min, "market_cap_max", self.market_cap_max),
+        )
+        for minimum_name, minimum, maximum_name, maximum in pairs:
+            if minimum > maximum:
+                raise ValueError(f"{minimum_name} cannot exceed {maximum_name}")
+        if self.start_time >= self.end_time:
+            raise ValueError("start_time must be earlier than end_time")
+        if self.twenty_day_limit_up_max is not None and self.twenty_day_limit_up_min > self.twenty_day_limit_up_max:
+            raise ValueError("twenty_day_limit_up_min cannot exceed twenty_day_limit_up_max")
+        return self
+
+
+DEFAULT_LATE_SESSION_RULE_SETTINGS = LateSessionRuleSettings()
 
 
 class LateSessionQuote(BaseModel):
@@ -76,6 +123,8 @@ class LateSessionSelectionResponse(BaseModel):
     quote_count: int = Field(ge=0)
     candidate_count: int = Field(ge=0)
     rules: tuple[LateSessionRuleResult, ...]
+    settings: LateSessionRuleSettings = DEFAULT_LATE_SESSION_RULE_SETTINGS
+    default_settings: LateSessionRuleSettings = DEFAULT_LATE_SESSION_RULE_SETTINGS
     candidates: tuple[LateSessionCandidateResult, ...] = ()
     behaviors: tuple[LateSessionBehavior, ...] = ()
     source_evidence: tuple[str, ...] = ()
