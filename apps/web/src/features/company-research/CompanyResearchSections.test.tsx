@@ -27,5 +27,14 @@ describe("CompanyResearchSections", () => {
     expect(screen.getByText("反方风险")).toBeInTheDocument();
     expect(screen.getByText("缺少市场份额")).toBeInTheDocument();
     expect(screen.getByText("核对财报原文")).toBeInTheDocument();
+
+    const firstSummary = screen.getAllByRole("group")[0].querySelector("summary");
+    expect(firstSummary).toHaveAttribute("data-layout", "ledger-card");
+    expect(firstSummary?.querySelector('[data-part="chevron"]')).toBeInTheDocument();
+    expect(firstSummary?.querySelector('[data-part="index"]')).toBeInTheDocument();
+    expect(firstSummary?.querySelector('[data-part="content"]')).toBeInTheDocument();
+    expect(firstSummary?.querySelector('[data-part="status"]')).toBeInTheDocument();
+    expect(firstSummary?.children).toHaveLength(4);
+    expect(screen.getAllByRole("group")[8]).toHaveAttribute("open");
   });
 });

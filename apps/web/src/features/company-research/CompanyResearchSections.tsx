@@ -17,10 +17,11 @@ export function CompanyResearchSections({ sections }: { sections: CompanyResearc
     </header>
     <div>
       {sections.map((section, index) => <details key={section.key} data-status={section.status} role="group" open={section.status === "triggered"}>
-        <summary>
-          <span>{String(index + 1).padStart(2, "0")}</span>
-          <div><b>{section.label}</b><small>{section.summary}</small></div>
-          <em>{statusLabels[section.status]}</em>
+        <summary data-layout="ledger-card">
+          <span data-part="chevron" aria-hidden="true">▶</span>
+          <span data-part="index">{String(index + 1).padStart(2, "0")}</span>
+          <div data-part="content"><b>{section.label}</b><small>{section.summary}</small></div>
+          <em data-part="status">{statusLabels[section.status]}</em>
         </summary>
         <div className="company-research-section-detail">
           {section.facts.length > 0 && <ul>{section.facts.map((fact) => <li key={fact}>{fact}</li>)}</ul>}

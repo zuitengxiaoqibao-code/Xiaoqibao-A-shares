@@ -555,3 +555,17 @@
   .company-research-ai > div { grid-template-columns: minmax(0, 1fr); }
   .company-research-ai article { border-right: 0; border-bottom: 1px solid var(--line); }
 }
+
+/* The global details marker is a pseudo-element. Keep this ledger's four layout
+   cells explicit so the marker cannot become a hidden fifth grid item. */
+.company-research-sections summary::before { content: none; display: none; }
+.company-research-sections summary[data-layout="ledger-card"] { grid-template-columns: 14px 32px minmax(0, 1fr) auto; }
+.company-research-sections summary [data-part="chevron"] { color: var(--status-live); font: 700 13px/1 var(--font-body); text-shadow: 0 0 8px color-mix(in srgb, var(--status-live) 55%, transparent); transition: transform .16s ease, color .16s ease; }
+.company-research-sections details[open] summary [data-part="chevron"] { transform: rotate(90deg); color: color-mix(in srgb, var(--status-live) 70%, white); }
+.company-research-sections summary [data-part="index"] { color: var(--text-muted); font: 600 13px var(--font-data); }
+.company-research-sections summary [data-part="status"] { justify-self: end; }
+@media (max-width: 760px) {
+  .company-research-sections summary[data-layout="ledger-card"] { grid-template-columns: 14px 28px minmax(0, 1fr); }
+  .company-research-sections summary [data-part="content"] { grid-column: 3; }
+  .company-research-sections summary [data-part="status"] { grid-column: 3; justify-self: start; }
+}
