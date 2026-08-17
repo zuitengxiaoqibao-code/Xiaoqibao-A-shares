@@ -30,6 +30,7 @@ from qibao_api.a_shares.quant_strategy import (
     ArchivedTriggerEvidenceSource,
     QuantStrategyService,
 )
+from qibao_api.a_shares.late_session_selection_service import LateSessionSelectionService
 from qibao_api.a_shares.quant_strategy_snapshot import QuantStrategySnapshotStore
 from qibao_api.a_shares.quant_shadow_ledger import QuantShadowLedgerStore
 from qibao_api.a_shares.decision_journal import DecisionJournalStore
@@ -151,6 +152,7 @@ from qibao_api.routes.settings import router as settings_router
 from qibao_api.routes.market_sentiment import router as market_sentiment_router
 from qibao_api.routes.market_overview import router as market_overview_router
 from qibao_api.routes.quant_strategy import router as quant_strategy_router
+from qibao_api.routes.late_session_selection import router as late_session_selection_router
 from qibao_api.routes.walk_forward import router as walk_forward_router
 from qibao_api.routes.portfolio_risk import router as portfolio_risk_router
 from qibao_api.routes.first_limit_up import router as first_limit_up_router
@@ -1272,6 +1274,14 @@ async def lifespan(application: FastAPI):
                     shadow_ledger=quant_shadow_ledger,
                     shared_snapshot_registry=shared_snapshot_registry,
                 )
+                application.state.late_session_selection_service = LateSessionSelectionService(
+                    local_market_source=local_tdx_overview_source,
+                    bar_repository=bar_repository,
+                    instrument_directory=a_share_instrument_directory,
+                    tencent_source=application.state.market_overview_service.source,
+                    market_overview_service=application.state.market_overview_service,
+                    clock=lambda: datetime.now(timezone.utc),
+                )
                 application.state.stock_timeline_service = StockTimelineService(
                     bar_repository,
                     news_repository,
@@ -1477,6 +1487,7 @@ app.include_router(settings_router)
 app.include_router(market_sentiment_router)
 app.include_router(market_overview_router)
 app.include_router(quant_strategy_router)
+app.include_router(late_session_selection_router)
 app.include_router(walk_forward_router)
 app.include_router(portfolio_risk_router)
 app.include_router(watchlist_risk_router)

@@ -219,6 +219,10 @@ def get_quant_strategy_service(request: Request):
     return request.app.state.quant_strategy_service
 
 
+def get_late_session_selection_service(request: Request):
+    return request.app.state.late_session_selection_service
+
+
 def get_quant_shadow_ledger(request: Request):
     return request.app.state.quant_shadow_ledger
 

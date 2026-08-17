@@ -137,6 +137,7 @@ class OverviewStockQuote(BaseModel):
     change_percent: Decimal
     amount_yi: Decimal | None = Field(default=None, ge=0)
     market_cap_yi: Decimal | None = Field(default=None, ge=0)
+    turnover_rate: Decimal | None = Field(default=None, ge=0)
     observed_at: AwareDatetime
 
 

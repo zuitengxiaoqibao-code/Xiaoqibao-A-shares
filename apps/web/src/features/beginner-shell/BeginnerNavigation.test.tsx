@@ -20,8 +20,8 @@ describe("BeginnerNavigation", () => {
 
     expect(screen.getByRole("complementary")).toHaveClass("terminal-navigation", "beginner-sidebar");
     const navigation = screen.getByRole("navigation", { name: "主要功能" });
-    expect(navigation).toHaveTextContent("信息总览今日研判个股观察公司研究首次涨停量化分析新闻热点风险提醒历史复盘数据设置本地运维");
-    expect(navigation.querySelectorAll("button")).toHaveLength(11);
+    expect(navigation).toHaveTextContent("信息总览今日研判个股观察公司研究首次涨停尾盘选股量化分析新闻热点风险提醒历史复盘数据设置本地运维");
+    expect(navigation.querySelectorAll("button")).toHaveLength(12);
     expect(screen.getByRole("button", { name: "量化分析" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "数据设置" })).toBeInTheDocument();
     const marketOverview = screen.getByRole("button", { name: "信息总览" });
@@ -40,10 +40,12 @@ describe("BeginnerNavigation", () => {
   it("keeps all routes at the same navigation level", () => {
     render(<BeginnerNavigation active="dashboard" onNavigate={vi.fn()} />);
     const navigation = screen.getByRole("navigation", { name: "主要功能" });
-    expect(navigation.querySelectorAll("button")).toHaveLength(11);
+    expect(navigation.querySelectorAll("button")).toHaveLength(12);
     const firstLimitUp = screen.getByRole("button", { name: "首次涨停" });
+    const lateSession = screen.getByRole("button", { name: "尾盘选股" });
     const quantAnalysis = screen.getByRole("button", { name: "量化分析" });
-    expect(firstLimitUp.nextElementSibling).toBe(quantAnalysis);
+    expect(firstLimitUp.nextElementSibling).toBe(lateSession);
+    expect(lateSession.nextElementSibling).toBe(quantAnalysis);
     expect(quantAnalysis).not.toHaveClass("child-entry");
     expect(quantAnalysis.className).toBe(firstLimitUp.className);
     expect(screen.getByRole("button", { name: "数据设置" })).toBeInTheDocument();

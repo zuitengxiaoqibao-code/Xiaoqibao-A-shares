@@ -136,6 +136,9 @@ def parse_stock_quotes(
                 market_cap_yi=(
                     Decimal(fields[44]) if fields[44] not in {"", "--"} else None
                 ),
+                turnover_rate=(
+                    Decimal(fields[38]) if fields[38] not in {"", "--"} else None
+                ),
                 observed_at=datetime.strptime(fields[30], "%Y%m%d%H%M%S").replace(
                     tzinfo=CHINA_TZ
                 ),

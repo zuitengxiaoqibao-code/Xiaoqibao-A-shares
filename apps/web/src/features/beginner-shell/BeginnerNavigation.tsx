@@ -1,9 +1,9 @@
 import {
-  BarChart3, BellRing, BookOpenText, CandlestickChart, CircleDot, History, LayoutDashboard, LibraryBig, Newspaper, ServerCog, Settings2,
+  Activity, BarChart3, BellRing, BookOpenText, CandlestickChart, CircleDot, History, LayoutDashboard, LibraryBig, Newspaper, ServerCog, Settings2,
   ShieldAlert, Sparkles,
 } from "lucide-react";
 
-export type BeginnerView = "market_overview" | "dashboard" | "a_shares" | "company_research" | "first_limit_up" | "quant_analysis" | "news" | "risk" | "history" | "settings" | "operations" | "bonds";
+export type BeginnerView = "market_overview" | "dashboard" | "a_shares" | "company_research" | "first_limit_up" | "late_session_selection" | "quant_analysis" | "news" | "risk" | "history" | "settings" | "operations" | "bonds";
 
 const entries = [
   ["market_overview", "信息总览", LayoutDashboard],
@@ -11,6 +11,7 @@ const entries = [
   ["a_shares", "个股观察", CandlestickChart],
   ["company_research", "公司研究", LibraryBig],
   ["first_limit_up", "首次涨停", CircleDot],
+  ["late_session_selection", "尾盘选股", Activity],
   ["quant_analysis", "量化分析", BarChart3],
   ["news", "新闻热点", Newspaper],
   ["risk", "风险提醒", ShieldAlert],

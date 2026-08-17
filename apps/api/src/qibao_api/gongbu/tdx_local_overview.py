@@ -46,6 +46,7 @@ class TdxRealtimeQuote:
     amount_wan: Decimal
     observed_at: datetime | None = None
     market_cap_yi: Decimal | None = None
+    intraday_average_price: Decimal | None = None
 
     @property
     def change_percent(self) -> Decimal:
@@ -297,6 +298,14 @@ def parse_tdx_snapshot(
     market_cap_yi = _decimal(payload.get("MarketCapYi") or payload.get("market_cap_yi"))
     if market_cap_yi is not None and market_cap_yi < 0:
         market_cap_yi = None
+    intraday_average_price = _decimal(
+        payload.get("AveragePrice")
+        or payload.get("AvgPrice")
+        or payload.get("average_price")
+        or payload.get("intraday_average_price")
+    )
+    if intraday_average_price is not None and intraday_average_price <= 0:
+        intraday_average_price = None
     if (
         previous_close is None
         or price is None
@@ -319,6 +328,7 @@ def parse_tdx_snapshot(
         volume=volume if volume is not None and volume >= 0 else Decimal(),
         amount_wan=amount_wan if amount_wan is not None and amount_wan >= 0 else Decimal(),
         market_cap_yi=market_cap_yi,
+        intraday_average_price=intraday_average_price,
     )
 
 
@@ -580,6 +590,7 @@ class LocalTdxOverviewSource:
         self.fallback = fallback
         self._lock = threading.RLock()
         self._snapshot = self._load_cache()
+        self._quotes: tuple[TdxRealtimeQuote, ...] = ()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._refresh_failure_count = 0
@@ -588,6 +599,11 @@ class LocalTdxOverviewSource:
     def current(self) -> OverviewMarketSnapshot | None:
         with self._lock:
             return self._snapshot
+
+    def current_quotes(self) -> tuple[TdxRealtimeQuote, ...]:
+        """Return the latest full local quote set, never a representative sample."""
+        with self._lock:
+            return self._quotes
 
     def start(self) -> None:
         with self._lock:
@@ -646,6 +662,7 @@ class LocalTdxOverviewSource:
         )
         with self._lock:
             self._snapshot = snapshot
+            self._quotes = quotes
         self._save_cache(snapshot)
         return snapshot
 
@@ -653,6 +670,7 @@ class LocalTdxOverviewSource:
         snapshot = self.fallback.fetch()
         with self._lock:
             self._snapshot = snapshot
+            self._quotes = ()
         self._save_cache(snapshot)
         return snapshot
 

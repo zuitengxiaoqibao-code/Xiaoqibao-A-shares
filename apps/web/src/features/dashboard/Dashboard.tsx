@@ -37,6 +37,7 @@ import type { BreakingNewsAlertLoader } from "../news-alerts/types";
 import type { PortfolioPositionRemover, PortfolioPositionSaver, PortfolioRiskAnalyzer, PortfolioRiskLoader, WatchlistRiskLoader } from "../portfolio-risk/types";
 import type { CompanyResearchComparison } from "../company-research/api";
 import type { CompanyResearchResponse } from "../company-research/types";
+import type { LateSessionSelectionLoader } from "../late-session-selection/types";
 import { scheduleRoutePreload } from "./routePreload";
 import type {
   SpeechSettingsLoader,
@@ -64,6 +65,7 @@ const loadConvertibleBondModule = () => import("../convertible-bonds/Convertible
 const loadNewsIntelligenceModule = () => import("../news-intelligence/NewsIntelligenceView");
 const loadTodayDecisionModule = () => import("../decision-workbench/TodayDecisionView");
 const loadFirstLimitUpModule = () => import("../first-limit-up/FirstLimitUpView");
+const loadLateSessionSelectionModule = () => import("../late-session-selection/LateSessionSelectionView");
 const loadQuantAnalysisModule = () => import("../quant-analysis/QuantAnalysisDashboard");
 const loadCompanyResearchModule = () => import("../company-research/CompanyResearchView");
 const loadBeginnerRiskModule = () => import("../beginner-shell/BeginnerRiskView");
@@ -75,6 +77,7 @@ const ConvertibleBondView = lazy(() => loadConvertibleBondModule().then(({ Conve
 const NewsIntelligenceView = lazy(() => loadNewsIntelligenceModule().then(({ NewsIntelligenceView: view }) => ({ default: view })));
 const TodayDecisionView = lazy(() => loadTodayDecisionModule().then(({ TodayDecisionView: view }) => ({ default: view })));
 const FirstLimitUpView = lazy(() => loadFirstLimitUpModule().then(({ FirstLimitUpView: view }) => ({ default: view })));
+const LateSessionSelectionView = lazy(() => loadLateSessionSelectionModule().then(({ LateSessionSelectionView: view }) => ({ default: view })));
 const QuantAnalysisDashboard = lazy(() => loadQuantAnalysisModule().then(({ QuantAnalysisDashboard: view }) => ({ default: view })));
 const CompanyResearchView = lazy(() => loadCompanyResearchModule().then(({ CompanyResearchView: view }) => ({ default: view })));
 const BeginnerRiskView = lazy(() => loadBeginnerRiskModule().then(({ BeginnerRiskView: view }) => ({ default: view })));
@@ -166,6 +169,7 @@ type Props = {
   resumeTdxImport?: import("../data-settings/types").TdxImportController;
   loadFirstLimitUp?: () => Promise<FirstLimitUpBoard>;
   refreshFirstLimitUp?: () => Promise<FirstLimitUpBoard>;
+  loadLateSessionSelection?: LateSessionSelectionLoader;
   loadQuantTicks?: QuantTickLoader;
   loadKronosForecast?: QuantForecastLoader;
   loadWalkForward?: QuantWalkForwardLoader;
@@ -211,6 +215,7 @@ function viewFromPath(path: string): ActiveView {
   if (path === "/company-research") return "company_research";
   if (path === "/first-limit-up/quant-analysis") return "quant_analysis";
   if (path === "/first-limit-up") return "first_limit_up";
+  if (path === "/late-session-selection") return "late_session_selection";
   if (path === "/convertible-bonds") return "bonds";
   if (path === "/news-intelligence") return "news";
   if (path === "/risk") return "risk";
@@ -223,6 +228,7 @@ function viewFromPath(path: string): ActiveView {
 const pathsForView: Record<ActiveView, string> = {
   market_overview: "/market-overview", dashboard: "/today-decision", a_shares: "/a-shares",
   company_research: "/company-research", first_limit_up: "/first-limit-up",
+  late_session_selection: "/late-session-selection",
   quant_analysis: "/first-limit-up/quant-analysis", risk: "/risk", history: "/history",
   settings: "/settings", operations: "/operations", bonds: "/convertible-bonds", news: "/news-intelligence",
 };
@@ -300,7 +306,7 @@ export function RouteLoadingFallback() {
   );
 }
 
-export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, analyzePortfolioRisk, loadWatchlistRisk, loadPortfolioRisk, savePortfolioPosition, removePortfolioPosition, loadCompliance, loadAudit, complianceAction, loadBondDashboard, loadBondDiagnosis, loadCachedBondDiagnosis, loadBondCandidates, diagnoseBondBatch, loadNewsIntelligence, loadEventImpact, syncNews, syncHotspots, createNewsCorrection, loadOperationsStatus, loadOperationsDiagnostics, loadObservability, setSchedulerPaused, createBackup, verifyBackup, runManualJob, cleanupCache, previewStorageCleanup, cleanupStorage, loadPerformanceSummary, loadAShareCandidates, loadAShareCandidateScores, loadAShareDiagnosis, loadDecisionCurrent, loadDecisionDate, loadMarketSentiment, refreshMarketSentiment, loadCandidateSentiments, refreshCandidateSentiments, searchAShareInstruments, loadStockCockpit, loadStockCockpitAI, loadStockTimeline, prepareStockData, loadAISettings, saveAISettings, deleteAISettings, loadLocalSourceSettings, detectLocalSourceSettings, saveLocalSourceSettings, syncAShareUniverse, loadSourceHealth, loadHistorySync, loadHistoryCoverage, loadHistoryRepairCenter, loadHistoryRepairAudits, startHistoryBackfill, pauseHistorySync, resumeHistorySync, loadTdxImport, scanTdxImport, startTdxImport, pauseTdxImport, resumeTdxImport, loadFirstLimitUp, refreshFirstLimitUp, loadQuantTicks, loadKronosForecast, loadWalkForward, loadQuantStrategy, loadQuantShadowDecisions, loadQuantShadowAnalytics, loadQuantCalibration, loadDecisionJournal, createDecisionJournal, loadTdxFormula, loadMarketOverview, loadMarketIntervalReview, loadBreakingNewsAlerts, loadSpeechSettings, loadSpeechVoices, saveSpeechSettings, synthesizeSpeech, loadCompanyResearch, compareCompanyResearch }: Props) {
+export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, analyzePortfolioRisk, loadWatchlistRisk, loadPortfolioRisk, savePortfolioPosition, removePortfolioPosition, loadCompliance, loadAudit, complianceAction, loadBondDashboard, loadBondDiagnosis, loadCachedBondDiagnosis, loadBondCandidates, diagnoseBondBatch, loadNewsIntelligence, loadEventImpact, syncNews, syncHotspots, createNewsCorrection, loadOperationsStatus, loadOperationsDiagnostics, loadObservability, setSchedulerPaused, createBackup, verifyBackup, runManualJob, cleanupCache, previewStorageCleanup, cleanupStorage, loadPerformanceSummary, loadAShareCandidates, loadAShareCandidateScores, loadAShareDiagnosis, loadDecisionCurrent, loadDecisionDate, loadMarketSentiment, refreshMarketSentiment, loadCandidateSentiments, refreshCandidateSentiments, searchAShareInstruments, loadStockCockpit, loadStockCockpitAI, loadStockTimeline, prepareStockData, loadAISettings, saveAISettings, deleteAISettings, loadLocalSourceSettings, detectLocalSourceSettings, saveLocalSourceSettings, syncAShareUniverse, loadSourceHealth, loadHistorySync, loadHistoryCoverage, loadHistoryRepairCenter, loadHistoryRepairAudits, startHistoryBackfill, pauseHistorySync, resumeHistorySync, loadTdxImport, scanTdxImport, startTdxImport, pauseTdxImport, resumeTdxImport, loadFirstLimitUp, refreshFirstLimitUp, loadLateSessionSelection, loadQuantTicks, loadKronosForecast, loadWalkForward, loadQuantStrategy, loadQuantShadowDecisions, loadQuantShadowAnalytics, loadQuantCalibration, loadDecisionJournal, createDecisionJournal, loadTdxFormula, loadMarketOverview, loadMarketIntervalReview, loadBreakingNewsAlerts, loadSpeechSettings, loadSpeechVoices, saveSpeechSettings, synthesizeSpeech, loadCompanyResearch, compareCompanyResearch }: Props) {
   const selectedInstrument = useOptionalSelectedInstrument();
   const [state, setState] = useState<ViewState>({ kind: "idle" });
   const [symbol, setSymbol] = useState("600000");
@@ -425,6 +431,9 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, an
 
       {activeView === "first_limit_up" && loadFirstLimitUp && refreshFirstLimitUp && <Suspense fallback={<RouteLoadingFallback />}><FirstLimitUpView load={loadFirstLimitUp} refresh={refreshFirstLimitUp} /></Suspense>}
       {activeView === "first_limit_up" && (!loadFirstLimitUp || !refreshFirstLimitUp) && <main className="beginner-page"><header><p className="eyebrow">A 股 / 盘后筛选</p><h1>首次涨停</h1><p>首次涨停筛选服务暂不可用，请检查本地 API 和日线数据后重试。</p></header></main>}
+
+      {activeView === "late_session_selection" && loadLateSessionSelection && <Suspense fallback={<RouteLoadingFallback />}><LateSessionSelectionView load={loadLateSessionSelection} /></Suspense>}
+      {activeView === "late_session_selection" && !loadLateSessionSelection && <main className="beginner-page"><header><p className="eyebrow">A 股 / 尾盘筛选</p><h1>尾盘选股</h1><p>尾盘选股服务暂不可用，请检查本地行情和历史数据。</p></header></main>}
 
       {activeView === "quant_analysis" && loadFirstLimitUp && loadQuantTicks && runBacktest && <Suspense fallback={<RouteLoadingFallback />}><QuantAnalysisDashboard loadBoard={loadFirstLimitUp} refreshBoard={refreshFirstLimitUp} loadTicks={loadQuantTicks} runBacktest={runBacktest} loadKronosForecast={loadKronosForecast} loadWalkForward={loadWalkForward} loadQuantStrategy={loadQuantStrategy} loadQuantShadowDecisions={loadQuantShadowDecisions} loadQuantShadowAnalytics={loadQuantShadowAnalytics} loadQuantCalibration={loadQuantCalibration} loadDecisionJournal={loadDecisionJournal} createDecisionJournal={createDecisionJournal} loadTdxFormula={loadTdxFormula} loadTimeline={loadStockTimeline} selectedSymbol={selectedSymbol} searchInstruments={searchAShareInstruments} onSelectSymbol={(nextSymbol) => selectedInstrument?.select(nextSymbol, "search")} /></Suspense>}
       {activeView === "quant_analysis" && (!loadFirstLimitUp || !loadQuantTicks || !runBacktest) && <main className="quant-analysis-page"><header><p className="eyebrow">FIRST LIMIT-UP / QUANT LAB</p><h1>量化分析仪表盘</h1><p>量化证据链暂不完整，请检查首次涨停、盘中 TICK 与回测服务。</p></header></main>}

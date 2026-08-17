@@ -43,6 +43,7 @@ import {
   refreshCandidateSentiments,
 } from "../features/candidate-sentiment/api";
 import { loadFirstLimitUp, refreshFirstLimitUp } from "../features/first-limit-up/api";
+import { loadLateSessionSelection } from "../features/late-session-selection/api";
 import { createDecisionJournal, loadDecisionJournal, loadKronosForecast, loadQuantCalibration, loadQuantShadowAnalytics, loadQuantShadowDecisions, loadQuantStrategy, loadQuantTicks, loadTdxFormula, loadWalkForward } from "../features/quant-analysis/api";
 import { loadMarketIntervalReview, loadMarketOverview } from "../features/market-overview/api";
 import { loadStockTimeline } from "../features/stock-timeline/api";
@@ -88,6 +89,7 @@ export function App() {
     loadMarketSentiment={loadCurrentMarketSentiment} refreshMarketSentiment={refreshMarketSentiment}
     loadCandidateSentiments={loadCandidateSentiments} refreshCandidateSentiments={refreshCandidateSentiments}
     loadFirstLimitUp={loadFirstLimitUp} refreshFirstLimitUp={refreshFirstLimitUp}
+    loadLateSessionSelection={loadLateSessionSelection}
     loadQuantTicks={loadQuantTicks}
     loadKronosForecast={loadKronosForecast}
     loadWalkForward={loadWalkForward}
