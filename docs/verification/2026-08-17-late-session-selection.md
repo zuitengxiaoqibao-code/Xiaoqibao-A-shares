@@ -28,10 +28,10 @@
 ## EXE 证据
 
 - EXE：`D:/Users/90090/Documents/金融财经/.worktrees/a-share-daily-research/dist/XiaoQiBao-Portable/xiaoqibao.exe`
-- 源码提交：`0eae84f4cbe705a100f6386a2cb7684aa3bdf10b`
-- SHA-256：`F7D7C135097F28CC8D5D76AE8619D07478DE3F9BADE9882678CBACE7DA5847EA`
-- 发布清单签名：`BE71035AD26CE9E0C07BD7B2253667A285D86438916069A477F133E4D5334039`
-- 真实发布数据 smoke：通过；窗口可见 344ms，API 就绪 5645ms，完整验证 22245ms。
+- 源码提交：`3770c6207235cc52393c8850b6054dfe8d6b7ec2`
+- SHA-256：`E05A2F57B57D5D22032F89EF248C098F9F4A65FC703F4BE0EDAB5ABD89A899E7`
+- 发布清单签名：`3937380BC9C22101BAB12489F52184B490BE9F94F90EEFB4B5611ECEA92AC008`
+- 真实发布数据 smoke：通过；窗口可见 333ms，API 就绪 5483ms，完整验证 22233ms。
 - 临时副本恢复演练：通过；34 个数据库、迁移版本 1、关键 API smoke 均通过；恢复演练后发布质量门禁通过。
 - 信息总览 ready，行情覆盖 99.9%；量化策略 partial（12 个真实候选、因子覆盖 85%）；公司研究 partial（600519、证据覆盖 0.65、反方检查 10 项）；通达信专业接口 unavailable。质量门禁为 warning，仅表示真实数据边界，不把 partial 冒充 ready。
 - 本轮未关闭、重启或控制通达信，未控制鼠标或桌面。
