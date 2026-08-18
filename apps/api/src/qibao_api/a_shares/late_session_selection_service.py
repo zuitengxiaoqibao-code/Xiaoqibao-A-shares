@@ -30,6 +30,7 @@ class LateSessionSelectionService:
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self._enrichment_observed_at: datetime | None = None
         self._enrichment: dict[str, object] = {}
+        self._on_demand_refresh_at: datetime | None = None
 
     def current(
         self,
@@ -44,8 +45,26 @@ class LateSessionSelectionService:
         trading_date = local_now.date()
         quotes = tuple(getattr(self.local_market_source, "current_quotes", lambda: ())())
         if not quotes:
+            refresh = getattr(
+                self.local_market_source,
+                "refresh_fast",
+                getattr(self.local_market_source, "refresh", None),
+            )
+            last_attempt = self._on_demand_refresh_at
+            can_refresh = last_attempt is None or (now - last_attempt).total_seconds() >= 5
+            if callable(refresh) and can_refresh:
+                self._on_demand_refresh_at = now
+                try:
+                    refresh()
+                except Exception:
+                    # Keep the source's truthful unavailable state; the next
+                    # request may retry after the short cooldown.
+                    pass
+                quotes = tuple(getattr(self.local_market_source, "current_quotes", lambda: ())())
+        if not quotes:
             return self._unavailable(trading_date, local_now, phase, "本地通达信全市场实时快照尚未就绪")
         enriched = self._enrich(quotes, now)
+        history = self._history_windows(tuple(raw.symbol for raw in quotes), trading_date)
         evaluated: list[LateSessionCandidateResult] = []
         for raw in quotes:
             data = enriched.get(raw.symbol, {})
@@ -56,7 +75,12 @@ class LateSessionSelectionService:
                 low=getattr(raw, "low", None),
                 high=getattr(raw, "high", None),
             )
-            volume_ratio = data.get("volume_ratio") or self._volume_ratio(raw.symbol, raw.volume)
+            bars = history.get(raw.symbol)
+            volume_ratio = data.get("volume_ratio") or (
+                self._volume_ratio_from_bars(raw.volume, bars)
+                if bars is not None
+                else self._volume_ratio(raw.symbol, raw.volume)
+            )
             quote = LateSessionQuote(
                 symbol=raw.symbol,
                 name=raw.name or (self.instrument_directory.resolve(raw.symbol).name if self.instrument_directory.resolve(raw.symbol) else raw.symbol),
@@ -64,9 +88,13 @@ class LateSessionSelectionService:
                 previous_close=raw.previous_close,
                 change_percent=raw.change_percent,
                 volume_ratio=volume_ratio,
-                turnover_rate=data.get("turnover_rate"),
+                turnover_rate=data.get("turnover_rate") or getattr(raw, "turnover_rate", None),
                 market_cap_yi=data.get("market_cap_yi") or raw.market_cap_yi,
-                twenty_day_limit_up_count=self._twenty_day_limit_count(raw.symbol, trading_date),
+                twenty_day_limit_up_count=(
+                    self._twenty_day_limit_count_from_bars(raw.symbol, bars, trading_date)
+                    if bars is not None
+                    else self._twenty_day_limit_count(raw.symbol, trading_date)
+                ),
                 intraday_average_price=average,
                 observed_at=raw.observed_at or now,
                 source=("tdx-local-realtime" + ("+tencent" if data else "") + ("+vwap" if explicit_average is None and average is not None else "")),
@@ -74,7 +102,10 @@ class LateSessionSelectionService:
             result = evaluate_candidate(
                 quote,
                 settings=settings,
-                allow_close_boundary=phase == "post_close",
+                allow_close_boundary=(
+                    phase == "post_close"
+                    and quote.observed_at.astimezone(CHINA_TZ).date() == trading_date
+                ),
             )
             above = None if average is None else raw.price > average
             tags = classify_behavior(change_percent=raw.change_percent, volume_ratio=quote.volume_ratio, above_average=above)
@@ -84,7 +115,30 @@ class LateSessionSelectionService:
             item for item in evaluated
             if all(rule.status in {"passed", "disabled"} for rule in item.rules if rule.key != "time_window")
         ]
-        candidates = tuple((passed if phase != "pre_screen" else pre_screened)[: max(1, limit)])
+        strict_pool = passed if phase != "pre_screen" else pre_screened
+        core_keys = {"change_percent", "turnover_rate", "market_cap"}
+        if phase != "pre_screen":
+            core_keys.add("time_window")
+        observation_pool = sorted(
+            (
+                item
+                for item in evaluated
+                if all(
+                    rule.status in {"passed", "disabled"}
+                    for rule in item.rules
+                    if rule.key in core_keys
+                )
+                and any(rule.status in {"failed", "unavailable"} for rule in item.rules)
+            ),
+            key=lambda item: (
+                sum(rule.status == "failed" for rule in item.rules),
+                sum(rule.status == "unavailable" for rule in item.rules),
+                -sum(rule.status == "passed" for rule in item.rules),
+                item.quote.symbol,
+            ),
+        )
+        candidates = tuple((strict_pool or observation_pool)[: max(1, limit)])
+        has_observation_candidates = bool(candidates) and not bool(strict_pool)
         source_quality = "ready" if all(
             item.quote.turnover_rate is not None
             and item.quote.market_cap_yi is not None
@@ -101,11 +155,13 @@ class LateSessionSelectionService:
             limitations.append("14:30前展示六项条件预筛结果，时间闸门和尾盘行为需实时窗口确认")
         if phase == "post_close":
             limitations.append("15:00后停止高频刷新，结果为收盘冻结快照")
+        if has_observation_candidates:
+            limitations.append("严格候选为空；当前展示通过时间、涨幅、换手率和市值核心条件的观察候选，未通过与待补齐项已逐股标注")
         source_evidence = ["通达信本地全市场实时快照", "本地日线仓储20交易日窗口"]
         if any("+vwap" in item.quote.source for item in evaluated):
             source_evidence.append("通达信成交额/成交量推导累计成交均价（VWAP）")
         return LateSessionSelectionResponse(
-            status="ready" if candidates else ("partial" if evaluated else "unavailable"),
+            status="partial" if has_observation_candidates else "ready" if candidates else ("partial" if evaluated else "unavailable"),
             trading_date=trading_date,
             server_time=local_now,
             phase=phase,
@@ -116,7 +172,7 @@ class LateSessionSelectionService:
             quote_count=len(evaluated),
             candidate_count=len(candidates),
             rules=self._summary_rules(evaluated, settings),
-            data_state=("ready" if candidates else "partial" if any(rule.status == "unavailable" for item in evaluated for rule in item.rules) else "no_candidates"),
+            data_state=("partial" if has_observation_candidates else "ready" if candidates else "partial" if any(rule.status == "unavailable" for item in evaluated for rule in item.rules) else "no_candidates"),
             no_data_reason=None if candidates else self._no_data_reason(evaluated, quotes_count=len(quotes), phase=phase, limitations=limitations),
             settings=settings,
             default_settings=DEFAULT_LATE_SESSION_RULE_SETTINGS,
@@ -146,12 +202,18 @@ class LateSessionSelectionService:
     def _enrich(self, quotes: tuple[object, ...], now: datetime) -> dict[str, dict[str, Decimal | None]]:
         if self.tencent_source is None:
             return {}
+        if all(
+            getattr(quote, "turnover_rate", None) is not None
+            and getattr(quote, "market_cap_yi", None) is not None
+            for quote in quotes
+        ):
+            return {}
         if self._enrichment_observed_at is not None and (now - self._enrichment_observed_at).total_seconds() < 5:
             return self._enrichment
         result: dict[str, dict[str, Decimal | None]] = {}
         symbols = [quote.symbol for quote in quotes]
-        for start in range(0, len(symbols), 100):
-            batch = tuple(symbols[start:start + 100])
+        for start in range(0, len(symbols), 320):
+            batch = tuple(symbols[start:start + 320])
             try:
                 rows, _warnings = self.tencent_source.fetch_stocks(batch)
             except Exception:
@@ -172,6 +234,19 @@ class LateSessionSelectionService:
             bars = self.bar_repository.latest(symbol, limit=21, cutoff=None)
         except Exception:
             return None
+        return self._twenty_day_limit_count_from_bars(symbol, bars, as_of)
+
+    def _history_windows(self, symbols: tuple[str, ...], as_of: date) -> dict[str, list[object]]:
+        latest_many = getattr(self.bar_repository, "latest_many", None)
+        if not callable(latest_many) or not symbols:
+            return {}
+        try:
+            return latest_many(list(symbols), 21, as_of)
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _twenty_day_limit_count_from_bars(symbol: str, bars, as_of: date) -> int | None:
         if any(getattr(bar, "trade_date", None) is not None for bar in bars):
             bars = [bar for bar in bars if bar.trade_date <= as_of]
         if len(bars) < 21:
@@ -191,6 +266,12 @@ class LateSessionSelectionService:
             bars = self.bar_repository.latest(symbol, limit=6, cutoff=None)
         except Exception:
             return None
+        if len(bars) < 6 or current_volume < 0:
+            return None
+        return self._volume_ratio_from_bars(current_volume, bars)
+
+    @staticmethod
+    def _volume_ratio_from_bars(current_volume: Decimal, bars) -> Decimal | None:
         if len(bars) < 6 or current_volume < 0:
             return None
         baseline = sum((bar.volume for bar in bars[1:6]), Decimal("0")) / Decimal("5")

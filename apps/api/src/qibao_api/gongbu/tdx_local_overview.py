@@ -47,6 +47,7 @@ class TdxRealtimeQuote:
     observed_at: datetime | None = None
     market_cap_yi: Decimal | None = None
     intraday_average_price: Decimal | None = None
+    turnover_rate: Decimal | None = None
 
     @property
     def change_percent(self) -> Decimal:
@@ -623,6 +624,7 @@ class LocalTdxOverviewSource:
         self.initial_delay_seconds = initial_delay_seconds
         self.fallback = fallback
         self._lock = threading.RLock()
+        self._fallback_refresh_lock = threading.Lock()
         self._snapshot = self._load_cache()
         self._quotes: tuple[TdxRealtimeQuote, ...] = ()
         self._stop = threading.Event()
@@ -672,6 +674,13 @@ class LocalTdxOverviewSource:
         except (OSError, ValueError, httpx.HTTPError):
             if self.fallback is None:
                 raise
+            return self._accept_fallback()
+
+    def refresh_fast(self) -> OverviewMarketSnapshot:
+        """Refresh full-market quotes without the slow per-symbol RPC scan."""
+        if self.fallback is None:
+            return self.refresh()
+        with self._fallback_refresh_lock:
             return self._accept_fallback()
 
     def _refresh_rpc(self) -> OverviewMarketSnapshot:

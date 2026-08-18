@@ -39,6 +39,15 @@ def test_phase_boundaries_are_strict() -> None:
     assert classify_phase(datetime(2026, 8, 17, 15, 0, tzinfo=tz)) == "post_close"
 
 
+def test_post_close_accepts_same_session_frozen_quote_after_three_pm() -> None:
+    result = evaluate_candidate(
+        quote(observed_at=datetime(2026, 8, 17, 8, 15, tzinfo=timezone.utc)),
+        allow_close_boundary=True,
+    )
+
+    assert next(rule for rule in result.rules if rule.key == "time_window").status == "passed"
+
+
 def test_candidate_requires_all_seven_rules() -> None:
     result = evaluate_candidate(quote())
     assert result.passed is True

@@ -279,6 +279,39 @@ def test_local_overview_keeps_fallback_quotes_for_downstream_screeners(tmp_path)
     assert source.current_quotes() == (fallback_quote,)
 
 
+def test_local_overview_can_refresh_fast_from_fallback_without_scanning_rpc_catalog(tmp_path) -> None:
+    fallback_quote = quote(
+        "600000", "浦发银行", previous_close="9.19", price="9.28",
+        high="9.35", amount_wan="102935.42",
+    )
+    expected = build_market_statistics(
+        (fallback_quote,), observed_at=NOW, source="tencent-realtime+tdx-catalog"
+    )
+
+    class SlowRpc:
+        def available(self) -> bool:
+            return True
+
+        def call(self, *_args, **_kwargs):
+            raise AssertionError("fast refresh must not scan the RPC catalog")
+
+    class Fallback:
+        last_quotes = (fallback_quote,)
+
+        def fetch(self):
+            return expected
+
+    source = LocalTdxOverviewSource(
+        cache_path=tmp_path / "overview.json",
+        rpc=SlowRpc(),
+        fallback=Fallback(),
+        clock=lambda: NOW,
+    )
+
+    assert source.refresh_fast() == expected
+    assert source.current_quotes() == (fallback_quote,)
+
+
 def test_local_overview_does_not_create_an_rpc_client_when_disabled(
     tmp_path, monkeypatch
 ) -> None:

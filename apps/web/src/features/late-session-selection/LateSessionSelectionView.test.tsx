@@ -43,4 +43,24 @@ describe("LateSessionSelectionView", () => {
     expect(screen.getAllByText(response.no_data_reason).length).toBeGreaterThan(0);
     expect(analyze).toHaveBeenCalled();
   });
+
+  it("labels partial candidates as observations instead of strict passes", async () => {
+    const partial = {
+      ...response,
+      data_state: "partial" as const,
+      candidate_count: 1,
+      candidates: [{
+        quote: { symbol: "600000", name: "浦发银行", price: "9.65", previous_close: "9.19", change_percent: "5", volume_ratio: null, turnover_rate: "10", market_cap_yi: "100", twenty_day_limit_up_count: 1, intraday_average_price: null, observed_at: "2026-08-17T07:00:00Z", source: "tdx-local-realtime" },
+        passed: false,
+        rules: [],
+        behavior_tags: [],
+        risk_notes: ["待补齐：分时黄线"],
+      }],
+    };
+    render(<LateSessionSelectionView load={vi.fn().mockResolvedValue(partial)} analyze={vi.fn().mockResolvedValue({ ...analysis, candidate_count: 1 })} />);
+
+    await waitFor(() => expect(screen.getByText("核心条件观察候选")).toBeInTheDocument());
+    expect(screen.getByText("核心条件通过，其他条件未通过或待补齐", { exact: false })).toBeInTheDocument();
+    expect(screen.queryByText("当前规则全部通过", { exact: false })).not.toBeInTheDocument();
+  });
 });

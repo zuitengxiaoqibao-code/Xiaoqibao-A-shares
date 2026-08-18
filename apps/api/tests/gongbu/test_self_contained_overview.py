@@ -24,6 +24,8 @@ def quote_line(
     opening: str,
     volume: str,
     amount_wan: str,
+    turnover_rate: str = "",
+    market_cap_yi: str = "",
 ) -> str:
     fields = [""] * 53
     fields[1] = name
@@ -36,6 +38,8 @@ def quote_line(
     fields[33] = high
     fields[34] = low
     fields[37] = amount_wan
+    fields[38] = turnover_rate
+    fields[44] = market_cap_yi
     return f'v_{instrument}="{"~".join(fields)}";'
 
 
@@ -59,6 +63,20 @@ class Client:
         return Response(self.payload)
 
 
+def test_provider_defaults_use_large_parallel_batches_for_full_market_refresh() -> None:
+    provider = SelfContainedOverviewProvider(
+        catalog_loader=lambda: (),
+        client=Client(b""),
+    )
+    symbols = tuple(f"{600000 + index:06d}" for index in range(321))
+
+    chunks = tuple(provider._chunks(symbols))
+
+    assert provider.batch_size == 320
+    assert provider.max_workers == 16
+    assert tuple(map(len, chunks)) == (320, 1)
+
+
 def test_tencent_realtime_parser_preserves_verified_price_fields() -> None:
     raw = quote_line(
         "sh600000",
@@ -80,6 +98,27 @@ def test_tencent_realtime_parser_preserves_verified_price_fields() -> None:
     assert quotes[0].previous_close == Decimal("9.19")
     assert quotes[0].amount_wan == Decimal("102935.42")
     assert quotes[0].exchange_code == "600000.SH"
+
+
+def test_tencent_realtime_parser_preserves_turnover_and_market_cap_fields() -> None:
+    raw = quote_line(
+        "sh600000",
+        "浦发银行",
+        "600000",
+        price="9.28",
+        previous_close="9.19",
+        high="9.35",
+        low="9.17",
+        opening="9.19",
+        volume="1109627",
+        amount_wan="102935.42",
+        turnover_rate="0.31",
+        market_cap_yi="162.25",
+    ).encode("gbk")
+    quotes = parse_tencent_realtime_quotes(raw, {"600000": "浦发银行"})
+
+    assert quotes[0].turnover_rate == Decimal("0.31")
+    assert quotes[0].market_cap_yi == Decimal("162.25")
 
 
 def test_provider_builds_market_snapshot_without_external_json_rpc() -> None:

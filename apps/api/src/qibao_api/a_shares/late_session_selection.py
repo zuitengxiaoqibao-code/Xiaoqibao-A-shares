@@ -54,7 +54,7 @@ def evaluate_candidate(
     local = quote.observed_at.astimezone(CHINA_TZ)
     current = local.time().replace(tzinfo=None)
     time_passed = settings.start_time <= current < settings.end_time or (
-        allow_close_boundary and current == settings.end_time
+        allow_close_boundary and current >= settings.end_time
     )
     rules = (
         LateSessionRuleResult(

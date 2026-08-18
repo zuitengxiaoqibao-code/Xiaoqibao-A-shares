@@ -190,6 +190,8 @@ def parse_tencent_realtime_quotes(
             high = Decimal(fields[33])
             low = Decimal(fields[34])
             amount_wan = Decimal(fields[37])
+            turnover_rate = Decimal(fields[38]) if len(fields) > 38 and fields[38] else None
+            market_cap_yi = Decimal(fields[44]) if len(fields) > 44 and fields[44] else None
             observed_at = datetime.strptime(fields[30], "%Y%m%d%H%M%S").replace(
                 tzinfo=CHINA_TZ
             )
@@ -197,6 +199,10 @@ def parse_tencent_realtime_quotes(
                 raise ValueError("non-positive price")
             if volume < 0 or amount_wan < 0:
                 raise ValueError("negative turnover")
+            if turnover_rate is not None and turnover_rate < 0:
+                raise ValueError("negative turnover rate")
+            if market_cap_yi is not None and market_cap_yi < 0:
+                raise ValueError("negative market cap")
         except (IndexError, InvalidOperation, ValueError):
             continue
         exchange = "SH" if market_prefix(symbol) == "sh" else "SZ"
@@ -212,6 +218,8 @@ def parse_tencent_realtime_quotes(
             volume=volume,
             amount_wan=amount_wan,
             observed_at=observed_at,
+            market_cap_yi=market_cap_yi,
+            turnover_rate=turnover_rate,
             intraday_average_price=derive_intraday_average_price(
                 amount_wan=amount_wan,
                 volume=volume,
@@ -231,8 +239,8 @@ class SelfContainedOverviewProvider:
         catalog_loader,
         client: httpx.Client,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
-        batch_size: int = 80,
-        max_workers: int = 8,
+        batch_size: int = 320,
+        max_workers: int = 16,
         minimum_coverage: Decimal = Decimal("0.80"),
     ) -> None:
         if batch_size < 1 or max_workers < 1:
