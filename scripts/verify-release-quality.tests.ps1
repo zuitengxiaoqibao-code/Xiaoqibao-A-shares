@@ -6,6 +6,7 @@ Describe "verify-release-quality" {
         @("config", "data", "news", "cache", "logs", "models", "exports", "backups") | ForEach-Object {
             New-Item -ItemType Directory -Force -Path (Join-Path $script:fixture $_) | Out-Null
         }
+        Set-Content -LiteralPath (Join-Path $script:fixture "data\late-session-audit.sqlite3") -Value "audit" -NoNewline
         $hash = (Get-FileHash -LiteralPath (Join-Path $script:fixture "xiaoqibao.exe") -Algorithm SHA256).Hash
         $manifest = [ordered]@{
             commit = "abc123"
@@ -24,6 +25,7 @@ Describe "verify-release-quality" {
                 domain_status = [ordered]@{
                     overview = [ordered]@{ status = "ready" }
                     quant_strategy = [ordered]@{ status = "partial" }
+                    late_session = [ordered]@{ status = "partial" }
                     company_research = [ordered]@{ status = "partial" }
                     tdx_professional = [ordered]@{ status = "unavailable" }
                 }
@@ -34,6 +36,14 @@ Describe "verify-release-quality" {
                     api_ready_ms = 2000
                     full_verification_ms = 3000
                     observed_at = "2026-08-15T00:00:00Z"
+                }
+                realtime_metrics = [ordered]@{
+                    state = "pass"
+                    late_session_request_ms = 1200
+                    late_session_budget_ms = 8000
+                    traceability_status = "pass"
+                    audit_database = "data/late-session-audit.sqlite3"
+                    observed_at = "2026-08-18T00:00:00Z"
                 }
             }
         } | ConvertTo-Json -Depth 10
@@ -74,6 +84,18 @@ Describe "verify-release-quality" {
         $manifestPath = Join-Path $script:fixture "release-manifest.json"
         $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
         $manifest.quality_gates.PSObject.Properties.Remove("startup_metrics")
+        $manifest.PSObject.Properties.Remove("manifest_signature")
+        [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
+        & "$PSScriptRoot\sign-release-manifest.ps1" -ReleaseRoot $script:fixture
+        $failed = $false
+        try { & "$PSScriptRoot\verify-release-quality.ps1" -ReleaseRoot $script:fixture } catch { $failed = $true }
+        $failed | Should Be $true
+    }
+
+    It "rejects a release without realtime traceability evidence" {
+        $manifestPath = Join-Path $script:fixture "release-manifest.json"
+        $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
+        $manifest.quality_gates.PSObject.Properties.Remove("realtime_metrics")
         $manifest.PSObject.Properties.Remove("manifest_signature")
         [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
         & "$PSScriptRoot\sign-release-manifest.ps1" -ReleaseRoot $script:fixture

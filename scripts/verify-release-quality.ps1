@@ -80,7 +80,7 @@ if ($null -eq $DomainStatus) {
     throw "Release manifest does not contain domain status evidence"
 }
 $AllowedDomainStates = @("ready", "partial", "unavailable", "stale", "error")
-foreach ($Name in @("overview", "quant_strategy", "company_research", "tdx_professional")) {
+foreach ($Name in @("overview", "quant_strategy", "late_session", "company_research", "tdx_professional")) {
     $Domain = $DomainStatus.PSObject.Properties[$Name].Value
     if ($null -eq $Domain) {
         throw "Release manifest omits domain status evidence: $Name"
@@ -102,6 +102,27 @@ foreach ($Name in @("window_visible_ms", "api_ready_ms", "full_verification_ms")
 }
 if ([string]$StartupMetrics.state -ne "pass") {
     throw "Release startup performance smoke did not pass"
+}
+
+$RealtimeMetrics = $Manifest.quality_gates.realtime_metrics
+if ($null -eq $RealtimeMetrics) {
+    throw "Release manifest omits realtime performance evidence"
+}
+foreach ($Name in @("late_session_request_ms", "late_session_budget_ms")) {
+    $Property = $RealtimeMetrics.PSObject.Properties[$Name]
+    if ($null -eq $Property -or $null -eq $Property.Value -or [int]$Property.Value -lt 0) {
+        throw "Release realtime performance evidence is invalid: $Name"
+    }
+}
+if ([int]$RealtimeMetrics.late_session_request_ms -gt [int]$RealtimeMetrics.late_session_budget_ms) {
+    throw "Release late-session latency exceeds its declared budget"
+}
+if ([string]$RealtimeMetrics.state -ne "pass" -or [string]$RealtimeMetrics.traceability_status -ne "pass") {
+    throw "Release realtime pipeline or traceability smoke did not pass"
+}
+$AuditPath = Join-Path $ResolvedRoot ([string]$RealtimeMetrics.audit_database).Replace('/', '\')
+if (-not (Test-Path -LiteralPath $AuditPath -PathType Leaf)) {
+    throw "Release traceability database is missing"
 }
 
 $SourceHealth = $Manifest.quality_gates.domain_status.source_health

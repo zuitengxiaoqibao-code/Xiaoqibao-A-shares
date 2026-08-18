@@ -235,6 +235,24 @@ try {
     if ($Overview.status -notin @("ready", "partial", "unavailable")) {
         throw "Portable market overview did not return an honest data status"
     }
+    $StageStartedMs = $StartedAt.ElapsedMilliseconds
+    $LateSession = Invoke-RestMethod `
+        -Uri "http://127.0.0.1:$Port/api/v1/a-shares/late-session-selection?limit=20" `
+        -TimeoutSec 30
+    $LateSessionRequestMs = $StartedAt.ElapsedMilliseconds - $StageStartedMs
+    if ($LateSession.status -notin @("ready", "partial", "unavailable")) {
+        throw "Portable late-session selection did not return an honest data status"
+    }
+    if ($LateSessionRequestMs -gt 8000) {
+        throw "Portable late-session selection exceeded 8 second budget: ${LateSessionRequestMs}ms"
+    }
+    if ($null -eq $LateSession.monitor_stage -or $null -eq $LateSession.invalidated_candidates) {
+        throw "Portable late-session selection omitted lifecycle evidence"
+    }
+    $LateSessionAuditPath = Join-Path $SmokeRoot "data\late-session-audit.sqlite3"
+    if (-not (Test-Path -LiteralPath $LateSessionAuditPath -PathType Leaf)) {
+        throw "Portable late-session traceability database was not created"
+    }
     $SourceHealth = Invoke-RestMethod `
         -Uri "http://127.0.0.1:$Port/api/v1/operations/source-health" `
         -TimeoutSec 10
@@ -455,6 +473,13 @@ try {
                     formula_version = if ($null -eq $QuantStrategy) { $null } else { $QuantStrategy.formula_version }
                     detail = $QuantDetail
                 }
+                late_session = [ordered]@{
+                    status = $LateSession.status
+                    candidate_count = $LateSession.candidate_count
+                    monitor_stage = $LateSession.monitor_stage
+                    source_quality = $LateSession.source_quality
+                    detail = $LateSession.no_data_reason
+                }
                 portfolio_risk = [ordered]@{
                     status = $PortfolioRisk.status
                     position_count = $PortfolioRisk.positions.Count
@@ -496,6 +521,14 @@ try {
                     window_visible_ms = [int]$WindowVisibleMs
                     api_ready_ms = [int]$ApiReadyMs
                     full_verification_ms = [int]$StartedAt.ElapsedMilliseconds
+                    observed_at = (Get-Date).ToUniversalTime().ToString("o")
+                }
+                realtime_metrics = [ordered]@{
+                    state = "pass"
+                    late_session_request_ms = [int]$LateSessionRequestMs
+                    late_session_budget_ms = 8000
+                    traceability_status = "pass"
+                    audit_database = "data/late-session-audit.sqlite3"
                     observed_at = (Get-Date).ToUniversalTime().ToString("o")
                 }
             }

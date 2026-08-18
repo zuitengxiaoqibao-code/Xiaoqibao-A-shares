@@ -21,6 +21,9 @@ def evaluate_quality_gates(
     smoke_passed: bool,
     data_integrity_ratio: float | None,
     minimum_integrity_ratio: float = 0.98,
+    late_session_request_ms: int | None = None,
+    maximum_late_session_request_ms: int = 8000,
+    realtime_traceability_passed: bool | None = None,
 ) -> QualityGateReport:
     failures: list[str] = []
     warnings: list[str] = []
@@ -39,9 +42,15 @@ def evaluate_quality_gates(
         failures.append("data_integrity_invalid")
     elif data_integrity_ratio < minimum_integrity_ratio:
         warnings.append("data_integrity_below_ready_threshold")
+    if late_session_request_ms is not None:
+        if late_session_request_ms < 0:
+            failures.append("late_session_latency_invalid")
+        elif late_session_request_ms > maximum_late_session_request_ms:
+            failures.append("late_session_latency")
+    if realtime_traceability_passed is False:
+        failures.append("realtime_traceability")
     return QualityGateReport(
         state="fail" if failures else "warning" if warnings else "pass",
         failures=tuple(failures),
         warnings=tuple(warnings),
     )
-
