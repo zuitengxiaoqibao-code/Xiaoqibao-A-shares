@@ -1254,7 +1254,6 @@ async def lifespan(application: FastAPI):
                     initial_refresh_delay_seconds=1 if is_portable_runtime else 0,
                     shared_snapshot_registry=shared_snapshot_registry,
                     realtime_snapshot_bus=realtime_snapshot_bus,
-                    audit_store=late_session_audit_store,
                 )
                 sector_fund_flow_sampling_task = asyncio.create_task(
                     _sector_fund_flow_sampling_loop(
@@ -1302,6 +1301,7 @@ async def lifespan(application: FastAPI):
                     tencent_source=application.state.market_overview_service.source,
                     market_overview_service=application.state.market_overview_service,
                     realtime_snapshot_bus=realtime_snapshot_bus,
+                    audit_store=late_session_audit_store,
                     clock=lambda: datetime.now(timezone.utc),
                 )
                 application.state.stock_timeline_service = StockTimelineService(

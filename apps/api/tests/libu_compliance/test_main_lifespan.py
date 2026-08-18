@@ -453,6 +453,10 @@ async def test_lifespan_injects_guarded_production_sources_and_closes_compliance
             application.state.local_tdx_overview_source
         )
         assert application.state.market_overview_service.initial_refresh_delay_seconds == 1
+        assert (
+            application.state.late_session_selection_service.audit_store
+            is application.state.late_session_audit_store
+        )
         assert isinstance(
             application.state.candidate_sentiment_service,
             CandidateSentimentService,
