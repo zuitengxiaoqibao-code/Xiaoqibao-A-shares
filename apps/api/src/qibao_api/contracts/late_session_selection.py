@@ -10,6 +10,10 @@ RuleStatus = Literal["passed", "failed", "unavailable", "disabled"]
 LateSessionDataState = Literal["ready", "partial", "no_candidates", "no_market_data"]
 LateSessionAIStatus = Literal["ready", "unconfigured", "no_candidates", "error"]
 LateSessionAIMode = Literal["ai", "rule_interpretation", "unavailable"]
+LateSessionMonitorStage = Literal[
+    "idle", "precompute", "reduce_pool", "monitor", "confirm", "closing_auction", "frozen",
+]
+LateSessionLifecycleStatus = Literal["strict_passed", "near_match", "data_pending", "invalidated"]
 
 
 class LateSessionRuleSettings(BaseModel):
@@ -98,6 +102,15 @@ class LateSessionCandidateResult(BaseModel):
     rules: tuple[LateSessionRuleResult, ...]
     behavior_tags: tuple[str, ...] = ()
     risk_notes: tuple[str, ...] = ()
+    lifecycle_status: LateSessionLifecycleStatus = "near_match"
+    first_seen_at: AwareDatetime | None = None
+    last_updated_at: AwareDatetime | None = None
+    continuous_hits: int = Field(default=0, ge=0)
+    continuous_seconds: int = Field(default=0, ge=0)
+    trigger_count: int = Field(default=0, ge=0)
+    rule_bitmap: str = ""
+    latest_change: str | None = None
+    invalidation_reason: str | None = None
 
 
 class LateSessionBehavior(BaseModel):
