@@ -148,6 +148,7 @@ class LateSessionSelectionResponse(BaseModel):
     trading_date: date
     server_time: AwareDatetime
     phase: LateSessionPhase
+    monitor_stage: LateSessionMonitorStage = "idle"
     refresh_interval_ms: int = Field(ge=0)
     next_refresh_ms: int = Field(ge=0)
     source_quality: Literal["ready", "partial", "stale", "unavailable"]
@@ -160,6 +161,7 @@ class LateSessionSelectionResponse(BaseModel):
     settings: LateSessionRuleSettings = DEFAULT_LATE_SESSION_RULE_SETTINGS
     default_settings: LateSessionRuleSettings = DEFAULT_LATE_SESSION_RULE_SETTINGS
     candidates: tuple[LateSessionCandidateResult, ...] = ()
+    invalidated_candidates: tuple[LateSessionCandidateResult, ...] = ()
     behaviors: tuple[LateSessionBehavior, ...] = ()
     source_evidence: tuple[str, ...] = ()
     limitations: tuple[str, ...] = ()

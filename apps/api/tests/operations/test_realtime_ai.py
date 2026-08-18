@@ -71,3 +71,30 @@ def test_realtime_ai_triggers_when_quant_candidate_status_changes() -> None:
         assert queue.status()["submitted"] == 2
     finally:
         queue.close()
+
+
+def test_late_session_lifecycle_change_builds_ai_trigger() -> None:
+    bus = RealtimeSnapshotBus()
+    worker = RealtimeAITriggerQueue(bus)
+    event = {
+        "kind": "late_session_candidates",
+        "observed_at": "2026-08-18T06:31:00+00:00",
+        "source": "tdx-local-realtime",
+        "freshness": "live",
+        "payload": {
+            "trading_date": "2026-08-18",
+            "monitor_stage": "monitor",
+            "source_quality": "ready",
+            "candidates": [{
+                "quote": {"symbol": "600000", "name": "浦发银行"},
+                "lifecycle_status": "strict_passed",
+                "rule_bitmap": "1111111",
+            }],
+        },
+    }
+
+    trigger = worker._build_trigger(event)
+
+    assert trigger is not None
+    assert trigger["reason"] == "initial_verified_snapshot"
+    assert trigger["kind"] == "late_session_candidates"

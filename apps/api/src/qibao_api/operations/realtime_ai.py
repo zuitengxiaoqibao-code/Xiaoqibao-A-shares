@@ -43,7 +43,7 @@ class RealtimeAITriggerQueue:
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
             return
-        self._subscription = self.bus.subscribe({"market_overview", "quant_strategy", "company_research", "news_events"})
+        self._subscription = self.bus.subscribe({"market_overview", "quant_strategy", "company_research", "news_events", "late_session_candidates"})
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="realtime-ai-trigger", daemon=True)
         self._thread.start()
@@ -197,6 +197,17 @@ def _fingerprint(kind: str, payload: dict[str, Any]) -> str:
         }
     elif kind == "company_research":
         selected = {"symbol": payload.get("symbol"), "snapshot_id": payload.get("research_version", {}).get("snapshot_id")}
+    elif kind == "late_session_candidates":
+        selected = {
+            "trading_date": payload.get("trading_date"),
+            "monitor_stage": payload.get("monitor_stage"),
+            "data_state": payload.get("data_state"),
+            "candidates": [
+                (item.get("quote", {}).get("symbol"), item.get("lifecycle_status"), item.get("rule_bitmap"), item.get("passed"))
+                for item in payload.get("candidates", [])[:50]
+            ],
+            "invalidated": [item.get("quote", {}).get("symbol") for item in payload.get("invalidated_candidates", [])[:50]],
+        }
     else:
         selected = {"event_ids": [item.get("event_id") for item in payload.get("events", [])[:50]], "snapshot_id": payload.get("snapshot_id")}
     return _hash(selected)
@@ -221,6 +232,22 @@ def _trigger_reason(kind: str, payload: dict[str, Any], previous: dict[str, Any]
             return "candidate_status_changed"
     if kind == "company_research":
         return "research_version_changed"
+    if kind == "late_session_candidates":
+        current = {
+            (item.get("quote", {}).get("symbol"), item.get("lifecycle_status"), item.get("rule_bitmap"), item.get("passed"))
+            for item in payload.get("candidates", [])
+        }
+        old = {
+            (item.get("quote", {}).get("symbol"), item.get("lifecycle_status"), item.get("rule_bitmap"), item.get("passed"))
+            for item in previous.get("candidates", [])
+        }
+        if current != old:
+            return "late_session_candidate_lifecycle_changed"
+        invalidated = {item.get("quote", {}).get("symbol") for item in payload.get("invalidated_candidates", [])}
+        old_invalidated = {item.get("quote", {}).get("symbol") for item in previous.get("invalidated_candidates", [])}
+        if invalidated != old_invalidated:
+            return "late_session_candidate_invalidated"
+        return "late_session_stage_changed"
     if kind == "news_events":
         return "verified_news_changed"
     return "verified_snapshot_changed"
@@ -234,6 +261,8 @@ def _evidence(kind: str, payload: dict[str, Any], previous: dict[str, Any] | Non
         fields = ("formula_version", "regime.regime", "regime.risk_score", "regime.coverage_percent", "candidate_funnel.completeness")
     elif kind == "company_research":
         fields = ("symbol", "as_of", "status", "research_version.snapshot_id", "evidence_coverage")
+    elif kind == "late_session_candidates":
+        fields = ("trading_date", "monitor_stage", "data_state", "source_quality", "candidates", "invalidated_candidates")
     else:
         fields = ("snapshot_id", "events")
     for field in fields:

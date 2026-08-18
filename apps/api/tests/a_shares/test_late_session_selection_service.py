@@ -329,3 +329,54 @@ def test_post_close_keeps_the_last_tail_window_snapshot() -> None:
 
     assert result.phase == "post_close"
     assert result.candidate_count == 1
+
+
+def test_service_publishes_only_meaningful_candidate_lifecycle_changes() -> None:
+    quote = TdxRealtimeQuote(
+        symbol="600000",
+        exchange_code="600000.SH",
+        name="浦发银行",
+        previous_close=Decimal("9.19"),
+        price=Decimal("9.65"),
+        high=Decimal("9.65"),
+        low=Decimal("9.17"),
+        open=Decimal("9.19"),
+        volume=Decimal("300"),
+        amount_wan=Decimal("27.90"),
+        observed_at=datetime(2026, 8, 17, 14, 31, tzinfo=ZoneInfo("Asia/Shanghai")),
+        intraday_average_price=None,
+    )
+
+    class Bus:
+        def __init__(self) -> None:
+            self.events = []
+
+        def publish(self, kind, payload, **metadata):
+            self.events.append((kind, payload, metadata))
+
+    bus = Bus()
+    settings = LateSessionRuleSettings(
+        turnover_rate_enabled=False,
+        market_cap_enabled=False,
+        twenty_day_limit_up_enabled=False,
+    )
+    service = LateSessionSelectionService(
+        local_market_source=_LocalSource(quote),
+        bar_repository=_Bars(),
+        instrument_directory=SimpleNamespace(resolve=lambda _symbol: None),
+        realtime_snapshot_bus=bus,
+        clock=lambda: datetime(2026, 8, 17, 6, 31, tzinfo=ZoneInfo("UTC")),
+    )
+
+    first = service.current(settings=settings)
+    second = service.current(settings=settings)
+    third = service.current(settings=settings)
+    fourth = service.current(settings=settings)
+
+    assert first.monitor_stage == "monitor"
+    assert first.candidates[0].lifecycle_status == "near_match"
+    assert second.candidates[0].lifecycle_status == "near_match"
+    assert third.candidates[0].lifecycle_status == "strict_passed"
+    assert fourth.candidates[0].lifecycle_status == "strict_passed"
+    assert [event[0] for event in bus.events] == ["late_session_candidates", "late_session_candidates"]
+    assert bus.events[-1][1]["candidates"][0]["lifecycle_status"] == "strict_passed"

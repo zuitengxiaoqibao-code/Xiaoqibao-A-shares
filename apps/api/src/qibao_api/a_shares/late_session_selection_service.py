@@ -1,3 +1,5 @@
+import hashlib
+import json
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Callable
@@ -5,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 from qibao_api.a_shares.late_session_selection import classify_behavior, classify_phase, evaluate_candidate
 from qibao_api.a_shares.late_session_factor_cache import LateSessionFactorCache
+from qibao_api.a_shares.late_session_lifecycle import LateSessionLifecycleTracker, classify_monitor_stage
 from qibao_api.contracts.late_session_selection import (
     DEFAULT_LATE_SESSION_RULE_SETTINGS,
     LateSessionBehavior,
@@ -22,13 +25,16 @@ REFRESH_INTERVAL_MS = 1000
 
 
 class LateSessionSelectionService:
-    def __init__(self, *, local_market_source, bar_repository, instrument_directory, tencent_source=None, market_overview_service=None, factor_cache: LateSessionFactorCache | None = None, clock: Callable[[], datetime] | None = None) -> None:
+    def __init__(self, *, local_market_source, bar_repository, instrument_directory, tencent_source=None, market_overview_service=None, factor_cache: LateSessionFactorCache | None = None, lifecycle_tracker: LateSessionLifecycleTracker | None = None, realtime_snapshot_bus=None, clock: Callable[[], datetime] | None = None) -> None:
         self.local_market_source = local_market_source
         self.bar_repository = bar_repository
         self.instrument_directory = instrument_directory
         self.tencent_source = tencent_source
         self.market_overview_service = market_overview_service
         self.factor_cache = factor_cache or LateSessionFactorCache()
+        self.lifecycle_tracker = lifecycle_tracker or LateSessionLifecycleTracker()
+        self.realtime_snapshot_bus = realtime_snapshot_bus
+        self._published_fingerprint: str | None = None
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self._enrichment_observed_at: datetime | None = None
         self._enrichment: dict[str, object] = {}
@@ -64,7 +70,7 @@ class LateSessionSelectionService:
                     pass
                 quotes = tuple(getattr(self.local_market_source, "current_quotes", lambda: ())())
         if not quotes:
-            return self._unavailable(trading_date, local_now, phase, "本地通达信全市场实时快照尚未就绪")
+            return self._publish_if_changed(self._unavailable(trading_date, local_now, phase, "本地通达信全市场实时快照尚未就绪"))
         enriched = self._enrich(quotes, now)
         symbols = tuple(raw.symbol for raw in quotes)
         slow_factors = self.factor_cache.get_or_build(
@@ -167,27 +173,68 @@ class LateSessionSelectionService:
         source_evidence = ["通达信本地全市场实时快照", "本地日线仓储20交易日窗口"]
         if any("+vwap" in item.quote.source for item in evaluated):
             source_evidence.append("通达信成交额/成交量推导累计成交均价（VWAP）")
-        return LateSessionSelectionResponse(
+        active_symbols = {item.quote.symbol for item in candidates}
+        lifecycle_results = self.lifecycle_tracker.update(trading_date, tuple(candidates), now)
+        active_candidates = tuple(item for item in lifecycle_results if item.quote.symbol in active_symbols)
+        invalidated_candidates = tuple(item for item in lifecycle_results if item.lifecycle_status == "invalidated")
+        response = LateSessionSelectionResponse(
             status="partial" if has_observation_candidates else "ready" if candidates else ("partial" if evaluated else "unavailable"),
             trading_date=trading_date,
             server_time=local_now,
             phase=phase,
+            monitor_stage=classify_monitor_stage(local_now),
             refresh_interval_ms=REFRESH_INTERVAL_MS if phase == "live_monitor" else 15000,
             next_refresh_ms=REFRESH_INTERVAL_MS if phase == "live_monitor" else 15000,
             source_quality=source_quality,
             universe_count=len(quotes),
             quote_count=len(evaluated),
-            candidate_count=len(candidates),
+            candidate_count=len(active_candidates),
             rules=self._summary_rules(evaluated, settings),
             data_state=("partial" if has_observation_candidates else "ready" if candidates else "partial" if any(rule.status == "unavailable" for item in evaluated for rule in item.rules) else "no_candidates"),
             no_data_reason=None if candidates else self._no_data_reason(evaluated, quotes_count=len(quotes), phase=phase, limitations=limitations),
             settings=settings,
             default_settings=DEFAULT_LATE_SESSION_RULE_SETTINGS,
-            candidates=candidates,
+            candidates=active_candidates,
+            invalidated_candidates=invalidated_candidates,
             behaviors=self._behaviors(phase, evaluated),
             source_evidence=tuple(source_evidence) + (("腾讯行情补充市值/换手率",) if self.tencent_source else ()),
             limitations=tuple(limitations),
         )
+        return self._publish_if_changed(response)
+
+    def _publish_if_changed(self, response: LateSessionSelectionResponse) -> LateSessionSelectionResponse:
+        if self.realtime_snapshot_bus is None:
+            return response
+        payload = response.model_dump(mode="json")
+        fingerprint_payload = {
+            "trading_date": payload.get("trading_date"),
+            "phase": payload.get("phase"),
+            "monitor_stage": payload.get("monitor_stage"),
+            "status": payload.get("status"),
+            "data_state": payload.get("data_state"),
+            "candidates": [
+                {
+                    "symbol": item.get("quote", {}).get("symbol"),
+                    "lifecycle_status": item.get("lifecycle_status"),
+                    "rule_bitmap": item.get("rule_bitmap"),
+                    "passed": item.get("passed"),
+                }
+                for item in payload.get("candidates", ())
+            ],
+            "invalidated": [item.get("quote", {}).get("symbol") for item in payload.get("invalidated_candidates", ())],
+        }
+        fingerprint = hashlib.sha256(json.dumps(fingerprint_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+        if fingerprint == self._published_fingerprint:
+            return response
+        self._published_fingerprint = fingerprint
+        self.realtime_snapshot_bus.publish(
+            "late_session_candidates",
+            payload,
+            observed_at=response.server_time,
+            source=response.source_evidence[0] if response.source_evidence else "late-session-selection",
+            freshness="live" if response.phase == "live_monitor" else "snapshot",
+        )
+        return response
 
     @staticmethod
     def _no_data_reason(
@@ -342,4 +389,4 @@ class LateSessionSelectionService:
     def _unavailable(trading_date: date, now: datetime, phase: str, detail: str) -> LateSessionSelectionResponse:
         # The local snapshot may still be warming up. Retry quickly so the
         # page does not remain on a misleading 0/0 state for 15 seconds.
-        return LateSessionSelectionResponse(status="unavailable", trading_date=trading_date, server_time=now, phase=phase, refresh_interval_ms=1000, next_refresh_ms=1000, source_quality="unavailable", universe_count=0, quote_count=0, candidate_count=0, rules=(), data_state="no_market_data", no_data_reason=detail, behaviors=(), limitations=(detail,))
+        return LateSessionSelectionResponse(status="unavailable", trading_date=trading_date, server_time=now, phase=phase, monitor_stage=classify_monitor_stage(now), refresh_interval_ms=1000, next_refresh_ms=1000, source_quality="unavailable", universe_count=0, quote_count=0, candidate_count=0, rules=(), data_state="no_market_data", no_data_reason=detail, behaviors=(), limitations=(detail,))

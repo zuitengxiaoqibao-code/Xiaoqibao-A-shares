@@ -1295,6 +1295,7 @@ async def lifespan(application: FastAPI):
                     instrument_directory=a_share_instrument_directory,
                     tencent_source=application.state.market_overview_service.source,
                     market_overview_service=application.state.market_overview_service,
+                    realtime_snapshot_bus=realtime_snapshot_bus,
                     clock=lambda: datetime.now(timezone.utc),
                 )
                 application.state.stock_timeline_service = StockTimelineService(
