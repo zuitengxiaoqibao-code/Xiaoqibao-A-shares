@@ -28,7 +28,7 @@ REFRESH_INTERVAL_MS = 1000
 
 
 class LateSessionSelectionService:
-    def __init__(self, *, local_market_source, bar_repository, instrument_directory, tencent_source=None, market_overview_service=None, factor_cache: LateSessionFactorCache | None = None, lifecycle_tracker: LateSessionLifecycleTracker | None = None, refresh_policy: RefreshPolicy | None = None, field_arbitrator: FieldArbitrator | None = None, source_circuit_breaker: SourceCircuitBreaker | None = None, realtime_snapshot_bus=None, clock: Callable[[], datetime] | None = None) -> None:
+    def __init__(self, *, local_market_source, bar_repository, instrument_directory, tencent_source=None, market_overview_service=None, factor_cache: LateSessionFactorCache | None = None, lifecycle_tracker: LateSessionLifecycleTracker | None = None, refresh_policy: RefreshPolicy | None = None, field_arbitrator: FieldArbitrator | None = None, source_circuit_breaker: SourceCircuitBreaker | None = None, realtime_snapshot_bus=None, audit_store=None, clock: Callable[[], datetime] | None = None) -> None:
         self.local_market_source = local_market_source
         self.bar_repository = bar_repository
         self.instrument_directory = instrument_directory
@@ -40,6 +40,7 @@ class LateSessionSelectionService:
         self.field_arbitrator = field_arbitrator or FieldArbitrator()
         self.source_circuit_breaker = source_circuit_breaker or SourceCircuitBreaker()
         self.realtime_snapshot_bus = realtime_snapshot_bus
+        self.audit_store = audit_store
         self._published_fingerprint: str | None = None
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self._enrichment_observed_at: datetime | None = None
@@ -238,8 +239,6 @@ class LateSessionSelectionService:
         return self._publish_if_changed(response)
 
     def _publish_if_changed(self, response: LateSessionSelectionResponse) -> LateSessionSelectionResponse:
-        if self.realtime_snapshot_bus is None:
-            return response
         payload = response.model_dump(mode="json")
         fingerprint_payload = {
             "trading_date": payload.get("trading_date"),
@@ -262,13 +261,32 @@ class LateSessionSelectionService:
         if fingerprint == self._published_fingerprint:
             return response
         self._published_fingerprint = fingerprint
-        self.realtime_snapshot_bus.publish(
-            "late_session_candidates",
-            payload,
-            observed_at=response.server_time,
-            source=response.source_evidence[0] if response.source_evidence else "late-session-selection",
-            freshness="live" if response.phase == "live_monitor" else "snapshot",
-        )
+        output_hash = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+        input_payload = {
+            "settings": payload.get("settings"),
+            "source_evidence": payload.get("source_evidence"),
+            "quotes": [item.get("quote") for item in payload.get("candidates", ())],
+            "monitor_stage": payload.get("monitor_stage"),
+        }
+        input_hash = hashlib.sha256(json.dumps(input_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+        if self.audit_store is not None:
+            self.audit_store.record(
+                trading_date=response.trading_date,
+                captured_at=response.server_time,
+                input_hash=input_hash,
+                output_hash=output_hash,
+                formula_version="late-session-v2",
+                regime=None,
+                payload=fingerprint_payload,
+            )
+        if self.realtime_snapshot_bus is not None:
+            self.realtime_snapshot_bus.publish(
+                "late_session_candidates",
+                payload,
+                observed_at=response.server_time,
+                source=response.source_evidence[0] if response.source_evidence else "late-session-selection",
+                freshness="live" if response.phase == "live_monitor" else "snapshot",
+            )
         return response
 
     @staticmethod

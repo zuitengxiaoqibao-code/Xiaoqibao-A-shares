@@ -201,6 +201,7 @@ from qibao_api.operations.shared_snapshots import SharedSnapshotRegistry
 from qibao_api.operations.realtime_snapshot_bus import RealtimeSnapshotBus
 from qibao_api.operations.realtime_ai import RealtimeAITriggerQueue
 from qibao_api.storage.replay_snapshot_store import ReplaySnapshotStore
+from qibao_api.storage.late_session_audit_store import LateSessionAuditStore
 from qibao_api.shangshu.scheduler import DailyBriefingScheduler
 from qibao_api.gongbu.backup_service import BackupService
 from qibao_api.routes.operations import router as operations_router
@@ -462,6 +463,10 @@ async def lifespan(application: FastAPI):
         settings.data_dir / "replay-snapshots.sqlite3"
     )
     application.state.replay_snapshot_store = replay_snapshot_store
+    late_session_audit_store = LateSessionAuditStore(
+        settings.data_dir / "late-session-audit.sqlite3"
+    )
+    application.state.late_session_audit_store = late_session_audit_store
     application.state.performance_store = PerformanceStore(
         settings.data_dir / "performance.sqlite3",
         shared_snapshot_registry=shared_snapshot_registry,
@@ -1249,6 +1254,7 @@ async def lifespan(application: FastAPI):
                     initial_refresh_delay_seconds=1 if is_portable_runtime else 0,
                     shared_snapshot_registry=shared_snapshot_registry,
                     realtime_snapshot_bus=realtime_snapshot_bus,
+                    audit_store=late_session_audit_store,
                 )
                 sector_fund_flow_sampling_task = asyncio.create_task(
                     _sector_fund_flow_sampling_loop(
@@ -1440,6 +1446,7 @@ async def lifespan(application: FastAPI):
                 operations_repository.close()
                 data_lineage_repository.close()
                 replay_snapshot_store.close()
+                late_session_audit_store.close()
                 observability_store.close()
                 candidate_sentiment_repository.close()
                 a_share_research_repository.close()

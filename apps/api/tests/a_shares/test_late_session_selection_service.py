@@ -381,7 +381,15 @@ def test_service_publishes_only_meaningful_candidate_lifecycle_changes() -> None
         def publish(self, kind, payload, **metadata):
             self.events.append((kind, payload, metadata))
 
+    class Audit:
+        def __init__(self) -> None:
+            self.records = []
+
+        def record(self, **record):
+            self.records.append(record)
+
     bus = Bus()
+    audit = Audit()
     settings = LateSessionRuleSettings(
         turnover_rate_enabled=False,
         market_cap_enabled=False,
@@ -392,6 +400,7 @@ def test_service_publishes_only_meaningful_candidate_lifecycle_changes() -> None
         bar_repository=_Bars(),
         instrument_directory=SimpleNamespace(resolve=lambda _symbol: None),
         realtime_snapshot_bus=bus,
+        audit_store=audit,
         clock=lambda: datetime(2026, 8, 17, 6, 31, tzinfo=ZoneInfo("UTC")),
     )
 
@@ -407,3 +416,7 @@ def test_service_publishes_only_meaningful_candidate_lifecycle_changes() -> None
     assert fourth.candidates[0].lifecycle_status == "strict_passed"
     assert [event[0] for event in bus.events] == ["late_session_candidates", "late_session_candidates"]
     assert bus.events[-1][1]["candidates"][0]["lifecycle_status"] == "strict_passed"
+    assert len(audit.records) == 2
+    assert audit.records[-1]["input_hash"]
+    assert audit.records[-1]["output_hash"]
+    assert audit.records[-1]["formula_version"] == "late-session-v2"
