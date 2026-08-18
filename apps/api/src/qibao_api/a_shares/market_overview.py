@@ -93,6 +93,15 @@ class MarketOverviewService:
             ThreadPoolExecutor(max_workers=1, thread_name_prefix="market-overview")
             if self.defer_initial_refresh else None
         )
+        # Keep the fast intraday path independent from the extended overview
+        # build. News, sectors, review and fund-flow sources may be slow, but
+        # the index tape and verified anomalies must continue to move after the
+        # opening bell.
+        self._core_refresh_executor = (
+            ThreadPoolExecutor(max_workers=1, thread_name_prefix="market-overview-core")
+            if self.defer_initial_refresh else None
+        )
+        self._core_refresh_future: Future | None = None
         self._initial_refresh_timer: threading.Timer | None = None
         self._initial_refresh_delay_consumed = not (
             self.defer_initial_refresh and initial_refresh_delay_seconds > 0
@@ -142,6 +151,15 @@ class MarketOverviewService:
     def close(self) -> None:
         executor = self._refresh_executor
         if executor is None:
+            core_executor = self._core_refresh_executor
+            if core_executor is None:
+                return
+            with self._lock:
+                self._closed = True
+                if self._core_refresh_future is not None:
+                    self._core_refresh_future.cancel()
+            core_executor.shutdown(wait=False, cancel_futures=True)
+            self._core_refresh_executor = None
             return
         with self._lock:
             self._closed = True
@@ -151,8 +169,14 @@ class MarketOverviewService:
                 timer.cancel()
             if self._refresh_future is not None:
                 self._refresh_future.cancel()
+            if self._core_refresh_future is not None:
+                self._core_refresh_future.cancel()
         executor.shutdown(wait=False, cancel_futures=True)
         self._refresh_executor = None
+        core_executor = self._core_refresh_executor
+        if core_executor is not None:
+            core_executor.shutdown(wait=False, cancel_futures=True)
+            self._core_refresh_executor = None
 
     def _schedule_refresh_locked(self, now: datetime) -> None:
         if self._closed or self._refresh_executor is None:
@@ -168,11 +192,11 @@ class MarketOverviewService:
                 self._initial_refresh_timer = timer
                 timer.start()
             return
-        if self._refresh_future is not None and not self._refresh_future.done():
-            return
-        self._refresh_future = self._refresh_executor.submit(
-            self._refresh_cached_snapshot, now
-        )
+        if self._refresh_future is None or self._refresh_future.done():
+            self._refresh_future = self._refresh_executor.submit(
+                self._refresh_cached_snapshot, now
+            )
+        self._schedule_core_refresh_locked()
 
     def _submit_initial_refresh(self, now: datetime) -> None:
         with self._lock:
@@ -180,34 +204,249 @@ class MarketOverviewService:
             self._initial_refresh_delay_consumed = True
             if self._closed or self._refresh_executor is None:
                 return
-            if self._refresh_future is not None and not self._refresh_future.done():
-                return
-            self._refresh_future = self._refresh_executor.submit(
-                self._refresh_cached_snapshot, now
-            )
+            if self._refresh_future is None or self._refresh_future.done():
+                self._refresh_future = self._refresh_executor.submit(
+                    self._refresh_cached_snapshot, now
+                )
+            self._schedule_core_refresh_locked()
+
+    def _schedule_core_refresh_locked(self) -> None:
+        executor = self._core_refresh_executor
+        if self._closed or executor is None:
+            return
+        if self._core_refresh_future is not None and not self._core_refresh_future.done():
+            return
+        self._core_refresh_future = executor.submit(
+            self._refresh_intraday_core_snapshot,
+        )
 
     def _refresh_cached_snapshot(self, now: datetime) -> None:
         started_at = datetime.now(timezone.utc)
         try:
-            response = self._build(now)
+            # A queued refresh can cross 09:25 while it is waiting behind a
+            # slow source. Always take the clock at execution time so the
+            # response cannot remain labelled as a premarket snapshot.
+            response = self._build(self.clock())
         except Exception:
+            failure_now = self.clock()
             with self._lock:
                 if self._cached is not None:
                     self._cached = self._with_metadata(
                         self._cached,
+                        now=failure_now,
                         warning="market_overview_refresh_failed",
                     )
-                    self._cached_at = now
+                    self._cached_at = failure_now
             return
         with self._lock:
             if self._closed:
                 return
+            if self._cached is not None:
+                response = self._preserve_newer_core(response, self._cached)
             self._cached = response
             self._cached_at = now
             self._write_cache(response)
             self._record_shared_snapshots(
                 response, reused=False, started_at=started_at
             )
+
+    @classmethod
+    def _preserve_newer_core(
+        cls,
+        response: MarketOverviewResponse,
+        current: MarketOverviewResponse,
+    ) -> MarketOverviewResponse:
+        """Prevent a slow full build from regressing a newer core refresh."""
+        merged_minutes = cls._merge_minute_series(
+            response.minute_series, current.minute_series,
+        )
+        response_minute_at = max(
+            (item.observed_at for item in response.minute_series),
+            default=None,
+        )
+        current_minute_at = max(
+            (item.observed_at for item in current.minute_series),
+            default=None,
+        )
+        updates: dict[str, object] = {}
+        if merged_minutes != response.minute_series:
+            updates["minute_series"] = merged_minutes
+        if current_minute_at is not None and (
+            response_minute_at is None or current_minute_at >= response_minute_at
+        ):
+            updates["indices"] = current.indices
+        if current.anomalies:
+            updates["anomalies"] = cls._merge_anomalies(
+                response.anomalies, current.anomalies,
+            )
+        if current.live_feed:
+            updates["live_feed"] = cls._merge_live_feed(
+                response.live_feed, current.live_feed,
+            )
+        if updates.get("indices") and updates.get("minute_series", response.minute_series):
+            updates["status"] = "ready"
+        if current.observed_at > response.observed_at:
+            updates["observed_at"] = current.observed_at
+        return response.model_copy(update=updates) if updates else response
+
+    def _refresh_intraday_core_snapshot(self) -> None:
+        """Refresh the time-sensitive tape without waiting for slow extensions.
+
+        The portable application deliberately serves the last complete snapshot
+        while a full refresh runs in the background. This second path prevents
+        a slow news/sector/review source from freezing the index minute chart
+        and verified intraday events at the premarket snapshot.
+        """
+        refresh_now = self.clock()
+        indices: tuple = ()
+        minute_series: tuple = ()
+        warnings: list[str] = []
+        sources: list[str] = []
+        try:
+            indices, index_warnings = self.source.fetch_indices()
+            warnings.extend(index_warnings)
+            if indices:
+                sources.append("tencent-index")
+        except (httpx.HTTPError, OSError, ValueError):
+            warnings.append("index_quotes_unavailable")
+        try:
+            minute_series, minute_warnings = self.source.fetch_minutes()
+            warnings.extend(minute_warnings)
+            if minute_series:
+                sources.append("tencent-index-minute")
+        except (httpx.HTTPError, OSError, ValueError):
+            warnings.append("minute_series_unavailable")
+
+        with self._lock:
+            if self._closed or self._cached is None:
+                return
+            current = self._cached
+            merged_minutes = self._merge_minute_series(
+                current.minute_series, minute_series,
+            )
+            updates: dict[str, object] = {}
+            if indices:
+                updates["indices"] = indices
+            if merged_minutes:
+                updates["minute_series"] = merged_minutes
+            if indices and merged_minutes:
+                updates["status"] = "ready"
+            if sources:
+                updates["sources"] = tuple(dict.fromkeys((*current.sources, *sources)))
+            updates["warnings"] = self._merge_core_warnings(
+                current.warnings, warnings, has_indices=bool(indices),
+                has_minutes=bool(minute_series),
+            )
+            if indices or merged_minutes:
+                latest_observed = max(
+                    [current.observed_at]
+                    + [item.observed_at for item in indices]
+                    + [item.observed_at for item in minute_series[-1:]],
+                )
+                updates["observed_at"] = latest_observed
+            response = current.model_copy(update=updates)
+            self._cached = response
+            self._cached_at = refresh_now
+            self._write_cache(response)
+
+        # News is intentionally outside the service lock. A repository backed
+        # by a large cache must never block callers that only need the tape.
+        anomalies, live_feed, news_warnings = self._refresh_intraday_events(
+            refresh_now, response.minute_series,
+        )
+        with self._lock:
+            if self._closed or self._cached is None:
+                return
+            current = self._cached
+            event_updates: dict[str, object] = {}
+            if anomalies:
+                event_updates["anomalies"] = self._merge_anomalies(
+                    current.anomalies, anomalies,
+                )
+            if live_feed:
+                event_updates["live_feed"] = self._merge_live_feed(
+                    current.live_feed, live_feed,
+                )
+            if news_warnings:
+                event_updates["warnings"] = self._merge_core_warnings(
+                    current.warnings, news_warnings, has_indices=False,
+                    has_minutes=False,
+                )
+            if event_updates:
+                response = current.model_copy(update=event_updates)
+
+            response = self._with_metadata(response, now=refresh_now)
+            self._cached = response
+            self._cached_at = refresh_now
+            self._write_cache(response)
+
+    @staticmethod
+    def _merge_minute_series(previous: tuple, incoming: tuple) -> tuple:
+        if not incoming:
+            return previous
+        by_time = {item.observed_at: item for item in previous}
+        by_time.update({item.observed_at: item for item in incoming})
+        return tuple(by_time[key] for key in sorted(by_time))
+
+    @staticmethod
+    def _merge_anomalies(previous: tuple, incoming: tuple) -> tuple:
+        by_id = {item.anomaly_id: item for item in previous}
+        by_id.update({item.anomaly_id: item for item in incoming})
+        return tuple(sorted(
+            by_id.values(), key=lambda item: item.occurred_at, reverse=True,
+        )[:15])
+
+    @staticmethod
+    def _merge_live_feed(previous: tuple, incoming: tuple) -> tuple:
+        by_id = {item.event_id: item for item in previous}
+        by_id.update({item.event_id: item for item in incoming})
+        return tuple(sorted(
+            by_id.values(), key=lambda item: item.occurred_at, reverse=True,
+        )[:30])
+
+    @staticmethod
+    def _merge_core_warnings(
+        current: tuple,
+        incoming: list[str],
+        *,
+        has_indices: bool,
+        has_minutes: bool,
+    ) -> tuple:
+        transient = {"index_quotes_unavailable", "minute_series_unavailable"}
+        kept = [item for item in current if item not in transient]
+        if not has_indices:
+            kept.append("index_quotes_unavailable")
+        if not has_minutes:
+            kept.append("minute_series_unavailable")
+        return tuple(dict.fromkeys((*kept, *incoming)))
+
+    def _refresh_intraday_events(self, cutoff: datetime, minute_series: tuple):
+        try:
+            events = sorted(
+                self.news_repository.effective_events(cutoff=cutoff),
+                key=lambda item: item.occurred_at,
+                reverse=True,
+            )
+            events = [event for event in events if self._event_symbols(event)]
+            try:
+                interpretations = self.news_repository.interpretations_for_events(
+                    tuple(item.event_id for item in events), cutoff=cutoff,
+                )
+            except (AttributeError, OSError, ValueError):
+                interpretations = ()
+            projections = {
+                item.event_id: item
+                for item in UnifiedEventProjectionService().project(
+                    events, interpretations, cutoff=cutoff,
+                )
+            }
+            return (
+                self._anomalies(events, minute_series, projections),
+                self._live_feed(events[:30]),
+                (),
+            )
+        except (OSError, ValueError):
+            return (), (), ("news_events_unavailable",)
 
     def _record_shared_snapshots(
         self,

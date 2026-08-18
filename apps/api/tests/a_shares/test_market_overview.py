@@ -221,6 +221,29 @@ class BlockingSource(Source):
         raise OSError("refresh blocked")
 
 
+class RefreshingSource(Source):
+    def __init__(self) -> None:
+        super().__init__()
+        self.index_refreshed = Event()
+        self.minute_refreshed = Event()
+
+    def fetch_indices(self):
+        self.calls += 1
+        self.index_refreshed.set()
+        return ((OverviewIndexQuote(
+            instrument="sh000001", name="上证指数", value=Decimal("3835.73"),
+            change=Decimal("21.53"), change_percent=Decimal("0.56"),
+            observed_at=NOW + timedelta(minutes=31), source="tencent", quality="ready",
+        ),), ())
+
+    def fetch_minutes(self):
+        self.minute_refreshed.set()
+        return ((OverviewMinutePoint(
+            observed_at=NOW + timedelta(minutes=31), price=Decimal("3835.73"),
+            volume=Decimal("120"), amount=Decimal("1200"),
+        ),), ())
+
+
 class LocalMarketSource:
     def current(self):
         return OverviewMarketSnapshot(
@@ -643,6 +666,62 @@ def test_overview_reuses_persisted_snapshot_while_latest_refresh_runs_in_backgro
     while time.monotonic() < deadline and not source.calls:
         time.sleep(0.01)
     cached.close()
+
+
+def test_overview_refreshes_intraday_core_while_extended_build_is_blocked(
+    tmp_path: Path,
+) -> None:
+    cache_path = tmp_path / "market-overview.json"
+    initial = service(Source(), clock=lambda: NOW, cache_path=cache_path)
+    initial.current(NOW)
+    initial.close()
+
+    source = RefreshingSource()
+    fresh_news = event(0, event_type="market_news")
+    fresh_news.occurred_at = NOW + timedelta(minutes=31)
+    cached = service(
+        source,
+        clock=lambda: NOW + timedelta(minutes=31),
+        cache_path=cache_path,
+        defer_initial_refresh=True,
+        news_repository=NewsRepository([fresh_news]),
+    )
+    build_started = Event()
+    build_release = Event()
+
+    def blocked_build(_now):
+        build_started.set()
+        build_release.wait(timeout=5)
+        return initial.current(NOW)
+
+    cached._build = blocked_build
+    stale = cached.current(NOW + timedelta(minutes=31))
+    assert stale.indices[0].value == Decimal("3823.73")
+    assert build_started.wait(timeout=1)
+    assert source.index_refreshed.wait(timeout=1)
+
+    deadline = time.monotonic() + 2
+    refreshed = stale
+    while time.monotonic() < deadline:
+        refreshed = cached.current(NOW + timedelta(minutes=31, seconds=6))
+        if (
+            refreshed.indices
+            and refreshed.indices[0].value == Decimal("3835.73")
+            and refreshed.anomalies
+        ):
+            break
+        time.sleep(0.01)
+
+    build_release.set()
+    if cached._core_refresh_future is not None and cached._core_refresh_future.done():
+        assert cached._core_refresh_future.exception() is None
+    if cached._refresh_future is not None:
+        cached._refresh_future.result(timeout=1)
+    final = cached.current(NOW + timedelta(minutes=31, seconds=12))
+    cached.close()
+    assert final.indices[0].value == Decimal("3835.73")
+    assert final.minute_series[-1].price == Decimal("3835.73")
+    assert final.anomalies[0].anomaly_id == fresh_news.event_id
 
 
 def test_overview_gives_cached_response_a_grace_period_before_background_refresh(
