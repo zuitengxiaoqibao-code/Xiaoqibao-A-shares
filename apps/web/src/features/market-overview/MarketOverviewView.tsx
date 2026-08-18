@@ -26,6 +26,7 @@ import { SectorHeatmapPanel } from "../../shared/visualization/SectorHeatmapPane
 import { featureDisplayLabel, featureMeta } from "./featureCatalog";
 import { appendUniqueEntities, mergeEntitySnapshot, resolveIncrementalResponse } from "../../shared/incrementalResource";
 import { loadWorkspaceState, updateWorkspaceFilter } from "../../shared/workspace/workspaceState";
+import { consumeMarketOverviewStream } from "./api";
 import "./overview.css";
 
 const expectedIndices = [
@@ -140,6 +141,7 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, onOpenCompa
   const [cacheTimestamp, setCacheTimestamp] = useState<string | null>(initialCache?.cachedAt ?? null);
   const [usingCache, setUsingCache] = useState(() => Boolean(initialCache));
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [realtimeTransport, setRealtimeTransport] = useState<"sse" | "polling">("polling");
   const [visible, setVisible] = useState(document.visibilityState !== "hidden");
   const [storedFeature] = useState(storedWorkspace);
   const [activeFeature, setActiveFeature] = useState(storedFeature ?? "盘中异动");
@@ -157,25 +159,30 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, onOpenCompa
     alerts: alertState.alerts.filter((alert) => alert.affected_symbols.some(isAShareSymbol)),
   }), [alertState]);
 
+  const applyIncoming = useCallback((raw: MarketOverviewResponse) => {
+    const incoming = keepAShareInformation(raw);
+    const next = mergeStableAnomalySnapshot(dataRef.current, incoming);
+    setData(next);
+    if (next.status !== "unavailable" && next.market_data.quality !== "unavailable") {
+      setHasCompletedInitialLoad(true);
+    }
+    const stored = writeMarketOverviewCache(next);
+    setCacheTimestamp((current) => stored.persisted ? stored.cachedAt : current);
+    setUsingCache(false);
+    setError(null);
+    setSelectedAnomalyId((current) => current && next.anomalies.some((item) => item.anomaly_id === current) ? current : null);
+    setSelectedSectorId((current) => current && next.sectors.some((item) => item.sector_id === current) ? current : next.sectors[0]?.sector_id ?? null);
+  }, []);
+
   const refresh = useCallback(async () => {
     if (requestRef.current !== null) return;
     const controller = new AbortController();
     requestRef.current = controller;
     if (dataRef.current === null) setLoading(true);
     try {
-      const incoming = keepAShareInformation(await load(controller.signal));
+      const incoming = await load(controller.signal);
       if (controller.signal.aborted) return;
-      const next = mergeStableAnomalySnapshot(dataRef.current, incoming);
-      setData(next);
-      if (next.status !== "unavailable" && next.market_data.quality !== "unavailable") {
-        setHasCompletedInitialLoad(true);
-      }
-      const stored = writeMarketOverviewCache(next);
-      setCacheTimestamp((current) => stored.persisted ? stored.cachedAt : current);
-      setUsingCache(false);
-      setError(null);
-      setSelectedAnomalyId((current) => current && next.anomalies.some((item) => item.anomaly_id === current) ? current : null);
-      setSelectedSectorId((current) => current && next.sectors.some((item) => item.sector_id === current) ? current : next.sectors[0]?.sector_id ?? null);
+      applyIncoming(incoming);
     } catch (reason) {
       if (reason instanceof DOMException && reason.name === "AbortError") return;
       if (!controller.signal.aborted) {
@@ -194,7 +201,7 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, onOpenCompa
         if (!controller.signal.aborted) setLoading(false);
       }
     }
-  }, [load]);
+  }, [applyIncoming, load]);
 
   useEffect(() => {
     void refresh();
@@ -205,6 +212,18 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, onOpenCompa
   }, [refresh]);
 
   useEffect(() => {
+    const controller = new AbortController();
+    void consumeMarketOverviewStream(
+      applyIncoming,
+      controller.signal,
+      (state) => setRealtimeTransport(state === "connected" ? "sse" : "polling"),
+    ).catch(() => {
+      if (!controller.signal.aborted) setRealtimeTransport("polling");
+    });
+    return () => controller.abort();
+  }, [applyIncoming]);
+
+  useEffect(() => {
     const onVisibility = () => setVisible(document.visibilityState !== "hidden");
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
@@ -212,9 +231,9 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, onOpenCompa
 
   useEffect(() => {
     if (!autoRefresh || !visible) return;
-    const timer = window.setInterval(() => void refresh(), 5000);
+    const timer = window.setInterval(() => void refresh(), realtimeTransport === "sse" ? 30_000 : 5_000);
     return () => window.clearInterval(timer);
-  }, [autoRefresh, refresh, visible]);
+  }, [autoRefresh, refresh, realtimeTransport, visible]);
 
   useEffect(() => {
     if (
@@ -381,7 +400,7 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, onOpenCompa
     <div className="overview-toolbar">
       <button type="button" aria-label="立即刷新" disabled={loading} onClick={() => void refresh()}><RefreshCw size={14} className={loading ? "spinning" : ""} />刷新</button>
       <label><input type="checkbox" checked={autoRefresh} onChange={(event) => setAutoRefresh(event.target.checked)} />自动刷新</label>
-      <span>间隔 <b>5</b> 秒</span>
+      <span>间隔 <b>{realtimeTransport === "sse" ? 30 : 5}</b> 秒 · {realtimeTransport === "sse" ? "实时推送" : "HTTP 回退"}</span>
       <span>当前筛选 <strong>{featureDisplayLabel(activeFeature)}</strong></span>
       {!visible && <span className="overview-paused">页面隐藏，刷新已暂停</span>}
       {data && <time dateTime={data.observed_at}>最新观测 {timeLabel(data.observed_at, true)}{usingCache && cacheTimestamp ? ` · 缓存 ${timeLabel(cacheTimestamp, true)}` : ""}</time>}

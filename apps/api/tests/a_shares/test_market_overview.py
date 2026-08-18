@@ -489,6 +489,20 @@ def test_overview_registers_four_shared_snapshots_and_marks_cache_reuse() -> Non
     assert registry.calls[0][1]["trade_date"] == date(2026, 7, 29)
 
 
+def test_overview_publishes_realtime_snapshot_without_sqlite_registry() -> None:
+    from qibao_api.operations.realtime_snapshot_bus import RealtimeSnapshotBus
+
+    bus = RealtimeSnapshotBus()
+    overview = service(Source(), realtime_snapshot_bus=bus)
+
+    overview.current(NOW)
+
+    event = bus.latest("market_overview")
+    assert event is not None
+    assert event["payload"]["status"] == "ready"
+    assert event["source"] == "market-sentiment-cache"
+
+
 def test_overview_excludes_news_without_verified_a_share_association() -> None:
     a_share_news = event(0, event_type="market_news")
     convertible_bond_news = event(

@@ -198,6 +198,7 @@ from qibao_api.operations.precompute_snapshots import (
 )
 from qibao_api.operations.observability import ObservabilityStore
 from qibao_api.operations.shared_snapshots import SharedSnapshotRegistry
+from qibao_api.operations.realtime_snapshot_bus import RealtimeSnapshotBus
 from qibao_api.storage.replay_snapshot_store import ReplaySnapshotStore
 from qibao_api.shangshu.scheduler import DailyBriefingScheduler
 from qibao_api.gongbu.backup_service import BackupService
@@ -454,6 +455,8 @@ async def lifespan(application: FastAPI):
         settings.data_dir / "shared-snapshots.sqlite3"
     )
     application.state.shared_snapshot_registry = shared_snapshot_registry
+    realtime_snapshot_bus = RealtimeSnapshotBus(max_queue_size=32)
+    application.state.realtime_snapshot_bus = realtime_snapshot_bus
     replay_snapshot_store = ReplaySnapshotStore(
         settings.data_dir / "replay-snapshots.sqlite3"
     )
@@ -1235,6 +1238,7 @@ async def lifespan(application: FastAPI):
                     defer_initial_refresh=is_portable_runtime,
                     initial_refresh_delay_seconds=1 if is_portable_runtime else 0,
                     shared_snapshot_registry=shared_snapshot_registry,
+                    realtime_snapshot_bus=realtime_snapshot_bus,
                 )
                 sector_fund_flow_sampling_task = asyncio.create_task(
                     _sector_fund_flow_sampling_loop(

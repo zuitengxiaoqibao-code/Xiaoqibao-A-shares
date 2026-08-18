@@ -14,8 +14,10 @@ from qibao_api.contracts.market_review import MarketIntervalReviewSnapshot
 from qibao_api.dependencies import (
     get_local_market_review_source,
     get_market_overview_service,
+    get_realtime_snapshot_bus,
     get_server_time,
 )
+from qibao_api.operations.realtime_snapshot_bus import RealtimeSnapshotBus
 from qibao_api.routes.market_overview import router
 
 
@@ -66,12 +68,13 @@ class IntervalSource:
         )
 
 
-def client(service: Service) -> TestClient:
+def client(service: Service, bus: RealtimeSnapshotBus | None = None) -> TestClient:
     application = FastAPI()
     application.include_router(router)
     application.dependency_overrides[get_market_overview_service] = lambda: service
     application.dependency_overrides[get_local_market_review_source] = IntervalSource
     application.dependency_overrides[get_server_time] = lambda: NOW
+    application.dependency_overrides[get_realtime_snapshot_bus] = lambda: bus
     return TestClient(application)
 
 
@@ -103,3 +106,12 @@ def test_interval_review_route_returns_real_date_window() -> None:
 
     assert response.status_code == 200
     assert response.json()["formula_version"] == "a-share-interval-review-v1"
+
+
+def test_market_overview_stream_requires_realtime_bus() -> None:
+    response = client(Service(), None).get(
+        "/api/v1/a-shares/market-overview/stream"
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "realtime_stream_unavailable"

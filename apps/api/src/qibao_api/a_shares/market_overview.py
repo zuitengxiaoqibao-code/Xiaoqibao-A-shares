@@ -64,6 +64,7 @@ class MarketOverviewService:
         defer_initial_refresh: bool = False,
         initial_refresh_delay_seconds: float = 0,
         shared_snapshot_registry=None,
+        realtime_snapshot_bus=None,
     ) -> None:
         if initial_refresh_delay_seconds < 0:
             raise ValueError("initial_refresh_delay_seconds must not be negative")
@@ -85,6 +86,7 @@ class MarketOverviewService:
         self.defer_initial_refresh = defer_initial_refresh and cache_path is not None
         self.initial_refresh_delay_seconds = initial_refresh_delay_seconds
         self.shared_snapshot_registry = shared_snapshot_registry
+        self.realtime_snapshot_bus = realtime_snapshot_bus
         self._lock = threading.RLock()
         self._cached_at: datetime | None = None
         self._cached: MarketOverviewResponse | None = None
@@ -533,7 +535,8 @@ class MarketOverviewService:
         started_at: datetime,
     ) -> None:
         registry = self.shared_snapshot_registry
-        if registry is None:
+        bus = self.realtime_snapshot_bus
+        if registry is None and bus is None:
             return
         payload = response.model_dump(mode="json")
         projections = {
@@ -568,27 +571,39 @@ class MarketOverviewService:
             0,
             round((datetime.now(timezone.utc) - started_at).total_seconds() * 1000),
         )
-        try:
-            for kind, projection in projections.items():
-                encoded = json.dumps(
-                    projection,
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ).encode("utf-8")
-                registry.record(
-                    kind,
-                    content_hash=hashlib.sha256(encoded).hexdigest(),
-                    trade_date=response.as_of,
+        if registry is not None:
+            try:
+                for kind, projection in projections.items():
+                    encoded = json.dumps(
+                        projection,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                    registry.record(
+                        kind,
+                        content_hash=hashlib.sha256(encoded).hexdigest(),
+                        trade_date=response.as_of,
+                        observed_at=observed_at,
+                        coverage_percent=coverage,
+                        freshness=response.market_data.freshness,
+                        source=response.market_data.source,
+                        reused=reused,
+                        latency_ms=latency_ms,
+                    )
+            except Exception:
+                pass
+        if bus is not None and not reused:
+            try:
+                bus.publish(
+                    "market_overview",
+                    payload,
                     observed_at=observed_at,
-                    coverage_percent=coverage,
-                    freshness=response.market_data.freshness,
                     source=response.market_data.source,
-                    reused=reused,
-                    latency_ms=latency_ms,
+                    freshness=response.market_data.freshness,
                 )
-        except Exception:
-            return
+            except Exception:
+                return
 
     def _read_cache(self, now: datetime) -> MarketOverviewResponse | None:
         if self.cache_path is None or not self.cache_path.exists():

@@ -156,6 +156,10 @@ def get_shared_snapshot_registry(request: Request):
     return getattr(request.app.state, "shared_snapshot_registry", None)
 
 
+def get_realtime_snapshot_bus(request: Request):
+    return getattr(request.app.state, "realtime_snapshot_bus", None)
+
+
 def get_replay_snapshot_store(request: Request):
     return request.app.state.replay_snapshot_store
 
