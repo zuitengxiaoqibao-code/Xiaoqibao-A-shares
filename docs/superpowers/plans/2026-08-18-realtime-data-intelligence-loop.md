@@ -73,5 +73,19 @@
 - [x] 回放快照捕获会追加当前 `ai_analysis` 输入哈希和触发 ID，保留 AI 输入证据链。
 - [x] 运维诊断记录实时总线连接/丢弃统计、AI 队列提交/完成/失败/积压，并把积压和丢帧转成告警。
 - [x] 运行 API/Web 全量测试、编码扫描和 `git diff --check`。
-- [ ] 重建便携 EXE，保留 `config/data/news/cache/logs/models/exports/backups`。
-- [ ] 运行真实 EXE smoke、恢复演练和发布质量门禁。
+- [x] 重建便携 EXE，保留 `config/data/news/cache/logs/models/exports/backups`。
+- [x] 运行真实 EXE smoke、恢复演练和发布质量门禁。
+
+### Task 6: Verified news stream and news-page AI handoff
+
+**Files:**
+- Modify: `apps/api/src/qibao_api/routes/news.py`
+- Modify: `apps/web/src/features/news-intelligence/NewsIntelligenceView.tsx`
+- Modify: `apps/web/src/app/theme.css`
+- Test: `apps/api/tests/routes/test_news.py`
+- Test: `apps/web/src/features/news-intelligence/NewsIntelligenceView.test.tsx`
+
+- [x] 只将已核验新闻投影为带内容哈希、数量、来源和观测时间的 `news_events` 实时快照；相同快照不重复发布。
+- [x] 新闻情报页订阅 `news_events`，新快照触发重新读取仓库并保留当前股票过滤；断线显示明确状态而不伪造实时数据。
+- [x] 新闻情报页订阅 `ai_analysis`，展示证据绑定的实时 AI 解释、规则回退状态、输入哈希、覆盖率和缺失字段。
+- [x] 聚焦测试覆盖已核验过滤、重复快照去重和新闻页 AI 实时面板；保持红涨绿跌及 EXE 交付约束。

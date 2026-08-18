@@ -7,6 +7,8 @@ import { friendlyError } from "../../shared/friendlyError";
 import { NewsEventGraph } from "./NewsEventGraph";
 import { NewsEventGrid } from "./NewsEventGrid";
 import { EventImpactPanel } from "./EventImpactPanel";
+import { consumeRealtimeStream, type RealtimeStreamState } from "../../shared/realtimeStream";
+import { RealtimeAIInsight, type RealtimeAIInsightPayload } from "../../shared/RealtimeAIInsight";
 
 type Props = {
   selectedSymbol?: string | null;
@@ -33,6 +35,8 @@ export function NewsIntelligenceView({ selectedSymbol, loadBundle, syncNews, syn
   const [eventImpact, setEventImpact] = useState<EventImpactReport | null>(null);
   const [impactLoading, setImpactLoading] = useState(false);
   const [impactError, setImpactError] = useState("");
+  const [newsStreamState, setNewsStreamState] = useState<RealtimeStreamState | "idle">("idle");
+  const [realtimeAIInsight, setRealtimeAIInsight] = useState<RealtimeAIInsightPayload | null>(null);
   const requestVersion = useRef(0);
   const impactRequestVersion = useRef(0);
   function filterSelectedBundle(loaded: NewsIntelligenceBundle, symbol: string | null | undefined) {
@@ -53,9 +57,42 @@ export function NewsIntelligenceView({ selectedSymbol, loadBundle, syncNews, syn
     requestVersion.current += 1;
     impactRequestVersion.current += 1;
     setSelected(null); setReason(""); setBundle(null); setSaving(false); setHotspotLoading(false); setHotspotError(""); setEventImpact(null); setImpactError("");
+    setRealtimeAIInsight(null);
     void runBundleRequest(loadBundle, "新闻数据", "loading");
     return () => { requestVersion.current += 1; };
   }, [loadBundle, selectedSymbol]);
+  useEffect(() => {
+    const controller = new AbortController();
+    void consumeRealtimeStream<{ snapshot_id?: string }>(
+      ["news_events"],
+      (event) => {
+        if (!event.payload?.snapshot_id) return;
+        const request = ++requestVersion.current;
+        const requestSymbol = selectedSymbol;
+        void loadBundle().then((loaded) => {
+          if (request === requestVersion.current) setBundle(filterSelectedBundle(loaded, requestSymbol));
+        }).catch((cause) => {
+          if (request === requestVersion.current) setError(friendlyError(cause, "新闻数据"));
+        });
+      },
+      controller.signal,
+      setNewsStreamState,
+    ).catch(() => {
+      if (!controller.signal.aborted) setNewsStreamState("error");
+    });
+    return () => controller.abort();
+  }, [loadBundle, selectedSymbol]);
+  useEffect(() => {
+    const controller = new AbortController();
+    void consumeRealtimeStream<RealtimeAIInsightPayload>(
+      ["ai_analysis"],
+      (event) => {
+        if (event.payload?.kind === "news_events") setRealtimeAIInsight(event.payload);
+      },
+      controller.signal,
+    ).catch(() => undefined);
+    return () => controller.abort();
+  }, []);
   const interpretationByEvent = useMemo(() => new Map(bundle?.interpretations.map((item) => [item.event_id, item]) ?? []), [bundle]);
   async function collect() { await runBundleRequest(async () => { await syncNews(selectedSymbol ?? undefined); return loadBundle(); }, "新闻数据", "loading"); }
   async function collectHotspots() {
@@ -114,11 +151,13 @@ export function NewsIntelligenceView({ selectedSymbol, loadBundle, syncNews, syn
   const verifiedHotspotCount = bundle?.events.filter((event) => event.review_state === "verified" && event.event_type === "market_hotspot").length ?? 0;
   const relatedStockCount = new Set(bundle?.events.flatMap((event) => event.affected_instruments.filter(([asset]) => asset === "a_share").map(([, code]) => code)) ?? []).size;
   const latestUpdate = [...(bundle?.events.map((event) => event.normalized_at) ?? []), ...(bundle?.interpretations.map((item) => item.generated_at) ?? []), ...(bundle?.briefings.map((item) => item.generated_at) ?? [])].sort().at(-1);
+  const realtimeStatusLabel = newsStreamState === "connected" ? "实时推送已连接" : newsStreamState === "error" ? "实时推送不可用 · 保留手动同步" : "正在连接实时推送";
   return <main className="terminal-page news-domain">
-    <header className="news-header"><div><p className="eyebrow">新闻热点 / VERIFIED FEED</p><h1>每日情报流</h1><p>{selectedSymbol ? `当前标的 ${selectedSymbol}` : "全市场情报 · 尚未选择 A 股"}</p></div><div className="news-sync-actions">{syncHotspots && <button className="news-sync secondary" onClick={() => void collectHotspots()} disabled={hotspotLoading}><RefreshCw size={15}/>{hotspotLoading ? "核验中" : "同步热点"}</button>}<button className="news-sync" onClick={() => void collect()} disabled={loading}><RefreshCw size={15}/>{loading ? "核验中" : "同步新闻"}</button></div></header>
+    <header className="news-header"><div><p className="eyebrow">新闻热点 / VERIFIED FEED</p><h1>每日情报流</h1><p>{selectedSymbol ? `当前标的 ${selectedSymbol}` : "全市场情报 · 尚未选择 A 股"}</p><span className={`news-realtime-status ${newsStreamState}`}><i aria-hidden="true" />{realtimeStatusLabel}</span></div><div className="news-sync-actions">{syncHotspots && <button className="news-sync secondary" onClick={() => void collectHotspots()} disabled={hotspotLoading}><RefreshCw size={15}/>{hotspotLoading ? "核验中" : "同步热点"}</button>}<button className="news-sync" onClick={() => void collect()} disabled={loading}><RefreshCw size={15}/>{loading ? "核验中" : "同步新闻"}</button></div></header>
     <div className="news-tabs" role="tablist"><button role="tab" aria-selected={tab === "timeline"} onClick={() => setTab("timeline")}>事件时间线</button><button role="tab" aria-selected={tab === "briefings"} onClick={() => setTab("briefings")}>每日简报</button><button role="tab" aria-selected={tab === "quality"} onClick={() => setTab("quality")}>数据状态</button></div>
     {error && <div className="news-error" role="alert"><AlertTriangle size={17}/><span>{error}</span>{error === "数据源尚未配置，请在数据设置中检查连接。" && openNewsCompliance && <button onClick={openNewsCompliance}>打开数据设置</button>}<button onClick={() => void collect()}>重试</button></div>}
     {hotspotError && <div className="news-error hotspot-error" role="alert"><AlertTriangle size={17}/><span>{hotspotError}</span>{hotspotError === "数据源尚未配置，请在数据设置中检查连接。" && openNewsCompliance && <button onClick={openNewsCompliance}>打开数据设置</button>}<button onClick={() => void collectHotspots()}>重试热点</button></div>}
+    {realtimeAIInsight && <RealtimeAIInsight insight={realtimeAIInsight} domainLabel="新闻热点" />}
     {loading && !bundle && <div className="news-loading" role="status" aria-busy="true"><Clock3 size={18}/>正在读取冻结情报...</div>}
     {tab === "timeline" && bundle && (bundle.events.length === 0 ? <div className="news-empty"><FileSearch size={28}/><b>暂无已归档事件</b></div> : <><NewsEventGraph events={bundle.events} interpretations={bundle.interpretations} unifiedEvents={bundle.unifiedEvents} onSelect={selectEvent}/><NewsEventGrid events={bundle.events} interpretationByEvent={interpretationByEvent} onSelect={selectEvent}/></>)}
     {tab === "briefings" && bundle && <section className="briefing-ledger">{bundle.briefings.length === 0 ? <div className="news-empty"><FileSearch size={28}/><b>暂无冻结简报</b></div> : bundle.briefings.map((item) => <article key={item.report_id}><div><span>{phaseName[item.phase]}</span><time>{item.trading_date}</time></div><strong>{item.sections.watchlist.length} 个观察标的</strong><small>{item.event_ids.length} 个事件 · {item.interpretation_ids.length} 条解释</small></article>)}</section>}

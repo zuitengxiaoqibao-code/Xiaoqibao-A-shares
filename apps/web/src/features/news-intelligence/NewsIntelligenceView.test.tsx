@@ -33,6 +33,41 @@ const bundle: NewsIntelligenceBundle = {
 
 
 describe("NewsIntelligenceView", () => {
+  it("shows evidence-bound realtime AI analysis when the news stream publishes a change", async () => {
+    const encoder = new TextEncoder();
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => {
+      const frame = "data: " + JSON.stringify({
+        event_id: "ai-analysis-1", kind: "ai_analysis", sequence: 1,
+        observed_at: "2026-07-14T01:03:00Z", source: "deterministic",
+        freshness: "live", payload: {
+          kind: "news_events", reason: "verified_news_changed", status: "unavailable",
+          explanation: null, statements: [{ kind: "fact", text: "已核验新闻发生变化。" }],
+          generated_at: "2026-07-14T01:03:00Z", source: "unconfigured",
+          input_snapshot_hash: "a".repeat(64), coverage_percent: 100,
+          fallback: true, missing_fields: [],
+        },
+      }) + "\n\n";
+      return {
+        ok: true,
+        status: 200,
+        body: {
+          getReader: () => ({
+            read: vi.fn()
+              .mockResolvedValueOnce({ done: false, value: encoder.encode(frame) })
+              .mockResolvedValue({ done: true, value: undefined }),
+            releaseLock: vi.fn(),
+          }),
+        },
+      };
+    }));
+    render(<NewsIntelligenceView loadBundle={() => Promise.resolve(bundle)} syncNews={() => Promise.resolve({ fetched: 0 })} createCorrection={() => Promise.resolve()} />);
+
+    expect(await screen.findByRole("region", { name: "新闻热点实时 AI 分析" })).toBeInTheDocument();
+    expect(screen.getByText("规则解释回退")).toBeInTheDocument();
+    expect(screen.getByText("已核验新闻发生变化。")).toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+
   it("uses the shared terminal page shell", async () => {
     render(<NewsIntelligenceView loadBundle={() => Promise.resolve(bundle)} syncNews={() => Promise.resolve({ fetched: 0 })} createCorrection={() => Promise.resolve()} />);
 

@@ -23,6 +23,7 @@ from qibao_api.dependencies import (
     get_news_repository,
     get_news_alert_service,
     get_news_service,
+    get_realtime_snapshot_bus,
     get_server_time,
     get_shared_snapshot_registry,
 )
@@ -34,6 +35,43 @@ from qibao_api.zhongshu.news_quality import NewsQualityMetrics, NewsQualityServi
 
 router = APIRouter(prefix="/api/v1/news", tags=["工部新闻"])
 CHINA_TZ = timezone(timedelta(hours=8))
+
+
+def _publish_verified_news_snapshot(events, bus) -> None:
+    """Publish only changed, verified news for realtime consumers and AI.
+
+    The repository remains the source of truth.  The bus receives a compact
+    immutable projection so the UI can refresh from the repository without
+    treating pending or rejected articles as live signals.
+    """
+    if bus is None or not hasattr(bus, "publish"):
+        return
+    verified = tuple(item for item in events if item.review_state == "verified")
+    encoded = b"[" + b",".join(
+        item.model_dump_json().encode("utf-8") for item in verified
+    ) + b"]"
+    snapshot_id = hashlib.sha256(encoded).hexdigest()
+    latest = bus.latest("news_events") if hasattr(bus, "latest") else None
+    previous = latest.get("payload") if isinstance(latest, dict) else None
+    if isinstance(previous, dict) and previous.get("snapshot_id") == snapshot_id:
+        return
+    observed = max(
+        (item.normalized_at for item in verified),
+        default=datetime.now(timezone.utc),
+    )
+    payload = {
+        "snapshot_id": snapshot_id,
+        "events": [item.model_dump(mode="json") for item in verified[-50:]],
+        "event_count": len(verified),
+        "verified_count": len(verified),
+    }
+    bus.publish(
+        "news_events",
+        payload,
+        observed_at=observed,
+        source="news-repository",
+        freshness="verified",
+    )
 
 
 class CorrectionRequest(BaseModel):
@@ -118,6 +156,7 @@ def sync_hotspots(
 def news_events(
     repository: Annotated[object, Depends(get_news_repository)],
     registry: Annotated[object, Depends(get_shared_snapshot_registry)],
+    bus: Annotated[object | None, Depends(get_realtime_snapshot_bus)],
 ):
     try:
         events = repository.events()
@@ -141,6 +180,7 @@ def news_events(
                 reused=True,
                 latency_ms=0,
             )
+        _publish_verified_news_snapshot(events, bus)
         return events
     except NewsIntegrityError as error:
         raise HTTPException(

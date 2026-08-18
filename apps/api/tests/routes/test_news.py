@@ -16,6 +16,7 @@ from qibao_api.dependencies import (
     get_news_alert_service,
     get_news_repository,
     get_news_service,
+    get_realtime_snapshot_bus,
     get_server_time,
     get_shared_snapshot_registry,
 )
@@ -187,6 +188,55 @@ def test_news_event_read_registers_repository_snapshot_reuse() -> None:
     assert calls[0][1]["reused"] is True
     assert calls[0][1]["trade_date"] == NOW.date()
     assert len(calls[0][1]["content_hash"]) == 64
+
+
+def test_news_event_read_publishes_only_changed_verified_snapshot() -> None:
+    calls = []
+
+    class VerifiedRepository(Repository):
+        def events(self):
+            return [self._event("verified", "verified-event"), self._event("pending", "pending-event")]
+
+        @staticmethod
+        def _event(review_state, event_id):
+            return NormalizedNewsEvent(
+                event_id=event_id, event_type="market_news", headline=event_id,
+                occurred_at=NOW, normalized_at=NOW, affected_instruments=(),
+                industries=(), themes=(), citations=(EvidenceCitation(
+                    citation_id=f"citation-{event_id}", article_id=f"article-{event_id}",
+                    canonical_url="https://news.example/event", publisher="测试来源",
+                    published_at=NOW, quoted_text=event_id, content_hash="c" * 64,
+                ),), association_confidence=Decimal("0.80"),
+                review_state=review_state,
+            )
+
+    class Bus:
+        def __init__(self):
+            self.latest_event = None
+
+        def latest(self, kind):
+            return self.latest_event if kind == "news_events" else None
+
+        def publish(self, kind, payload, **kwargs):
+            self.latest_event = {"payload": payload}
+            calls.append((kind, payload, kwargs))
+
+    bus = Bus()
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_news_repository] = lambda: VerifiedRepository()
+    app.dependency_overrides[get_realtime_snapshot_bus] = lambda: bus
+    with TestClient(app) as test_client:
+        first = test_client.get("/api/v1/news/events")
+        second = test_client.get("/api/v1/news/events")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert len(calls) == 1
+    assert calls[0][0] == "news_events"
+    assert calls[0][1]["verified_count"] == 1
+    assert [item["event_id"] for item in calls[0][1]["events"]] == ["verified-event"]
+    assert calls[0][2]["source"] == "news-repository"
 
 
 def test_unified_event_route_reuses_real_event_ids_and_keeps_unknown_effects_explicit() -> None:
