@@ -215,6 +215,46 @@ def test_service_reads_history_once_for_all_tail_selection_symbols() -> None:
     assert bars.calls == [(["600000"], 21, datetime(2026, 8, 17).date())]
 
 
+def test_service_reuses_slow_history_factors_across_same_day_refreshes() -> None:
+    quote = TdxRealtimeQuote(
+        symbol="600000",
+        exchange_code="600000.SH",
+        name="浦发银行",
+        previous_close=Decimal("9.19"),
+        price=Decimal("9.65"),
+        high=Decimal("9.65"),
+        low=Decimal("9.17"),
+        open=Decimal("9.19"),
+        volume=Decimal("300"),
+        amount_wan=Decimal("27.90"),
+        observed_at=datetime(2026, 8, 17, 14, 31, tzinfo=ZoneInfo("Asia/Shanghai")),
+        intraday_average_price=None,
+    )
+
+    class BatchBars:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def latest_many(self, symbols, limit, as_of):
+            del limit, as_of
+            self.calls += 1
+            return {symbol: list(_LimitUpBars().latest(symbol, limit=21)) for symbol in symbols}
+
+    bars = BatchBars()
+    service = LateSessionSelectionService(
+        local_market_source=_LocalSource(quote),
+        bar_repository=bars,
+        instrument_directory=SimpleNamespace(resolve=lambda _symbol: None),
+        clock=lambda: datetime(2026, 8, 17, 6, 31, tzinfo=ZoneInfo("UTC")),
+    )
+
+    first = service.current()
+    second = service.current()
+
+    assert first.candidate_count == second.candidate_count
+    assert bars.calls == 1
+
+
 def test_service_returns_truthful_observation_candidates_when_only_real_fields_are_missing() -> None:
     quote = TdxRealtimeQuote(
         symbol="600000",

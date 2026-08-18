@@ -4,6 +4,7 @@ from typing import Callable
 from zoneinfo import ZoneInfo
 
 from qibao_api.a_shares.late_session_selection import classify_behavior, classify_phase, evaluate_candidate
+from qibao_api.a_shares.late_session_factor_cache import LateSessionFactorCache
 from qibao_api.contracts.late_session_selection import (
     DEFAULT_LATE_SESSION_RULE_SETTINGS,
     LateSessionBehavior,
@@ -21,12 +22,13 @@ REFRESH_INTERVAL_MS = 1000
 
 
 class LateSessionSelectionService:
-    def __init__(self, *, local_market_source, bar_repository, instrument_directory, tencent_source=None, market_overview_service=None, clock: Callable[[], datetime] | None = None) -> None:
+    def __init__(self, *, local_market_source, bar_repository, instrument_directory, tencent_source=None, market_overview_service=None, factor_cache: LateSessionFactorCache | None = None, clock: Callable[[], datetime] | None = None) -> None:
         self.local_market_source = local_market_source
         self.bar_repository = bar_repository
         self.instrument_directory = instrument_directory
         self.tencent_source = tencent_source
         self.market_overview_service = market_overview_service
+        self.factor_cache = factor_cache or LateSessionFactorCache()
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self._enrichment_observed_at: datetime | None = None
         self._enrichment: dict[str, object] = {}
@@ -64,7 +66,12 @@ class LateSessionSelectionService:
         if not quotes:
             return self._unavailable(trading_date, local_now, phase, "本地通达信全市场实时快照尚未就绪")
         enriched = self._enrich(quotes, now)
-        history = self._history_windows(tuple(raw.symbol for raw in quotes), trading_date)
+        symbols = tuple(raw.symbol for raw in quotes)
+        slow_factors = self.factor_cache.get_or_build(
+            trading_date,
+            symbols,
+            lambda requested: self._history_windows(requested, trading_date),
+        ).factors
         evaluated: list[LateSessionCandidateResult] = []
         for raw in quotes:
             data = enriched.get(raw.symbol, {})
@@ -75,10 +82,10 @@ class LateSessionSelectionService:
                 low=getattr(raw, "low", None),
                 high=getattr(raw, "high", None),
             )
-            bars = history.get(raw.symbol)
+            slow = slow_factors.get(raw.symbol)
             volume_ratio = data.get("volume_ratio") or (
-                self._volume_ratio_from_bars(raw.volume, bars)
-                if bars is not None
+                self._volume_ratio_from_baseline(raw.volume, slow.volume_baseline_5d)
+                if slow is not None
                 else self._volume_ratio(raw.symbol, raw.volume)
             )
             quote = LateSessionQuote(
@@ -91,8 +98,8 @@ class LateSessionSelectionService:
                 turnover_rate=data.get("turnover_rate") or getattr(raw, "turnover_rate", None),
                 market_cap_yi=data.get("market_cap_yi") or raw.market_cap_yi,
                 twenty_day_limit_up_count=(
-                    self._twenty_day_limit_count_from_bars(raw.symbol, bars, trading_date)
-                    if bars is not None
+                    slow.twenty_day_limit_up_count
+                    if slow is not None
                     else self._twenty_day_limit_count(raw.symbol, trading_date)
                 ),
                 intraday_average_price=average,
@@ -276,6 +283,12 @@ class LateSessionSelectionService:
             return None
         baseline = sum((bar.volume for bar in bars[1:6]), Decimal("0")) / Decimal("5")
         if baseline <= 0:
+            return None
+        return (current_volume / baseline).quantize(Decimal("0.01"))
+
+    @staticmethod
+    def _volume_ratio_from_baseline(current_volume: Decimal, baseline: Decimal | None) -> Decimal | None:
+        if baseline is None or baseline <= 0 or current_volume < 0:
             return None
         return (current_volume / baseline).quantize(Decimal("0.01"))
 
