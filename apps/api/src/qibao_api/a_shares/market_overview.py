@@ -192,11 +192,11 @@ class MarketOverviewService:
                 self._initial_refresh_timer = timer
                 timer.start()
             return
+        self._schedule_core_refresh_locked()
         if self._refresh_future is None or self._refresh_future.done():
             self._refresh_future = self._refresh_executor.submit(
                 self._refresh_cached_snapshot, now
             )
-        self._schedule_core_refresh_locked()
 
     def _submit_initial_refresh(self, now: datetime) -> None:
         with self._lock:
@@ -204,11 +204,11 @@ class MarketOverviewService:
             self._initial_refresh_delay_consumed = True
             if self._closed or self._refresh_executor is None:
                 return
+            self._schedule_core_refresh_locked()
             if self._refresh_future is None or self._refresh_future.done():
                 self._refresh_future = self._refresh_executor.submit(
                     self._refresh_cached_snapshot, now
                 )
-            self._schedule_core_refresh_locked()
 
     def _schedule_core_refresh_locked(self) -> None:
         executor = self._core_refresh_executor
@@ -216,8 +216,12 @@ class MarketOverviewService:
             return
         if self._core_refresh_future is not None and not self._core_refresh_future.done():
             return
+        baseline_market_stocks = (
+            self._cached.market_stocks if self._cached is not None else ()
+        )
         self._core_refresh_future = executor.submit(
             self._refresh_intraday_core_snapshot,
+            baseline_market_stocks,
         )
 
     def _refresh_cached_snapshot(self, now: datetime) -> None:
@@ -289,7 +293,7 @@ class MarketOverviewService:
             updates["observed_at"] = current.observed_at
         return response.model_copy(update=updates) if updates else response
 
-    def _refresh_intraday_core_snapshot(self) -> None:
+    def _refresh_intraday_core_snapshot(self, baseline_market_stocks: tuple) -> None:
         """Refresh the time-sensitive tape without waiting for slow extensions.
 
         The portable application deliberately serves the last complete snapshot
@@ -302,6 +306,12 @@ class MarketOverviewService:
         minute_series: tuple = ()
         warnings: list[str] = []
         sources: list[str] = []
+        local_market = None
+        if self.local_market_source is not None:
+            try:
+                local_market = self.local_market_source.current()
+            except (OSError, RuntimeError, ValueError):
+                warnings.append("tdx_local_market_unavailable")
         try:
             indices, index_warnings = self.source.fetch_indices()
             warnings.extend(index_warnings)
@@ -321,6 +331,11 @@ class MarketOverviewService:
             if self._closed or self._cached is None:
                 return
             current = self._cached
+            quote_anomalies = self._local_quote_anomalies(
+                baseline_market_stocks,
+                local_market.market_stocks if local_market is not None else (),
+                cutoff=refresh_now,
+            )
             merged_minutes = self._merge_minute_series(
                 current.minute_series, minute_series,
             )
@@ -331,6 +346,25 @@ class MarketOverviewService:
                 updates["minute_series"] = merged_minutes
             if indices and merged_minutes:
                 updates["status"] = "ready"
+            if local_market is not None:
+                updates["market_stocks"] = local_market.market_stocks
+                updates["market_data"] = OverviewMarketDataStatus(
+                    source=local_market.source,
+                    quality=local_market.quality,
+                    observed_at=local_market.observed_at,
+                    quote_count=local_market.quote_count,
+                    universe_count=local_market.universe_count,
+                    phase=self._market_phase(refresh_now.astimezone(CHINA_TZ)),
+                    freshness=self._market_freshness(
+                        local_market.observed_at,
+                        local_market.quality,
+                        refresh_now.astimezone(CHINA_TZ),
+                    ),
+                )
+            if quote_anomalies:
+                updates["anomalies"] = self._merge_anomalies(
+                    current.anomalies, quote_anomalies,
+                )
             if sources:
                 updates["sources"] = tuple(dict.fromkeys((*current.sources, *sources)))
             updates["warnings"] = self._merge_core_warnings(
@@ -387,6 +421,49 @@ class MarketOverviewService:
         by_time = {item.observed_at: item for item in previous}
         by_time.update({item.observed_at: item for item in incoming})
         return tuple(by_time[key] for key in sorted(by_time))
+
+    @staticmethod
+    def _local_quote_anomalies(
+        previous: tuple,
+        incoming: tuple,
+        *,
+        cutoff: datetime,
+    ) -> tuple[OverviewAnomaly, ...]:
+        previous_by_symbol = {item.symbol: item for item in previous}
+        labels = {
+            "limit_up": ("涨停封板", "positive"),
+            "broken_limit_up": ("涨停开板", "uncertain"),
+            "limit_down": ("跌停封板", "negative"),
+        }
+        values = []
+        for item in incoming:
+            previous_item = previous_by_symbol.get(item.symbol)
+            if item.state not in labels or (
+                previous_item is not None and previous_item.state == item.state
+            ):
+                continue
+            if abs((cutoff - item.observed_at).total_seconds()) > 120:
+                continue
+            label, direction = labels[item.state]
+            values.append(OverviewAnomaly(
+                anomaly_id=(
+                    f"tdx-quote-{item.symbol}-{item.state}-"
+                    f"{item.observed_at.strftime('%Y%m%d%H%M%S')}"
+                ),
+                occurred_at=item.observed_at,
+                label=label,
+                headline=(
+                    f"{item.name}（{item.symbol}）{label}，"
+                    f"最新涨跌幅 {item.change_percent:+.2f}%"
+                ),
+                direction=direction,
+                themes=("实时行情异动",),
+                symbols=(item.symbol,),
+                category="price_volume_anomaly",
+                strength="high",
+                credibility="verified",
+            ))
+        return tuple(values[:15])
 
     @staticmethod
     def _merge_anomalies(previous: tuple, incoming: tuple) -> tuple:

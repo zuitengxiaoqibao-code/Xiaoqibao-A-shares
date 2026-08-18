@@ -281,6 +281,43 @@ class LocalMarketSource:
         )
 
 
+class MutableLocalMarketSource:
+    def __init__(self, snapshot: OverviewMarketSnapshot) -> None:
+        self.snapshot = snapshot
+
+    def current(self):
+        return self.snapshot
+
+
+def local_market_with_stock(
+    *, observed_at: datetime, state: str, price: str, change_percent: str,
+) -> OverviewMarketSnapshot:
+    return OverviewMarketSnapshot(
+        observed_at=observed_at,
+        source="tdx-local-rpc",
+        quality="ready",
+        quote_count=5200,
+        universe_count=5300,
+        breadth=OverviewBreadth(
+            rising_count=3000, falling_count=2100, flat_count=100, valid_count=5200,
+        ),
+        limit_ecology=OverviewLimitEcology(
+            limit_up_count=1 if state == "limit_up" else 0,
+            limit_down_count=1 if state == "limit_down" else 0,
+            broken_limit_up_count=1 if state == "broken_limit_up" else 0,
+        ),
+        liquidity=OverviewLiquidity(total_amount_yi=Decimal("12345.67")),
+        market_stocks=(OverviewFeatureStock(
+            symbol="600001", name="示例股票", price=Decimal(price),
+            previous_close=Decimal("10"), open=Decimal("10.1"),
+            high=Decimal(price), low=Decimal("10"), volume=Decimal("1000"),
+            amount_yi=Decimal("3.2"), change_percent=Decimal(change_percent),
+            state=state, observed_at=observed_at, source="tdx-local-rpc",
+            quality="ready",
+        ),),
+    )
+
+
 class FundFlowRepository:
     def coverage_percent(self, as_of, *, cutoff, universe_count):
         return Decimal("0.02")
@@ -722,6 +759,45 @@ def test_overview_refreshes_intraday_core_while_extended_build_is_blocked(
     assert final.indices[0].value == Decimal("3835.73")
     assert final.minute_series[-1].price == Decimal("3835.73")
     assert final.anomalies[0].anomaly_id == fresh_news.event_id
+
+
+def test_overview_records_verified_local_quote_state_change_without_news(
+    tmp_path: Path,
+) -> None:
+    cache_path = tmp_path / "market-overview.json"
+    local_source = MutableLocalMarketSource(local_market_with_stock(
+        observed_at=NOW, state="active", price="10.50", change_percent="5.00",
+    ))
+    initial = service(
+        Source(), clock=lambda: NOW, cache_path=cache_path,
+        local_market_source=local_source, news_repository=NewsRepository([]),
+    )
+    first = initial.current(NOW)
+    initial.close()
+    assert first.anomalies == ()
+
+    local_source.snapshot = local_market_with_stock(
+        observed_at=NOW + timedelta(minutes=31), state="limit_up",
+        price="11.00", change_percent="10.00",
+    )
+    source = RefreshingSource()
+    cached = service(
+        source, clock=lambda: NOW + timedelta(minutes=31, seconds=6), cache_path=cache_path,
+        defer_initial_refresh=True, local_market_source=local_source,
+        news_repository=NewsRepository([]),
+    )
+    cached.current(NOW + timedelta(minutes=31))
+
+    deadline = time.monotonic() + 2
+    refreshed = cached.current(NOW + timedelta(minutes=31, seconds=6))
+    while time.monotonic() < deadline and not refreshed.anomalies:
+        time.sleep(0.01)
+        refreshed = cached.current(NOW + timedelta(minutes=31, seconds=6))
+
+    cached.close()
+    assert refreshed.anomalies[0].label == "涨停封板"
+    assert refreshed.anomalies[0].symbols == ("600001",)
+    assert refreshed.anomalies[0].credibility == "verified"
 
 
 def test_overview_gives_cached_response_a_grace_period_before_background_refresh(
