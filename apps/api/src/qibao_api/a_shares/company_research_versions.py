@@ -137,9 +137,10 @@ def _changes(
 
 
 class CompanyResearchVersionRepository:
-    def __init__(self, database: str | Path, *, shared_snapshot_registry=None) -> None:
+    def __init__(self, database: str | Path, *, shared_snapshot_registry=None, realtime_snapshot_bus=None) -> None:
         self._lock = threading.RLock()
         self.shared_snapshot_registry = shared_snapshot_registry
+        self.realtime_snapshot_bus = realtime_snapshot_bus
         self.connection = sqlite3.connect(database, check_same_thread=False)
         self.connection.row_factory = sqlite3.Row
         self.connection.executescript("""
@@ -213,23 +214,36 @@ class CompanyResearchVersionRepository:
         self, value: CompanyResearchResponse, *, reused: bool
     ) -> None:
         registry = self.shared_snapshot_registry
+        bus = self.realtime_snapshot_bus
         version = value.research_version
-        if registry is None or version is None:
+        if registry is None and bus is None or version is None:
             return
-        try:
-            registry.record(
-                "financial_valuation",
-                content_hash=version.content_hash,
-                trade_date=value.as_of,
-                observed_at=value.generated_at,
-                coverage_percent=float(value.evidence_coverage * 100),
-                freshness="frozen",
-                source="company-research-version",
-                reused=reused,
-                latency_ms=0,
-            )
-        except Exception:
-            return
+        if registry is not None:
+            try:
+                registry.record(
+                    "financial_valuation",
+                    content_hash=version.content_hash,
+                    trade_date=value.as_of,
+                    observed_at=value.generated_at,
+                    coverage_percent=float(value.evidence_coverage * 100),
+                    freshness="frozen",
+                    source="company-research-version",
+                    reused=reused,
+                    latency_ms=0,
+                )
+            except Exception:
+                pass
+        if bus is not None and not reused:
+            try:
+                bus.publish(
+                    "company_research",
+                    value.model_dump(mode="json"),
+                    observed_at=value.generated_at,
+                    source="company-research-version",
+                    freshness="frozen",
+                )
+            except Exception:
+                return
 
     def history(self, symbol: str, *, limit: int = 20) -> tuple[CompanyResearchResponse, ...]:
         try:

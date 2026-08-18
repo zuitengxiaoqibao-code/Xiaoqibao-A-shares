@@ -884,6 +884,7 @@ class QuantStrategyService:
         snapshot_store: QuantStrategySnapshotStore | None = None,
         shadow_ledger=None,
         shared_snapshot_registry=None,
+        realtime_snapshot_bus=None,
     ) -> None:
         self.overview_service = overview_service
         self.candidate_service = candidate_service
@@ -897,6 +898,7 @@ class QuantStrategyService:
         self.snapshot_store = snapshot_store
         self.shadow_ledger = shadow_ledger
         self.shared_snapshot_registry = shared_snapshot_registry
+        self.realtime_snapshot_bus = realtime_snapshot_bus
         self._candidate_cache: dict[
             tuple[date, int],
             tuple[datetime, datetime, CandidateBoard, dict[str, str]],
@@ -1494,7 +1496,8 @@ class QuantStrategyService:
         self, result: QuantStrategyDashboard, *, latency_ms: int
     ) -> None:
         registry = self.shared_snapshot_registry
-        if registry is None:
+        bus = self.realtime_snapshot_bus
+        if registry is None and bus is None:
             return
         projection = result.model_dump(
             mode="json",
@@ -1511,19 +1514,30 @@ class QuantStrategyService:
         universe = stages.get("universe", 0)
         factor_ready = stages.get("factor_ready", 0)
         coverage = round(factor_ready / universe * 100, 2) if universe else None
-        try:
-            registry.record(
-                "quant_factors",
-                content_hash=hashlib.sha256(encoded).hexdigest(),
-                trade_date=result.as_of,
-                observed_at=result.observed_at,
-                coverage_percent=coverage,
-                freshness=result.refresh_mode,
-                source=result.snapshot_source,
-                reused=(
-                    result.snapshot_source == "disk" or result.candidate_scan_cached
-                ),
-                latency_ms=latency_ms,
-            )
-        except Exception:
-            return
+        reused = result.snapshot_source == "disk" or result.candidate_scan_cached
+        if registry is not None:
+            try:
+                registry.record(
+                    "quant_factors",
+                    content_hash=hashlib.sha256(encoded).hexdigest(),
+                    trade_date=result.as_of,
+                    observed_at=result.observed_at,
+                    coverage_percent=coverage,
+                    freshness=result.refresh_mode,
+                    source=result.snapshot_source,
+                    reused=reused,
+                    latency_ms=latency_ms,
+                )
+            except Exception:
+                pass
+        if bus is not None and not reused and result.refresh_state == "ready":
+            try:
+                bus.publish(
+                    "quant_strategy",
+                    result.model_dump(mode="json"),
+                    observed_at=result.observed_at,
+                    source=result.snapshot_source,
+                    freshness=result.refresh_mode,
+                )
+            except Exception:
+                return

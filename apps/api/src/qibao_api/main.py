@@ -578,6 +578,7 @@ async def lifespan(application: FastAPI):
     company_research_version_repository = CompanyResearchVersionRepository(
         settings.data_dir / "company-research-versions.sqlite3",
         shared_snapshot_registry=shared_snapshot_registry,
+        realtime_snapshot_bus=realtime_snapshot_bus,
     )
     application.state.company_research_version_repository = company_research_version_repository
     company_research_ai_result_repository = CompanyResearchAIResultRepository(
@@ -1277,6 +1278,7 @@ async def lifespan(application: FastAPI):
                     ),
                     shadow_ledger=quant_shadow_ledger,
                     shared_snapshot_registry=shared_snapshot_registry,
+                    realtime_snapshot_bus=realtime_snapshot_bus,
                 )
                 application.state.late_session_selection_service = LateSessionSelectionService(
                     local_market_source=local_tdx_overview_source,

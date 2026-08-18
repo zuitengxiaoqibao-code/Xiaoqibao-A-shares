@@ -527,6 +527,25 @@ def test_service_registers_quant_factor_compute_and_cache_reuse() -> None:
     assert calls[0][1]["trade_date"] == date(2026, 7, 31)
 
 
+def test_service_publishes_quant_snapshot_without_sqlite_registry() -> None:
+    from qibao_api.operations.realtime_snapshot_bus import RealtimeSnapshotBus
+
+    bus = RealtimeSnapshotBus()
+    service = QuantStrategyService(
+        SimpleNamespace(current=lambda now: overview()),
+        SimpleNamespace(candidates=lambda as_of, limit: board()),
+        SimpleNamespace(resolve=lambda symbol: None),
+        realtime_snapshot_bus=bus,
+    )
+
+    result = service.current(NOW)
+
+    event = bus.latest("quant_strategy")
+    assert result.refresh_state == "ready"
+    assert event is not None
+    assert event["payload"]["formula_version"] == result.formula_version
+
+
 def test_service_keeps_daily_candidate_scan_cached_while_strategy_refreshes() -> None:
     calls = 0
 

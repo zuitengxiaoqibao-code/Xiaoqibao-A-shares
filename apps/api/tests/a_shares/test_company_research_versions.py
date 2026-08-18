@@ -101,6 +101,29 @@ def test_company_research_version_registers_new_and_reused_financial_snapshot(tm
     repository.close()
 
 
+def test_company_research_version_publishes_new_snapshot_without_sqlite_registry(tmp_path) -> None:
+    from qibao_api.operations.realtime_snapshot_bus import RealtimeSnapshotBus
+
+    bus = RealtimeSnapshotBus()
+    repository = CompanyResearchVersionRepository(
+        tmp_path / "company-research-versions.sqlite3",
+        realtime_snapshot_bus=bus,
+    )
+    value = sample_response().model_copy(update={
+        "as_of": date(2026, 8, 12),
+        "generated_at": datetime(2026, 8, 12, 15, tzinfo=timezone.utc),
+        "research_sections": sections("主营高端白酒"),
+    })
+
+    stored = repository.append(value)
+
+    event = bus.latest("company_research")
+    assert event is not None
+    assert event["payload"]["symbol"] == stored.symbol
+    assert event["payload"]["research_version"]["content_hash"] == stored.research_version.content_hash
+    repository.close()
+
+
 def test_company_research_semantics_ignore_new_provenance_watermark_fields() -> None:
     legacy = sample_response().model_copy(update={
         "evidence_ledger": (EvidenceLedgerEntry(
