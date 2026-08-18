@@ -28,6 +28,10 @@ def test_bus_publishes_monotonic_events_and_replays_latest_snapshot() -> None:
     assert subscription.get_nowait()["sequence"] == 2
     assert bus.latest("market_overview")["sequence"] == 2
     bus.unsubscribe(subscription)
+    status = bus.status()
+    assert status["published"] == 2
+    assert status["subscriptions_total"] == 1
+    assert status["active_subscribers"] == 0
 
 
 def test_bus_filters_subscriptions_and_serializes_sse_frames() -> None:
@@ -54,3 +58,16 @@ def test_bus_filters_subscriptions_and_serializes_sse_frames() -> None:
     assert frame.endswith("\n\n")
     assert json.loads(frame.split("data: ", 1)[1].strip())["sequence"] == event["sequence"]
     bus.unsubscribe(subscription)
+
+
+def test_bus_reports_dropped_intermediate_frames_without_blocking_publish() -> None:
+    bus = RealtimeSnapshotBus(max_queue_size=1)
+    bus.subscribe()
+    for value in (1, 2, 3):
+        bus.publish(
+            "quant_strategy", {"value": value},
+            observed_at=datetime(2026, 8, 18, 1, 0, value, tzinfo=timezone.utc),
+            source="test", freshness="live",
+        )
+    assert bus.status()["published"] == 3
+    assert bus.status()["dropped_intermediate"] == 2

@@ -24,16 +24,30 @@ class RealtimeSnapshotBus:
         self._sequence = 0
         self._latest: dict[str, dict[str, Any]] = {}
         self._subscribers: dict[queue.Queue[dict[str, Any]], frozenset[str] | None] = {}
+        self._published = 0
+        self._dropped = 0
+        self._subscriptions_total = 0
 
     def subscribe(self, kinds: set[str] | frozenset[str] | None = None) -> queue.Queue[dict[str, Any]]:
         subscription: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=self.max_queue_size)
         with self._lock:
             self._subscribers[subscription] = None if kinds is None else frozenset(kinds)
+            self._subscriptions_total += 1
         return subscription
 
     def unsubscribe(self, subscription: queue.Queue[dict[str, Any]]) -> None:
         with self._lock:
             self._subscribers.pop(subscription, None)
+
+    def status(self) -> dict[str, int]:
+        with self._lock:
+            return {
+                "active_subscribers": len(self._subscribers),
+                "published": self._published,
+                "dropped_intermediate": self._dropped,
+                "subscriptions_total": self._subscriptions_total,
+                "latest_topics": len(self._latest),
+            }
 
     def latest(self, kind: str) -> dict[str, Any] | None:
         with self._lock:
@@ -53,6 +67,7 @@ class RealtimeSnapshotBus:
             raise ValueError("snapshot kind must not be empty")
         with self._lock:
             self._sequence += 1
+            self._published += 1
             event = {
                 "event_id": f"{kind}-{self._sequence}",
                 "kind": kind,
@@ -70,11 +85,12 @@ class RealtimeSnapshotBus:
             self._offer(subscription, event)
         return event
 
-    @staticmethod
-    def _offer(subscription: queue.Queue[dict[str, Any]], event: dict[str, Any]) -> None:
+    def _offer(self, subscription: queue.Queue[dict[str, Any]], event: dict[str, Any]) -> None:
         try:
             subscription.put_nowait(event)
         except queue.Full:
+            with self._lock:
+                self._dropped += 1
             try:
                 subscription.get_nowait()
             except queue.Empty:

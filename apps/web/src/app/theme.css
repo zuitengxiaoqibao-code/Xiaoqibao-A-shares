@@ -1503,6 +1503,18 @@ body { font-size: 14px; }
   font: 12px/1.55 "Microsoft YaHei UI", sans-serif;
   text-wrap: pretty;
 }
+
+.realtime-ai-insight { grid-column: 1 / -1; min-height: 0; }
+.realtime-ai-body { display: grid; gap: 12px; padding: 0 16px 16px; }
+.realtime-ai-meta, .realtime-ai-evidence { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; color: #8ca3b6; font-size: 13px; }
+.realtime-ai-meta span:first-child { font-weight: 700; }
+.realtime-ai-summary { margin: 0; color: #eaf4fb; font-size: 16px; line-height: 1.55; }
+.realtime-ai-statements { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.realtime-ai-statements article { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid rgba(87, 157, 194, .2); border-radius: 8px; background: rgba(14, 30, 44, .52); }
+.realtime-ai-statements b { color: #64dbff; font-size: 13px; }
+.realtime-ai-statements span { color: #d6e7f0; font-size: 14px; line-height: 1.45; }
+.realtime-ai-evidence { font-family: var(--font-mono); font-size: 12px; }
+@media (max-width: 760px) { .realtime-ai-statements { grid-template-columns: 1fr; } }
 .kronos-forecast-panel {
   grid-column: 1 / -1;
   min-height: 430px;

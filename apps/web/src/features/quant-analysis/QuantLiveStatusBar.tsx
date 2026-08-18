@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { FirstLimitUpBoard } from "../first-limit-up/types";
 import type { IntradayTick, QuantStrategyDashboard } from "./types";
 import type { QuantLiveStatus } from "./useQuantLiveRefresh";
+import type { RealtimeStreamState } from "../../shared/realtimeStream";
 
 type Props = {
   board: FirstLimitUpBoard | null;
@@ -14,6 +15,7 @@ type Props = {
   strategy: QuantStrategyDashboard | null;
   strategyStatus: QuantLiveStatus;
   strategyEnabled: boolean;
+  strategyStreamState?: RealtimeStreamState | "idle";
 };
 
 function ageSeconds(value: string | Date | null | undefined, now: number): number | null {
@@ -87,6 +89,7 @@ export function QuantLiveStatusBar({
   strategy,
   strategyStatus,
   strategyEnabled,
+  strategyStreamState = "idle",
 }: Props) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -133,7 +136,7 @@ export function QuantLiveStatusBar({
           postclose: "盘后快照",
           stale: "行情陈旧",
         }[strategy.refresh_mode] : statusLabel(strategyStatus)}</b>
-          <small>{strategyEnabled ? `${ageLabel(strategyAge)} · ${strategy?.sources.slice(0, 2).join(" + ") || "本地通达信市场截面"}` : "当前页面未配置策略接口"}</small>
+          <small>{strategyEnabled ? `${ageLabel(strategyAge)} · ${strategy?.sources.slice(0, 2).join(" + ") || "本地通达信市场截面"} · ${strategyStreamState === "connected" ? "实时推送" : strategyStreamState === "error" ? "HTTP回退" : "等待推送"}` : "当前页面未配置策略接口"}</small>
           {strategyEnabled && strategy && <>
             <em className="quant-snapshot-detail">{snapshotLabel(strategy, now)} · {strategy.snapshot_source === "disk" ? "磁盘缓存" : "本次计算"}</em>
             <em className="quant-evidence-detail">证据覆盖 {strategy.regime.coverage_percent}% · {strategy.regime.quality}</em>

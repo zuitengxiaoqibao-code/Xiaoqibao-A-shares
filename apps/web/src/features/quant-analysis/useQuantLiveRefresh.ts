@@ -18,6 +18,7 @@ export type QuantLiveResource<T> = {
   lastAttemptAt: Date | null;
   lastSuccessAt: Date | null;
   refreshNow: () => Promise<void>;
+  acceptExternal: (value: T) => void;
 };
 
 export function useQuantLiveResource<T>({
@@ -97,6 +98,17 @@ export function useQuantLiveResource<T>({
     return request;
   }, []);
 
+  const acceptExternal = useCallback((value: T) => {
+    if (!mountedRef.current || value === null || value === undefined) return;
+    const resolvedValue = mergeDataRef.current?.(dataRef.current, value) ?? value;
+    if (resolvedValue === null || resolvedValue === undefined) return;
+    dataRef.current = resolvedValue;
+    setData(resolvedValue);
+    setError("");
+    setLastSuccessAt(new Date());
+    setStatus(document.hidden ? "paused" : "live");
+  }, []);
+
   useEffect(() => {
     if (!enabled) {
       setStatus("paused");
@@ -145,5 +157,6 @@ export function useQuantLiveResource<T>({
     lastAttemptAt,
     lastSuccessAt,
     refreshNow,
+    acceptExternal,
   };
 }

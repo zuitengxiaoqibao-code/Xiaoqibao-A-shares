@@ -1,3 +1,5 @@
+import asyncio
+import queue
 from datetime import date, datetime, timezone
 import hashlib
 import json
@@ -6,6 +8,7 @@ from zoneinfo import ZoneInfo
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 
 from qibao_api.contracts.briefing import BriefingPhase
 from qibao_api.contracts.data_lineage import DataLineageResponse
@@ -35,12 +38,64 @@ from qibao_api.dependencies import (
     get_observability_store,
     get_replay_snapshot_store,
     get_shared_snapshot_registry,
+    get_realtime_snapshot_bus,
 )
 from qibao_api.gongbu.backup_service import BackupRecord, BackupVerification
 from qibao_api.operations.freshness import DEFAULT_FRESHNESS_POLICIES
 
 
 router = APIRouter(prefix="/api/v1/operations", tags=["工部运维"])
+
+
+@router.get("/realtime-stream")
+async def realtime_stream(
+    request: Request,
+    bus: Annotated[object | None, Depends(get_realtime_snapshot_bus)],
+    topics: str | None = Query(default=None, max_length=512),
+):
+    """Fan out verified domain snapshots to pages that opt into live updates."""
+    if bus is None or not hasattr(bus, "subscribe"):
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "realtime_stream_unavailable", "message": "实时推送总线尚未就绪"},
+        )
+    requested = frozenset(
+        item.strip() for item in (topics or "").split(",") if item.strip()
+    )
+    if not requested:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "realtime_topics_required", "message": "至少指定一个实时主题"},
+        )
+    subscription = bus.subscribe(requested)
+    initial = [bus.latest(kind) for kind in requested]
+    initial = [event for event in initial if event is not None]
+
+    async def events():
+        try:
+            for event in sorted(initial, key=lambda item: item.get("sequence", 0)):
+                yield bus.sse_frame(event)
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    event = await asyncio.to_thread(subscription.get, True, 15)
+                except queue.Empty:
+                    yield ": keep-alive\n\n"
+                    continue
+                yield bus.sse_frame(event)
+        finally:
+            bus.unsubscribe(subscription)
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post("/data-gaps/repair", response_model=DataGapRepairResponse, status_code=202)
@@ -170,6 +225,8 @@ def diagnostics_summary(
         generated_at=generated_at,
         items=tuple(quality_items),
     )
+    realtime_ai = getattr(request.app.state, "realtime_ai_trigger_queue", None)
+    realtime_bus = getattr(request.app.state, "realtime_snapshot_bus", None)
     return {
         "generated_at": generated_at,
         "scheduler_paused": bool(scheduler.status().get("paused", False)),
@@ -184,6 +241,8 @@ def diagnostics_summary(
         "tdx_auto_import": tdx_auto_import.status(),
         "source_conflicts": source_conflicts,
         "quality_matrix": quality_matrix.model_dump(mode="json"),
+        "realtime_ai": realtime_ai.status() if realtime_ai is not None and hasattr(realtime_ai, "status") else {"state": "unavailable"},
+        "realtime_bus": realtime_bus.status() if realtime_bus is not None and hasattr(realtime_bus, "status") else {"state": "unavailable"},
     }
 
 
@@ -270,10 +329,24 @@ def precompute_snapshot(
 
 @router.get("/observability")
 def observability_summary(
+    request: Request,
     store: Annotated[object, Depends(get_observability_store)],
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ):
-    return store.snapshot(limit)
+    snapshot = store.snapshot(limit)
+    alerts = list(snapshot.get("alerts", []))
+    bus = getattr(request.app.state, "realtime_snapshot_bus", None)
+    if bus is not None and hasattr(bus, "status"):
+        metrics = bus.status()
+        if metrics.get("dropped_intermediate", 0) > 0:
+            alerts.append({"severity": "medium", "code": "realtime_bus_dropped", "event_type": "realtime_bus", "detail": f"实时总线已丢弃 {metrics['dropped_intermediate']} 个旧中间帧，最新快照仍保留"})
+    ai_queue = getattr(request.app.state, "realtime_ai_trigger_queue", None)
+    if ai_queue is not None and hasattr(ai_queue, "status"):
+        metrics = ai_queue.status()
+        if metrics.get("pending", 0) >= 10:
+            alerts.append({"severity": "high", "code": "realtime_ai_backlog", "event_type": "realtime_ai", "detail": f"实时 AI 队列积压 {metrics['pending']} 个任务"})
+    snapshot["alerts"] = alerts[:50]
+    return snapshot
 
 
 @router.get("/freshness-policies")
@@ -328,13 +401,14 @@ def capture_replay_snapshot(
     store: Annotated[object, Depends(get_replay_snapshot_store)],
     registry: Annotated[object, Depends(get_shared_snapshot_registry)],
     repository: Annotated[object, Depends(get_operations_repository)],
+    bus: Annotated[object | None, Depends(get_realtime_snapshot_bus)],
 ) -> ReplaySnapshot:
     now = datetime.now(timezone.utc)
     selected_date = request.trading_date or now.astimezone().date()
     if selected_date > now.astimezone().date():
         raise HTTPException(status_code=422, detail="不能为未来日期生成重放快照")
     summary = registry.summary() if registry is not None else []
-    inputs = tuple(
+    input_items = [
         ReplayInputReference(
             domain=item["kind"],
             reference=f"shared-snapshot:{item['kind']}:{item['snapshot_version']}",
@@ -348,7 +422,19 @@ def capture_replay_snapshot(
             ),
         )
         for item in summary
-    )
+    ]
+    ai_event = bus.latest("ai_analysis") if bus is not None and hasattr(bus, "latest") else None
+    ai_payload = ai_event.get("payload") if ai_event is not None else None
+    if isinstance(ai_payload, dict) and ai_payload.get("input_snapshot_hash"):
+        input_items.append(ReplayInputReference(
+            domain="ai_analysis",
+            reference=f"ai-trigger:{ai_payload.get('trigger_id', ai_event.get('event_id', 'unknown'))}",
+            content_hash=ai_payload["input_snapshot_hash"],
+            source=str(ai_payload.get("source") or "unavailable"),
+            observed_at=ai_event.get("observed_at"),
+            status="ready" if ai_payload.get("status") == "ready" else "unavailable",
+        ))
+    inputs = tuple(input_items)
     source_health = repository.source_health_snapshot() or {
         "sources": repository.source_health(20),
     }

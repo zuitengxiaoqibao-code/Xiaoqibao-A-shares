@@ -199,6 +199,7 @@ from qibao_api.operations.precompute_snapshots import (
 from qibao_api.operations.observability import ObservabilityStore
 from qibao_api.operations.shared_snapshots import SharedSnapshotRegistry
 from qibao_api.operations.realtime_snapshot_bus import RealtimeSnapshotBus
+from qibao_api.operations.realtime_ai import RealtimeAITriggerQueue
 from qibao_api.storage.replay_snapshot_store import ReplaySnapshotStore
 from qibao_api.shangshu.scheduler import DailyBriefingScheduler
 from qibao_api.gongbu.backup_service import BackupService
@@ -902,6 +903,14 @@ async def lifespan(application: FastAPI):
                 effective_ai_settings,
                 client=history_client,
             )
+            application.state.realtime_ai_trigger_queue = RealtimeAITriggerQueue(
+                realtime_snapshot_bus,
+                decision_ai_gateway,
+                observability=observability_store,
+                max_workers=1,
+                dedupe_seconds=60,
+            )
+            application.state.realtime_ai_trigger_queue.start()
             premarket_decision = PremarketDecisionService(
                 candidate_service=decision_candidate_source,
                 news_repository=news_repository,
@@ -1367,6 +1376,11 @@ async def lifespan(application: FastAPI):
                     source_health_snapshot_task.cancel()
                     with suppress(asyncio.CancelledError):
                         await source_health_snapshot_task
+                realtime_ai_trigger_queue = getattr(
+                    application.state, "realtime_ai_trigger_queue", None
+                )
+                if realtime_ai_trigger_queue is not None:
+                    realtime_ai_trigger_queue.close()
                 if tdx_auto_import_task is not None:
                     tdx_auto_import_task.cancel()
                     with suppress(asyncio.CancelledError):

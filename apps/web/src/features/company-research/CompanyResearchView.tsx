@@ -6,6 +6,8 @@ import { DailyRefreshStatus } from "../../shared/DailyRefreshStatus";
 import { EvidenceLedger } from "../../shared/evidence/EvidenceLedger";
 import { FieldEvidenceDetails } from "../../shared/evidence/FieldEvidenceDetails";
 import { DataWatermarkStrip } from "../../shared/evidence/DataWatermarkStrip";
+import { RealtimeAIInsight, type RealtimeAIInsightPayload } from "../../shared/RealtimeAIInsight";
+import { consumeRealtimeStream, type RealtimeStreamState } from "../../shared/realtimeStream";
 import { readDailySnapshot, writeDailySnapshot } from "../../shared/dailySnapshotCache";
 import type { LoadProgress, LoadProgressCallback } from "../../shared/fetchJsonWithProgress";
 import type { InstrumentSearchResponse } from "../stock-cockpit/types";
@@ -250,6 +252,8 @@ export function CompanyResearchView({ load, search, selectedSymbol, onSelectSymb
   const [activeSymbol, setActiveSymbol] = useState<string | null>(null);
   const [comparison, setComparison] = useState<CompanyResearchComparison | null>(null);
   const [searching, setSearching] = useState(false);
+  const [researchStreamState, setResearchStreamState] = useState<RealtimeStreamState | "idle">("idle");
+  const [realtimeAIInsight, setRealtimeAIInsight] = useState<RealtimeAIInsightPayload | null>(null);
   const controllers = useRef(new Map<string, AbortController>());
   const initialized = useRef(false);
   const entriesRef = useRef(entries);
@@ -293,6 +297,52 @@ export function CompanyResearchView({ load, search, selectedSymbol, onSelectSymb
     }
   }, []);
   refreshEntryRef.current = refreshEntry;
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void consumeRealtimeStream<CompanyResearchResponse>(
+      ["company_research"],
+      (event) => {
+        const incoming = event.payload;
+        if (!incoming?.symbol || !incoming.research_version?.snapshot_id) return;
+        if (controllers.current.has(incoming.symbol)) return;
+        const current = entriesRef.current.find((item) => item.symbol === incoming.symbol);
+        if (current?.value && Date.parse(incoming.generated_at) <= Date.parse(current.value.generated_at)) return;
+        const stored = writeDailySnapshot("company-research", incoming.symbol, incoming);
+        setEntries((items) => items.map((item) => item.symbol === incoming.symbol ? {
+          ...item,
+          name: incoming.name,
+          state: "ready",
+          value: incoming,
+          cachedAt: stored.cachedAt,
+          updatedAt: stored.cachedAt,
+          refreshing: false,
+          progress: { percent: 100, stage: "complete", detail: "实时研究版本已更新" },
+          refreshError: undefined,
+          error: undefined,
+        } : item));
+      },
+      controller.signal,
+      setResearchStreamState,
+    ).catch(() => {
+      if (!controller.signal.aborted) setResearchStreamState("error");
+    });
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void consumeRealtimeStream<RealtimeAIInsightPayload>(
+      ["ai_analysis"],
+      (event) => {
+        if (event.payload?.kind === "company_research") setRealtimeAIInsight(event.payload);
+      },
+      controller.signal,
+    ).catch(() => {
+      if (!controller.signal.aborted) setRealtimeAIInsight((current) => current);
+    });
+    return () => controller.abort();
+  }, []);
 
   async function addCompany(symbol: string, name = symbol) {
     const normalized = symbol.trim();
@@ -369,7 +419,7 @@ export function CompanyResearchView({ load, search, selectedSymbol, onSelectSymb
   const active = useMemo(() => entries.find((item) => item.symbol === activeSymbol) ?? entries[0] ?? null, [activeSymbol, entries]);
   return <main className="terminal-page company-research-page">
     <header className="research-hero">
-      <div><p className="eyebrow">2–3 YEAR / EVIDENCE-BASED RESEARCH</p><h1>公司研究</h1><p className="financial-note">把财报、F10、估值与反方证据压缩成可核验研究账本；结论由用户独立判断。</p></div>
+      <div><p className="eyebrow">2–3 YEAR / EVIDENCE-BASED RESEARCH</p><h1>公司研究</h1><p className="financial-note">把财报、F10、估值与反方证据压缩成可核验研究账本；结论由用户独立判断。</p><p className="research-stream-status" data-state={researchStreamState}>{researchStreamState === "connected" ? "实时研究推送已连接" : researchStreamState === "error" ? "实时推送不可用 · 当前使用页面刷新回退" : researchStreamState === "closed" ? "实时推送已断开 · 当前使用页面刷新回退" : "正在连接实时研究推送"}</p></div>
       <form className="research-search" onSubmit={submit}>
         <Search size={18} aria-hidden="true" /><label className="visually-hidden" htmlFor="company-research-query">股票代码或名称</label>
         <input id="company-research-query" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="代码或名称，最多比较4只" />
@@ -389,6 +439,7 @@ export function CompanyResearchView({ load, search, selectedSymbol, onSelectSymb
     </span>)}</div>}
     {!active && <section className="research-empty"><Building2 size={24} /><h2>建立公司研究池</h2><p>输入股票代码或名称，系统将读取真实多年财报、当前估值、通达信 F10 与反方风险证据。</p></section>}
     {active && <DailyRefreshStatus label="公司研究" cachedAt={active.cachedAt} loading={active.refreshing} progress={active.progress} error={active.refreshError ?? active.error} updatedAt={active.updatedAt} />}
+    <RealtimeAIInsight insight={realtimeAIInsight} domainLabel="公司研究" />
     {active?.refreshing && <ResearchStageStrip progress={active.progress} />}
     {active?.state === "loading" && <section className="research-empty" aria-busy="true"><LoaderCircle size={24} /><h2>正在建立 {active.symbol} 研究账本</h2><p>财务、估值与 F10 分源加载中；缺失项不会用推测值填补。</p></section>}
     {active?.state === "error" && <section className="research-error" role="alert"><ShieldAlert size={22} /><h2>{active.symbol} 研究数据不可用</h2><p>{active.error}</p></section>}

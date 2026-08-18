@@ -21,9 +21,11 @@ async function flushPromises() {
 function Fixture({
   loader,
   intervalMs = 1000,
+  external,
 }: {
   loader: () => Promise<{ value: string }>;
   intervalMs?: number;
+  external?: { value: string };
 }) {
   const state = useQuantLiveResource({
     loader,
@@ -35,6 +37,7 @@ function Fixture({
     <span data-testid="value">{state.data?.value ?? "empty"}</span>
     <span data-testid="status">{state.status}</span>
     <span data-testid="error">{state.error}</span>
+    {external && <button type="button" onClick={() => state.acceptExternal(external)}>外部快照</button>}
   </div>;
 }
 
@@ -97,6 +100,15 @@ describe("useQuantLiveResource", () => {
     expect(screen.getByTestId("status")).toHaveTextContent("delayed");
     expect(screen.getByTestId("value")).toHaveTextContent("verified");
     expect(screen.getByTestId("error")).toHaveTextContent("加载失败");
+  });
+
+  it("accepts a verified external snapshot without waiting for polling", async () => {
+    const loader = vi.fn(async () => ({ value: "initial" }));
+    render(<Fixture loader={loader} external={{ value: "streamed" }} />);
+    await flushPromises();
+    await act(async () => { screen.getByRole("button", { name: "外部快照" }).click(); });
+    expect(screen.getByTestId("value")).toHaveTextContent("streamed");
+    expect(screen.getByTestId("status")).toHaveTextContent("live");
   });
 
   it("ignores a slow response from the previous loader after selection changes", async () => {

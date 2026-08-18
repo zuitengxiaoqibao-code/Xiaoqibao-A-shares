@@ -1,14 +1,17 @@
 from datetime import UTC, date, datetime
 
+import pytest
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from qibao_api.dependencies import get_backup_service, get_operations_read_model, get_operations_repository, get_scheduler, get_task_progress_registry, get_performance_store, get_tdx_auto_import_monitor
 from qibao_api.gongbu.backup_service import BackupRecord, BackupVerification
-from qibao_api.routes.operations import router
+from qibao_api.routes.operations import realtime_stream, router
 from qibao_api.operations.read_model import OperationsReadModel
 from qibao_api.tasks.progress import TaskProgressRegistry
 from qibao_api.operations.performance_store import PerformanceStore
+from qibao_api.operations.realtime_snapshot_bus import RealtimeSnapshotBus
 
 
 NOW = datetime(2026, 7, 14, 8, 0, tzinfo=UTC)
@@ -142,6 +145,35 @@ def test_operations_route_exposes_source_health_without_raw_errors() -> None:
     assert body["sources"][0]["status"] == "degraded"
     assert body["sources"][0]["latest_trade_date"] == "2026-07-16"
     assert "Traceback" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_operations_realtime_stream_requires_topics_and_sends_latest_snapshot() -> None:
+    bus = RealtimeSnapshotBus()
+    bus.publish(
+        "quant_strategy",
+        {"status": "partial", "candidates": []},
+        observed_at=NOW,
+        source="tdx-local",
+        freshness="live",
+    )
+    with pytest.raises(Exception) as missing:
+        await realtime_stream(type("Request", (), {})(), bus, None)
+    assert missing.value.detail["code"] == "realtime_topics_required"
+
+    class Request:
+        calls = 0
+
+        async def is_disconnected(self):
+            self.calls += 1
+            return self.calls > 1
+
+    response = await realtime_stream(Request(), bus, "quant_strategy")
+    chunks = [chunk async for chunk in response.body_iterator]
+    body = "".join(chunk.decode() if isinstance(chunk, bytes) else chunk for chunk in chunks)
+    assert "event: quant_strategy" in body
+    assert '"status":"partial"' in body
+    assert bus._subscribers == {}
 
 
 def test_operations_status_exposes_inventory_without_running_scans(tmp_path) -> None:

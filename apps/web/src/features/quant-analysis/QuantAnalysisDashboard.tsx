@@ -17,11 +17,13 @@ import { TdxFormulaPanel } from "./TdxFormulaPanel";
 import { WalkForwardEvidenceStrip } from "./WalkForwardEvidenceStrip";
 import { StockEventKline } from "../stock-timeline/StockEventKline";
 import { DataWatermarkStrip } from "../../shared/evidence/DataWatermarkStrip";
+import { RealtimeAIInsight, type RealtimeAIInsightPayload } from "../../shared/RealtimeAIInsight";
 import { buildFactorOption } from "../../shared/visualization/chartOptions";
 import { chartTheme } from "../../shared/visualization/chartTheme";
 import type { StockTimelineLoader } from "../stock-timeline/types";
 import { useQuantLiveResource } from "./useQuantLiveRefresh";
 import { retainReadyStrategySnapshot } from "./strategySnapshot";
+import { consumeRealtimeStream, type RealtimeStreamState } from "../../shared/realtimeStream";
 import { equityPoints, factorRadar, signalMetrics } from "./metrics";
 import type {
   DecisionJournalCreator,
@@ -252,6 +254,45 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     mergeData: retainReadyStrategySnapshot,
   });
   const strategyDashboard = strategyResource.data;
+  const strategyRef = useRef(strategyDashboard);
+  strategyRef.current = strategyDashboard;
+  const [strategyStreamState, setStrategyStreamState] = useState<RealtimeStreamState | "idle">("idle");
+  const [realtimeAIInsight, setRealtimeAIInsight] = useState<RealtimeAIInsightPayload | null>(null);
+  useEffect(() => {
+    if (!loadQuantStrategy) {
+      setStrategyStreamState("idle");
+      return undefined;
+    }
+    const controller = new AbortController();
+    void consumeRealtimeStream<NonNullable<typeof strategyDashboard>>(
+      ["quant_strategy"],
+      (event) => {
+        const incoming = event.payload;
+        if (!incoming || incoming.formula_version !== "a-share-short-strategy-v2.0") return;
+        const current = strategyRef.current;
+        if (current && current.as_of === incoming.as_of && Date.parse(incoming.generated_at) <= Date.parse(current.generated_at)) return;
+        strategyResource.acceptExternal(incoming);
+      },
+      controller.signal,
+      setStrategyStreamState,
+    ).catch(() => {
+      if (!controller.signal.aborted) setStrategyStreamState("error");
+    });
+    return () => controller.abort();
+  }, [loadQuantStrategy, strategyResource.acceptExternal]);
+  useEffect(() => {
+    const controller = new AbortController();
+    void consumeRealtimeStream<RealtimeAIInsightPayload>(
+      ["ai_analysis"],
+      (event) => {
+        if (event.payload?.kind === "quant_strategy") setRealtimeAIInsight(event.payload);
+      },
+      controller.signal,
+    ).catch(() => {
+      if (!controller.signal.aborted) setRealtimeAIInsight((current) => current);
+    });
+    return () => controller.abort();
+  }, []);
   const shadowLoader = useCallback(
     () => loadQuantShadowDecisions ? loadQuantShadowDecisions(50) : Promise.resolve([]),
     [loadQuantShadowDecisions],
@@ -388,6 +429,7 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
       strategy={strategyDashboard}
       strategyStatus={strategyResource.status}
       strategyEnabled={Boolean(loadQuantStrategy)}
+      strategyStreamState={strategyStreamState}
     />
     {strategyDashboard && <DataWatermarkStrip
       status={strategyDashboard.status}
@@ -455,6 +497,7 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
       loading={strategyResource.status === "loading" && !strategyDashboard}
       error={strategyResource.error}
     />}
+    <RealtimeAIInsight insight={realtimeAIInsight} domainLabel="量化分析" />
     {loadQuantShadowDecisions && <QuantShadowLedgerPanel
       records={shadowResource.data ?? []}
       loading={shadowResource.status === "loading" && !shadowResource.data}

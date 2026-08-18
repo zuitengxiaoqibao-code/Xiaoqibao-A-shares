@@ -7,8 +7,10 @@ from qibao_api.dependencies import (
     get_operations_repository,
     get_replay_snapshot_store,
     get_shared_snapshot_registry,
+    get_realtime_snapshot_bus,
 )
 from qibao_api.routes.operations import router
+from qibao_api.operations.realtime_snapshot_bus import RealtimeSnapshotBus
 from qibao_api.storage.replay_snapshot_store import ReplaySnapshotStore
 
 
@@ -43,6 +45,13 @@ def test_replay_snapshot_capture_and_query(tmp_path) -> None:
     app.dependency_overrides[get_replay_snapshot_store] = lambda: store
     app.dependency_overrides[get_shared_snapshot_registry] = lambda: Registry()
     app.dependency_overrides[get_operations_repository] = lambda: Sources()
+    bus = RealtimeSnapshotBus()
+    bus.publish(
+        "ai_analysis",
+        {"trigger_id": "trigger-1", "input_snapshot_hash": "b" * 64, "status": "unavailable"},
+        observed_at=NOW, source="unconfigured", freshness="live",
+    )
+    app.dependency_overrides[get_realtime_snapshot_bus] = lambda: bus
     client = TestClient(app)
 
     captured = client.post(
@@ -56,4 +65,4 @@ def test_replay_snapshot_capture_and_query(tmp_path) -> None:
     assert listed.status_code == 200
     assert len(listed.json()["snapshots"]) == 1
     assert listed.json()["snapshots"][0]["inputs"][0]["source"] == "tdx-local"
-
+    assert listed.json()["snapshots"][0]["inputs"][1]["domain"] == "ai_analysis"
