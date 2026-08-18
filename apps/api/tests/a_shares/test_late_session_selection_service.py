@@ -149,6 +149,32 @@ def test_service_enrichment_uses_full_market_batches() -> None:
     assert tuple(map(len, tencent.batches)) == (320, 1)
 
 
+def test_service_circuit_breaker_stops_repeating_failed_enrichment_calls() -> None:
+    class Tencent:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def fetch_stocks(self, _symbols):
+            self.calls += 1
+            raise OSError("source unavailable")
+
+    tencent = Tencent()
+    service = LateSessionSelectionService(
+        local_market_source=_LocalSource.__new__(_LocalSource),
+        bar_repository=_Bars(),
+        instrument_directory=SimpleNamespace(resolve=lambda _symbol: None),
+        tencent_source=tencent,
+    )
+    quotes = (SimpleNamespace(symbol="600000", turnover_rate=None, market_cap_yi=None),)
+    base = datetime(2026, 8, 17, 7, 1, tzinfo=ZoneInfo("UTC"))
+
+    for index in range(4):
+        service._enrich(quotes, base.replace(second=index * 6))
+
+    assert tencent.calls == 3
+    assert service.source_circuit_breaker.status()["state"] == "open"
+
+
 def test_service_skips_reenrichment_when_snapshot_has_verified_fields() -> None:
     class Tencent:
         def fetch_stocks(self, _symbols):
@@ -329,6 +355,7 @@ def test_post_close_keeps_the_last_tail_window_snapshot() -> None:
 
     assert result.phase == "post_close"
     assert result.candidate_count == 1
+    assert result.next_refresh_ms == 60000
 
 
 def test_service_publishes_only_meaningful_candidate_lifecycle_changes() -> None:

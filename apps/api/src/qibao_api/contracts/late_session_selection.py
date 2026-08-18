@@ -78,6 +78,8 @@ class LateSessionQuote(BaseModel):
     intraday_average_price: Decimal | None = Field(default=None, gt=0)
     observed_at: AwareDatetime
     source: str = Field(min_length=1)
+    field_sources: dict[str, str] = Field(default_factory=dict)
+    field_conflicts: tuple[str, ...] = ()
 
 
 class LateSessionRuleResult(BaseModel):

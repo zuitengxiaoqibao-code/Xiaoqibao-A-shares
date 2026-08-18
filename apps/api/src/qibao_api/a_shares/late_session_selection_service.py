@@ -18,6 +18,9 @@ from qibao_api.contracts.late_session_selection import (
     LateSessionSelectionResponse,
 )
 from qibao_api.gongbu.tdx_local_overview import derive_intraday_average_price
+from qibao_api.operations.field_arbitration import FieldArbitrator, FieldEvidence
+from qibao_api.operations.refresh_policy import RefreshPolicy
+from qibao_api.operations.source_circuit_breaker import SourceCircuitBreaker
 
 
 CHINA_TZ = ZoneInfo("Asia/Shanghai")
@@ -25,7 +28,7 @@ REFRESH_INTERVAL_MS = 1000
 
 
 class LateSessionSelectionService:
-    def __init__(self, *, local_market_source, bar_repository, instrument_directory, tencent_source=None, market_overview_service=None, factor_cache: LateSessionFactorCache | None = None, lifecycle_tracker: LateSessionLifecycleTracker | None = None, realtime_snapshot_bus=None, clock: Callable[[], datetime] | None = None) -> None:
+    def __init__(self, *, local_market_source, bar_repository, instrument_directory, tencent_source=None, market_overview_service=None, factor_cache: LateSessionFactorCache | None = None, lifecycle_tracker: LateSessionLifecycleTracker | None = None, refresh_policy: RefreshPolicy | None = None, field_arbitrator: FieldArbitrator | None = None, source_circuit_breaker: SourceCircuitBreaker | None = None, realtime_snapshot_bus=None, clock: Callable[[], datetime] | None = None) -> None:
         self.local_market_source = local_market_source
         self.bar_repository = bar_repository
         self.instrument_directory = instrument_directory
@@ -33,6 +36,9 @@ class LateSessionSelectionService:
         self.market_overview_service = market_overview_service
         self.factor_cache = factor_cache or LateSessionFactorCache()
         self.lifecycle_tracker = lifecycle_tracker or LateSessionLifecycleTracker()
+        self.refresh_policy = refresh_policy or RefreshPolicy()
+        self.field_arbitrator = field_arbitrator or FieldArbitrator()
+        self.source_circuit_breaker = source_circuit_breaker or SourceCircuitBreaker()
         self.realtime_snapshot_bus = realtime_snapshot_bus
         self._published_fingerprint: str | None = None
         self.clock = clock or (lambda: datetime.now(timezone.utc))
@@ -81,6 +87,25 @@ class LateSessionSelectionService:
         evaluated: list[LateSessionCandidateResult] = []
         for raw in quotes:
             data = enriched.get(raw.symbol, {})
+            field_conflicts: list[str] = []
+            turnover_rate, turnover_source = self._resolve_quote_field(
+                "turnover_rate",
+                getattr(raw, "turnover_rate", None),
+                getattr(raw, "observed_at", None) or now,
+                data.get("turnover_rate"),
+                data.get("observed_at"),
+                now,
+                field_conflicts,
+            )
+            market_cap_yi, market_cap_source = self._resolve_quote_field(
+                "market_cap_yi",
+                getattr(raw, "market_cap_yi", None),
+                getattr(raw, "observed_at", None) or now,
+                data.get("market_cap_yi"),
+                data.get("observed_at"),
+                now,
+                field_conflicts,
+            )
             explicit_average = data.get("intraday_average_price") or getattr(raw, "intraday_average_price", None)
             average = explicit_average or derive_intraday_average_price(
                 amount_wan=getattr(raw, "amount_wan", None),
@@ -101,8 +126,8 @@ class LateSessionSelectionService:
                 previous_close=raw.previous_close,
                 change_percent=raw.change_percent,
                 volume_ratio=volume_ratio,
-                turnover_rate=data.get("turnover_rate") or getattr(raw, "turnover_rate", None),
-                market_cap_yi=data.get("market_cap_yi") or raw.market_cap_yi,
+                turnover_rate=turnover_rate,
+                market_cap_yi=market_cap_yi,
                 twenty_day_limit_up_count=(
                     slow.twenty_day_limit_up_count
                     if slow is not None
@@ -111,6 +136,13 @@ class LateSessionSelectionService:
                 intraday_average_price=average,
                 observed_at=raw.observed_at or now,
                 source=("tdx-local-realtime" + ("+tencent" if data else "") + ("+vwap" if explicit_average is None and average is not None else "")),
+                field_sources={
+                    key: value for key, value in (
+                        ("turnover_rate", turnover_source),
+                        ("market_cap_yi", market_cap_source),
+                    ) if value is not None
+                },
+                field_conflicts=tuple(field_conflicts),
             )
             result = evaluate_candidate(
                 quote,
@@ -162,6 +194,9 @@ class LateSessionSelectionService:
         limitations: list[str] = []
         if any(item.quote.intraday_average_price is None for item in evaluated):
             limitations.append("本地快照未提供真实分时黄线，相关规则保持不可用")
+        conflicts = sorted({field for item in evaluated for field in item.quote.field_conflicts})
+        if conflicts:
+            limitations.append(f"真实来源字段冲突：{'、'.join(conflicts)}；已阻止严格候选")
         if not self.tencent_source:
             limitations.append("未接入腾讯补充字段，换手率和市值可能不可用")
         if phase == "pre_screen":
@@ -183,8 +218,8 @@ class LateSessionSelectionService:
             server_time=local_now,
             phase=phase,
             monitor_stage=classify_monitor_stage(local_now),
-            refresh_interval_ms=REFRESH_INTERVAL_MS if phase == "live_monitor" else 15000,
-            next_refresh_ms=REFRESH_INTERVAL_MS if phase == "live_monitor" else 15000,
+            refresh_interval_ms=self._refresh_interval(phase),
+            next_refresh_ms=self._refresh_interval(phase),
             source_quality=source_quality,
             universe_count=len(quotes),
             quote_count=len(evaluated),
@@ -253,7 +288,7 @@ class LateSessionSelectionService:
             return f"已扫描全市场 {quotes_count} 只，当前规则没有产生候选；限制原因：{ '；'.join(limitations) }"
         return f"已扫描全市场 {quotes_count} 只，但当前规则没有股票满足全部条件"
 
-    def _enrich(self, quotes: tuple[object, ...], now: datetime) -> dict[str, dict[str, Decimal | None]]:
+    def _enrich(self, quotes: tuple[object, ...], now: datetime) -> dict[str, dict[str, object]]:
         if self.tencent_source is None:
             return {}
         if all(
@@ -264,24 +299,63 @@ class LateSessionSelectionService:
             return {}
         if self._enrichment_observed_at is not None and (now - self._enrichment_observed_at).total_seconds() < 5:
             return self._enrichment
-        result: dict[str, dict[str, Decimal | None]] = {}
+        result: dict[str, dict[str, object]] = {}
         symbols = [quote.symbol for quote in quotes]
         for start in range(0, len(symbols), 320):
             batch = tuple(symbols[start:start + 320])
+            if not self.source_circuit_breaker.before_request():
+                break
             try:
                 rows, _warnings = self.tencent_source.fetch_stocks(batch)
             except Exception:
+                self.source_circuit_breaker.record_failure()
                 continue
+            self.source_circuit_breaker.record_success()
             for row in rows:
                 result[row.symbol] = {
                     "market_cap_yi": row.market_cap_yi,
                     "turnover_rate": row.turnover_rate,
                     "volume_ratio": None,
                     "intraday_average_price": None,
+                    "observed_at": getattr(row, "observed_at", now),
                 }
         self._enrichment = result
         self._enrichment_observed_at = now
         return result
+
+    def _resolve_quote_field(
+        self,
+        field: str,
+        raw_value,
+        raw_observed_at: datetime,
+        enriched_value,
+        enriched_observed_at,
+        now: datetime,
+        conflicts: list[str],
+    ):
+        evidence = [FieldEvidence(
+            value=raw_value,
+            source="tdx-local-realtime",
+            observed_at=raw_observed_at,
+            priority=10,
+            max_age_seconds=300,
+        )]
+        if enriched_observed_at is not None or enriched_value is not None:
+            evidence.append(FieldEvidence(
+                value=enriched_value,
+                source="tencent-realtime",
+                observed_at=enriched_observed_at or now,
+                priority=20,
+                max_age_seconds=300,
+            ))
+        resolution = self.field_arbitrator.select(field, tuple(evidence), now=now)
+        if resolution.status == "conflicted":
+            conflicts.append(field)
+        return resolution.value, resolution.source
+
+    def _refresh_interval(self, phase: str) -> int:
+        policy_phase = "intraday" if phase == "live_monitor" else "post_close" if phase == "post_close" else "pre_market"
+        return self.refresh_policy.interval_ms("late_session_candidates", phase=policy_phase, visible=True) or 60_000
 
     def _twenty_day_limit_count(self, symbol: str, as_of: date) -> int | None:
         try:
