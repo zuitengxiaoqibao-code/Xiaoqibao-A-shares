@@ -1,6 +1,6 @@
 import type { EChartsOption } from "echarts";
 import { AlertTriangle, CheckCircle2, ExternalLink, Newspaper, RefreshCw } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { QuantChart } from "../quant-analysis/QuantChart";
 import { chartTheme } from "../../shared/visualization/chartTheme";
@@ -10,6 +10,7 @@ import type {
   StockTimelineLoader,
   StockTimelineResponse,
 } from "./types";
+import { consumeRealtimeStream, type RealtimeStreamState } from "../../shared/realtimeStream";
 
 
 const UP_COLOR = chartTheme.upColor;
@@ -320,6 +321,14 @@ function formatEventDate(value: string): string {
   }).format(new Date(value)).replace("/", "-");
 }
 
+function chinaToday(): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    year: "numeric", month: "2-digit", day: "2-digit", timeZone: "Asia/Shanghai",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((item) => [item.type, item.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 function eventTitle(event: StockTimelineEvent): string {
   const source = event.headline.trim() || event.label.trim() || event.themes[0]?.trim() || "事件标题待补充";
   return source.replace(/\s+/g, " ");
@@ -345,7 +354,12 @@ export function StockEventKline({
   const [data, setData] = useState<StockTimelineResponse | null>(() => cache.get(cacheKey) ?? null);
   const [loading, setLoading] = useState(!data);
   const [error, setError] = useState("");
+  const [realtimeState, setRealtimeState] = useState<RealtimeStreamState | "idle">("idle");
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  const dataRef = useRef<StockTimelineResponse | null>(data);
+  const liveRequestRef = useRef(false);
+  const liveControllerRef = useRef<AbortController | null>(null);
+  dataRef.current = data;
   const [chartEventLimit, setChartEventLimit] = useState(() => (
     typeof window !== "undefined"
       && typeof window.matchMedia === "function"
@@ -389,6 +403,78 @@ export function StockEventKline({
     return () => controller.abort();
   }, [asOf, cacheKey, load, refreshToken, symbol]);
 
+  const liveSelection = !asOf || asOf === chinaToday();
+
+  const refreshLive = useCallback(() => {
+    if (!liveSelection || liveRequestRef.current) return;
+    liveRequestRef.current = true;
+    const controller = new AbortController();
+    liveControllerRef.current = controller;
+    void load(symbol, asOf, controller.signal)
+      .then((result) => {
+        if (controller.signal.aborted) return;
+        const current = dataRef.current;
+        if (current && result.cutoff < current.cutoff) return;
+        cache.set(cacheKey, result);
+        setData(result);
+        setError("");
+      })
+      .catch((caught) => {
+        if (!controller.signal.aborted) setError(caught instanceof Error ? caught.message : "事件 K 线实时更新暂不可用");
+      })
+      .finally(() => {
+        if (liveControllerRef.current === controller) {
+          liveControllerRef.current = null;
+          liveRequestRef.current = false;
+        }
+      });
+  }, [asOf, cacheKey, liveSelection, load, symbol]);
+
+  useEffect(() => {
+    if (!liveSelection) {
+      setRealtimeState("idle");
+      return undefined;
+    }
+    const controller = new AbortController();
+    void consumeRealtimeStream<{ status?: string }>(
+      ["news_events", "market_overview"],
+      (event) => {
+        if (event.kind === "news_events" || event.kind === "market_overview") refreshLive();
+      },
+      controller.signal,
+      setRealtimeState,
+    ).catch(() => {
+      if (!controller.signal.aborted) setRealtimeState("error");
+    });
+    return () => controller.abort();
+  }, [liveSelection, refreshLive]);
+
+  useEffect(() => {
+    if (!liveSelection) return undefined;
+    let timer: number | undefined;
+    const stop = () => {
+      if (timer !== undefined) window.clearInterval(timer);
+      timer = undefined;
+    };
+    const start = () => {
+      stop();
+      if (document.visibilityState !== "hidden") timer = window.setInterval(refreshLive, 5_000);
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") stop();
+      else { refreshLive(); start(); }
+    };
+    start();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      stop();
+      liveControllerRef.current?.abort();
+      liveControllerRef.current = null;
+      liveRequestRef.current = false;
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [liveSelection, refreshLive]);
+
   const option = useMemo(
     () => data && data.bars.length ? stockTimelineOption(data, selectedEventId, chartEventLimit) : null,
     [chartEventLimit, data, selectedEventId],
@@ -421,7 +507,7 @@ export function StockEventKline({
   return <section className="terminal-panel stock-event-kline" aria-label="个股新闻与热点事件 K 线">
     <header className="stock-event-kline-header">
       <div><span className="event-kline-icon"><Newspaper size={18} /></span><div><p>NEWS / PRICE EVIDENCE</p><h2>事件 K 线</h2></div></div>
-      <div className="event-kline-legend"><span className="up">红涨</span><span className="down">绿跌</span><span className="uncertain">灰色·方向待核验</span>{loading && <RefreshCw className="spin" size={14} />}</div>
+      <div className="event-kline-legend"><span className="up">红涨</span><span className="down">绿跌</span><span className="uncertain">灰色·方向待核验</span>{liveSelection && <span className={`stock-event-live-state ${realtimeState}`}>{realtimeState === "connected" ? "实时联动" : realtimeState === "error" ? "实时断线·轮询保底" : "连接实时联动"}</span>}{loading && <RefreshCw className="spin" size={14} />}</div>
     </header>
     {error && !data ? <div className="stock-timeline-state error" role="alert"><AlertTriangle size={18} /><b>事件 K 线暂不可用</b><span>{error}</span></div> : !data || data.status === "unavailable" || !option ? <div className="stock-timeline-state"><AlertTriangle size={18} /><b>本地日线尚未就绪</b><span>不会使用示例行情补位</span></div> : <>
       <div className="event-category-legend" aria-label="事件归属色图例">

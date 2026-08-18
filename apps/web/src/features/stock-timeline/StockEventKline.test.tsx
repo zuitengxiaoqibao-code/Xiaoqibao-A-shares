@@ -214,4 +214,33 @@ describe("StockEventKline", () => {
 
     await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
   });
+
+  it("refreshes the live timeline when a verified realtime snapshot arrives", async () => {
+    const load = vi.fn().mockResolvedValue(timeline());
+    const encoder = new TextEncoder();
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => {
+      const frame = "data: " + JSON.stringify({
+        event_id: "market-overview-2", kind: "market_overview", sequence: 2,
+        observed_at: "2026-08-18T10:01:00Z", source: "tencent-index-minute",
+        freshness: "live", payload: { status: "ready" },
+      }) + "\n\n";
+      return {
+        ok: true,
+        status: 200,
+        body: {
+          getReader: () => ({
+            read: vi.fn()
+              .mockResolvedValueOnce({ done: false, value: encoder.encode(frame) })
+              .mockResolvedValue({ done: true, value: undefined }),
+            releaseLock: vi.fn(),
+          }),
+        },
+      };
+    }));
+
+    render(<StockEventKline symbol="600519" load={load} />);
+
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+    vi.unstubAllGlobals();
+  });
 });

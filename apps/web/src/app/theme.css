@@ -1932,6 +1932,8 @@ body { font-size: 14px; }
 .event-kline-legend .up { color: var(--event-up); }
 .event-kline-legend .down { color: var(--event-down); }
 .event-kline-legend .uncertain { color: var(--event-uncertain); }
+.event-kline-legend .stock-event-live-state { color: #75dcff; border-color: rgba(117, 220, 255, .55); }
+.event-kline-legend .stock-event-live-state.error { color: #ffb0a8; border-color: rgba(255, 99, 88, .55); }
 .event-kline-legend svg { color: var(--event-cyan); }
 .stock-event-index {
   position: relative;
