@@ -281,6 +281,52 @@ def test_service_reuses_slow_history_factors_across_same_day_refreshes() -> None
     assert bars.calls == 1
 
 
+def test_live_monitor_reduces_full_market_to_bounded_pool_and_keeps_strict_match() -> None:
+    observed_at = datetime(2026, 8, 17, 14, 31, tzinfo=ZoneInfo("Asia/Shanghai"))
+    quotes = tuple(
+        TdxRealtimeQuote(
+            symbol=f"{600000 + index:06d}",
+            exchange_code=f"{600000 + index:06d}.SH",
+            name=f"测试{index}",
+            previous_close=Decimal("10"),
+            price=Decimal("10.50") if index == 399 else Decimal("10.90"),
+            high=Decimal("10.90"),
+            low=Decimal("9.90"),
+            open=Decimal("10"),
+            volume=Decimal("300"),
+            amount_wan=Decimal("31.50"),
+            observed_at=observed_at,
+            market_cap_yi=Decimal("100"),
+            turnover_rate=Decimal("10"),
+            intraday_average_price=Decimal("10.20"),
+        )
+        for index in range(400)
+    )
+
+    class Source:
+        def current_quotes(self):
+            return quotes
+
+    class BatchBars:
+        def latest_many(self, symbols, limit, as_of):
+            del limit, as_of
+            return {symbol: list(_LimitUpBars().latest(symbol, limit=21)) for symbol in symbols}
+
+    service = LateSessionSelectionService(
+        local_market_source=Source(),
+        bar_repository=BatchBars(),
+        instrument_directory=SimpleNamespace(resolve=lambda _symbol: None),
+        clock=lambda: datetime(2026, 8, 17, 6, 31, tzinfo=ZoneInfo("UTC")),
+    )
+
+    result = service.current(limit=20)
+
+    assert result.universe_count == 400
+    assert result.monitor_pool_count == 300
+    assert result.quote_count == 300
+    assert any(item.quote.symbol == "600399" for item in result.candidates)
+
+
 def test_service_returns_truthful_observation_candidates_when_only_real_fields_are_missing() -> None:
     quote = TdxRealtimeQuote(
         symbol="600000",

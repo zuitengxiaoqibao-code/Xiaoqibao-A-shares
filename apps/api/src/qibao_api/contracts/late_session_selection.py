@@ -155,6 +155,7 @@ class LateSessionSelectionResponse(BaseModel):
     next_refresh_ms: int = Field(ge=0)
     source_quality: Literal["ready", "partial", "stale", "unavailable"]
     universe_count: int = Field(ge=0)
+    monitor_pool_count: int = Field(default=0, ge=0)
     quote_count: int = Field(ge=0)
     candidate_count: int = Field(ge=0)
     rules: tuple[LateSessionRuleResult, ...]

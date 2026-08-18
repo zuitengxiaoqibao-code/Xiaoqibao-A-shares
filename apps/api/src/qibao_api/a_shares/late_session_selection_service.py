@@ -85,8 +85,15 @@ class LateSessionSelectionService:
             symbols,
             lambda requested: self._history_windows(requested, trading_date),
         ).factors
+        evaluation_quotes = self._reduce_monitor_pool(
+            quotes,
+            enriched,
+            slow_factors,
+            settings,
+            maximum=300,
+        ) if phase in {"live_monitor", "post_close"} else quotes
         evaluated: list[LateSessionCandidateResult] = []
-        for raw in quotes:
+        for raw in evaluation_quotes:
             data = enriched.get(raw.symbol, {})
             field_conflicts: list[str] = []
             turnover_rate, turnover_source = self._resolve_quote_field(
@@ -204,6 +211,8 @@ class LateSessionSelectionService:
             limitations.append("14:30前展示六项条件预筛结果，时间闸门和尾盘行为需实时窗口确认")
         if phase == "post_close":
             limitations.append("15:00后停止高频刷新，结果为收盘冻结快照")
+        if len(evaluation_quotes) < len(quotes):
+            limitations.append(f"全市场 {len(quotes)} 只已缩减为 {len(evaluation_quotes)} 只尾盘实时监控池")
         if has_observation_candidates:
             limitations.append("严格候选为空；当前展示通过时间、涨幅、换手率和市值核心条件的观察候选，未通过与待补齐项已逐股标注")
         source_evidence = ["通达信本地全市场实时快照", "本地日线仓储20交易日窗口"]
@@ -223,6 +232,7 @@ class LateSessionSelectionService:
             next_refresh_ms=self._refresh_interval(phase),
             source_quality=source_quality,
             universe_count=len(quotes),
+            monitor_pool_count=len(evaluation_quotes),
             quote_count=len(evaluated),
             candidate_count=len(active_candidates),
             rules=self._summary_rules(evaluated, settings),
@@ -237,6 +247,57 @@ class LateSessionSelectionService:
             limitations=tuple(limitations),
         )
         return self._publish_if_changed(response)
+
+    def _reduce_monitor_pool(
+        self,
+        quotes: tuple[object, ...],
+        enriched: dict[str, dict[str, object]],
+        slow_factors,
+        settings: LateSessionRuleSettings,
+        *,
+        maximum: int,
+    ) -> tuple[object, ...]:
+        if len(quotes) <= maximum:
+            return quotes
+
+        def score(raw) -> tuple[int, str]:
+            points = 0
+            change = raw.change_percent
+            if not settings.change_enabled or settings.change_min <= change <= settings.change_max:
+                points += 100
+            elif settings.change_min - Decimal("1.5") <= change <= settings.change_max + Decimal("1.5"):
+                points += 30
+            data = enriched.get(raw.symbol, {})
+            turnover = getattr(raw, "turnover_rate", None) or data.get("turnover_rate")
+            if not settings.turnover_rate_enabled or (
+                turnover is not None and settings.turnover_rate_min <= turnover <= settings.turnover_rate_max
+            ):
+                points += 20
+            market_cap = getattr(raw, "market_cap_yi", None) or data.get("market_cap_yi")
+            if not settings.market_cap_enabled or (
+                market_cap is not None and settings.market_cap_min <= market_cap <= settings.market_cap_max
+            ):
+                points += 20
+            slow = slow_factors.get(raw.symbol)
+            volume_ratio = self._volume_ratio_from_baseline(raw.volume, slow.volume_baseline_5d) if slow is not None else None
+            if not settings.volume_ratio_enabled or (
+                volume_ratio is not None and settings.volume_ratio_min <= volume_ratio <= settings.volume_ratio_max
+            ):
+                points += 15
+            if not settings.twenty_day_limit_up_enabled or (
+                slow is not None
+                and slow.twenty_day_limit_up_count is not None
+                and slow.twenty_day_limit_up_count >= settings.twenty_day_limit_up_min
+                and (settings.twenty_day_limit_up_max is None or slow.twenty_day_limit_up_count <= settings.twenty_day_limit_up_max)
+            ):
+                points += 10
+            average = getattr(raw, "intraday_average_price", None)
+            if not settings.intraday_average_enabled or average is not None:
+                points += 5
+            return -points, raw.symbol
+
+        ranked = sorted(quotes, key=score)
+        return tuple(ranked[:maximum])
 
     def _publish_if_changed(self, response: LateSessionSelectionResponse) -> LateSessionSelectionResponse:
         payload = response.model_dump(mode="json")
@@ -481,4 +542,4 @@ class LateSessionSelectionService:
     def _unavailable(trading_date: date, now: datetime, phase: str, detail: str) -> LateSessionSelectionResponse:
         # The local snapshot may still be warming up. Retry quickly so the
         # page does not remain on a misleading 0/0 state for 15 seconds.
-        return LateSessionSelectionResponse(status="unavailable", trading_date=trading_date, server_time=now, phase=phase, monitor_stage=classify_monitor_stage(now), refresh_interval_ms=1000, next_refresh_ms=1000, source_quality="unavailable", universe_count=0, quote_count=0, candidate_count=0, rules=(), data_state="no_market_data", no_data_reason=detail, behaviors=(), limitations=(detail,))
+        return LateSessionSelectionResponse(status="unavailable", trading_date=trading_date, server_time=now, phase=phase, monitor_stage=classify_monitor_stage(now), refresh_interval_ms=1000, next_refresh_ms=1000, source_quality="unavailable", universe_count=0, monitor_pool_count=0, quote_count=0, candidate_count=0, rules=(), data_state="no_market_data", no_data_reason=detail, behaviors=(), limitations=(detail,))

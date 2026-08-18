@@ -91,6 +91,7 @@ export type LateSessionSelectionResponse = {
   next_refresh_ms: number;
   source_quality: "ready" | "partial" | "stale" | "unavailable";
   universe_count: number;
+  monitor_pool_count: number;
   quote_count: number;
   candidate_count: number;
   rules: LateSessionRule[];
