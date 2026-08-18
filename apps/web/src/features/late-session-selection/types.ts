@@ -62,6 +62,15 @@ export type LateSessionCandidate = {
   rules: LateSessionRule[];
   behavior_tags: string[];
   risk_notes: string[];
+  lifecycle_status: "strict_passed" | "near_match" | "data_pending" | "invalidated";
+  first_seen_at: string | null;
+  last_updated_at: string | null;
+  continuous_hits: number;
+  continuous_seconds: number;
+  trigger_count: number;
+  rule_bitmap: string;
+  latest_change: string | null;
+  invalidation_reason: string | null;
 };
 
 export type LateSessionBehavior = {
@@ -77,6 +86,7 @@ export type LateSessionSelectionResponse = {
   trading_date: string;
   server_time: string;
   phase: "pre_screen" | "live_monitor" | "post_close";
+  monitor_stage: "idle" | "precompute" | "reduce_pool" | "monitor" | "confirm" | "closing_auction" | "frozen";
   refresh_interval_ms: number;
   next_refresh_ms: number;
   source_quality: "ready" | "partial" | "stale" | "unavailable";
@@ -89,6 +99,7 @@ export type LateSessionSelectionResponse = {
   settings: LateSessionRuleSettings;
   default_settings: LateSessionRuleSettings;
   candidates: LateSessionCandidate[];
+  invalidated_candidates: LateSessionCandidate[];
   behaviors: LateSessionBehavior[];
   source_evidence: string[];
   limitations: string[];

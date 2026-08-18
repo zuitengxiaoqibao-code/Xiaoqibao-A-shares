@@ -5,13 +5,13 @@ import type { LateSessionAIAnalysis } from "./types";
 
 const response = {
   status: "partial" as const, trading_date: "2026-08-17", server_time: "2026-08-17T06:30:00Z",
-  phase: "live_monitor" as const, refresh_interval_ms: 1000, next_refresh_ms: 1000,
+  phase: "live_monitor" as const, monitor_stage: "monitor" as const, refresh_interval_ms: 1000, next_refresh_ms: 1000,
   source_quality: "partial" as const, universe_count: 1, quote_count: 1, candidate_count: 0,
   data_state: "no_candidates" as const, no_data_reason: "全市场已扫描 1 只，但分时黄线不可用导致严格筛选无法完成",
   rules: [{ key: "change_percent", label: "涨幅", actual: "5", target: "3%–6%", status: "passed" as const, detail: "实际 5" }],
   settings: { time_enabled: true, start_time: "14:30:00", end_time: "15:00:00", change_enabled: true, change_min: "3", change_max: "6", volume_ratio_enabled: true, volume_ratio_min: "2", volume_ratio_max: "5", turnover_rate_enabled: true, turnover_rate_min: "6", turnover_rate_max: "15", market_cap_enabled: true, market_cap_min: "60", market_cap_max: "300", twenty_day_limit_up_enabled: true, twenty_day_limit_up_min: 1, twenty_day_limit_up_max: null, intraday_average_enabled: true, intraday_relation: "above" as const },
   default_settings: { time_enabled: true, start_time: "14:30:00", end_time: "15:00:00", change_enabled: true, change_min: "3", change_max: "6", volume_ratio_enabled: true, volume_ratio_min: "2", volume_ratio_max: "5", turnover_rate_enabled: true, turnover_rate_min: "6", turnover_rate_max: "15", market_cap_enabled: true, market_cap_min: "60", market_cap_max: "300", twenty_day_limit_up_enabled: true, twenty_day_limit_up_min: 1, twenty_day_limit_up_max: null, intraday_average_enabled: true, intraday_relation: "above" as const },
-  candidates: [], behaviors: [{ key: "weak_rally", title: "尾盘拉升量能不足", level: "risk" as const, description: "风险", evidence: ["需要分时"] }],
+  candidates: [], invalidated_candidates: [], behaviors: [{ key: "weak_rally", title: "尾盘拉升量能不足", level: "risk" as const, description: "风险", evidence: ["需要分时"] }],
   source_evidence: ["通达信本地全市场实时快照"], limitations: ["分时黄线不可用"],
 };
 
@@ -55,6 +55,15 @@ describe("LateSessionSelectionView", () => {
         rules: [],
         behavior_tags: [],
         risk_notes: ["待补齐：分时黄线"],
+        lifecycle_status: "data_pending" as const,
+        first_seen_at: "2026-08-17T07:00:00Z",
+        last_updated_at: "2026-08-17T07:00:00Z",
+        continuous_hits: 0,
+        continuous_seconds: 0,
+        trigger_count: 0,
+        rule_bitmap: "111111x",
+        latest_change: "真实字段待补齐，不进入严格候选",
+        invalidation_reason: null,
       }],
     };
     render(<LateSessionSelectionView load={vi.fn().mockResolvedValue(partial)} analyze={vi.fn().mockResolvedValue({ ...analysis, candidate_count: 1 })} />);
@@ -62,5 +71,7 @@ describe("LateSessionSelectionView", () => {
     await waitFor(() => expect(screen.getByText("核心条件观察候选")).toBeInTheDocument());
     expect(screen.getByText("核心条件通过，其他条件未通过或待补齐", { exact: false })).toBeInTheDocument();
     expect(screen.queryByText("当前规则全部通过", { exact: false })).not.toBeInTheDocument();
+    expect(screen.getByText("数据待补")).toBeInTheDocument();
+    expect(screen.getByText("真实字段待补齐，不进入严格候选")).toBeInTheDocument();
   });
 });
