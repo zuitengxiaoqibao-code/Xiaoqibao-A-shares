@@ -440,8 +440,10 @@ class MarketOverviewService:
         values = []
         for item in incoming:
             previous_item = previous_by_symbol.get(item.symbol)
-            if item.state not in labels or (
-                previous_item is not None and previous_item.state == item.state
+            if (
+                previous_item is None
+                or item.state not in labels
+                or previous_item.state == item.state
             ):
                 continue
             if abs((cutoff - item.observed_at).total_seconds()) > 120:
@@ -471,9 +473,20 @@ class MarketOverviewService:
     def _merge_anomalies(previous: tuple, incoming: tuple) -> tuple:
         by_id = {item.anomaly_id: item for item in previous}
         by_id.update({item.anomaly_id: item for item in incoming})
-        return tuple(sorted(
+        ordered = sorted(
             by_id.values(), key=lambda item: item.occurred_at, reverse=True,
-        )[:15])
+        )
+        quote_events = [
+            item for item in ordered if item.anomaly_id.startswith("tdx-quote-")
+        ][:4]
+        evidence_events = [
+            item for item in ordered if not item.anomaly_id.startswith("tdx-quote-")
+        ][:15]
+        quote_budget = max(0, 15 - len(evidence_events))
+        selected = (*evidence_events, *quote_events[:quote_budget])
+        return tuple(sorted(
+            selected, key=lambda item: item.occurred_at, reverse=True,
+        ))
 
     @staticmethod
     def _merge_live_feed(previous: tuple, incoming: tuple) -> tuple:
@@ -614,6 +627,9 @@ class MarketOverviewService:
             )
         except (OSError, ValueError):
             return None
+        balanced_anomalies = self._merge_anomalies((), response.anomalies)
+        if balanced_anomalies != response.anomalies:
+            response = response.model_copy(update={"anomalies": balanced_anomalies})
         if self.market_review_source is not None and hasattr(
             self.market_review_source, "cache_is_stale"
         ):

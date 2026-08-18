@@ -13,6 +13,7 @@ from qibao_api.contracts.market_overview import (
     OverviewBreadth,
     OverviewFeatureStock,
     OverviewIndexQuote,
+    OverviewAnomaly,
     OverviewLimitEcology,
     OverviewLiquidity,
     OverviewMarketSnapshot,
@@ -812,6 +813,106 @@ def test_overview_records_verified_local_quote_state_change_without_news(
     assert refreshed.anomalies[0].label == "涨停封板"
     assert refreshed.anomalies[0].symbols == ("600001",)
     assert refreshed.anomalies[0].credibility == "verified"
+
+
+def test_overview_does_not_treat_a_first_seen_limit_state_as_a_transition() -> None:
+    incoming = local_market_with_stock(
+        observed_at=NOW, state="limit_up", price="11.00", change_percent="10.00",
+    ).market_stocks
+
+    result = MarketOverviewService._local_quote_anomalies(
+        (), incoming, cutoff=NOW,
+    )
+
+    assert result == ()
+
+
+def test_overview_keeps_verified_news_when_quote_events_arrive_in_a_burst() -> None:
+    news = tuple(
+        OverviewAnomaly(
+            anomaly_id=f"news-{index}",
+            occurred_at=NOW - timedelta(minutes=index),
+            label=f"新闻题材 {index}",
+            headline=f"已核验新闻事件 {index}",
+            direction="neutral",
+            themes=(f"题材 {index}",),
+            symbols=(f"{600100 + index:06d}",),
+            category="industry_sector",
+            credibility="verified",
+        )
+        for index in range(6)
+    )
+    quote_events = tuple(
+        OverviewAnomaly(
+            anomaly_id=f"tdx-quote-{600200 + index}-limit_up-20260729103000",
+            occurred_at=NOW + timedelta(seconds=index),
+            label="涨停封板",
+            headline=f"行情状态事件 {index}",
+            direction="positive",
+            themes=("实时行情异动",),
+            symbols=(f"{600200 + index:06d}",),
+            category="price_volume_anomaly",
+            credibility="verified",
+        )
+        for index in range(12)
+    )
+
+    result = MarketOverviewService._merge_anomalies(news, quote_events)
+
+    assert {item.anomaly_id for item in news}.issubset(
+        {item.anomaly_id for item in result}
+    )
+    assert sum(item.anomaly_id.startswith("tdx-quote-") for item in result) <= 4
+
+
+def test_overview_balances_a_legacy_cached_quote_burst_before_display(
+    tmp_path: Path,
+) -> None:
+    cache_path = tmp_path / "market-overview.json"
+    base = service(Source(), news_repository=NewsRepository([])).current(NOW)
+    news = OverviewAnomaly(
+        anomaly_id="news-kept",
+        occurred_at=NOW - timedelta(minutes=1),
+        label="产业新闻",
+        headline="已核验产业事件",
+        direction="neutral",
+        themes=("产业",),
+        symbols=("600100",),
+        category="industry_sector",
+        credibility="verified",
+    )
+    quote_events = tuple(
+        OverviewAnomaly(
+            anomaly_id=f"tdx-quote-{600200 + index}-limit_up-20260729103000",
+            occurred_at=NOW + timedelta(seconds=index),
+            label="涨停封板",
+            headline=f"行情状态事件 {index}",
+            direction="positive",
+            themes=("实时行情异动",),
+            symbols=(f"{600200 + index:06d}",),
+            category="price_volume_anomaly",
+            credibility="verified",
+        )
+        for index in range(8)
+    )
+    cache_path.write_text(
+        base.model_copy(update={
+            "anomalies": (*quote_events, news),
+        }).model_dump_json(),
+        encoding="utf-8",
+    )
+    cached = service(
+        Source(), cache_path=cache_path, defer_initial_refresh=True,
+        initial_refresh_delay_seconds=60, news_repository=NewsRepository([]),
+    )
+
+    result = cached.current(NOW + timedelta(seconds=1))
+    cached.close()
+
+    assert any(item.anomaly_id == news.anomaly_id for item in result.anomalies)
+    assert sum(
+        item.anomaly_id.startswith("tdx-quote-") for item in result.anomalies
+    ) <= 4
 
 
 def test_overview_gives_cached_response_a_grace_period_before_background_refresh(
