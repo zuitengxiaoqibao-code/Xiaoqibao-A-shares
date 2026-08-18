@@ -49,15 +49,18 @@ def evaluate_candidate(
     quote: LateSessionQuote,
     *,
     settings: LateSessionRuleSettings = DEFAULT_LATE_SESSION_RULE_SETTINGS,
+    allow_close_boundary: bool = False,
 ) -> LateSessionCandidateResult:
     local = quote.observed_at.astimezone(CHINA_TZ)
     current = local.time().replace(tzinfo=None)
-    time_passed = settings.start_time <= current < settings.end_time
+    time_passed = settings.start_time <= current < settings.end_time or (
+        allow_close_boundary and current == settings.end_time
+    )
     rules = (
         LateSessionRuleResult(
             key="time_window", label="监控时间", actual=current.strftime("%H:%M:%S"), target=f"{settings.start_time.strftime('%H:%M')}–{settings.end_time.strftime('%H:%M')}",
             status="disabled" if not settings.time_enabled else ("passed" if time_passed else "failed"),
-            detail="该规则已停用" if not settings.time_enabled else ("处于当前尾盘实时窗口" if time_passed else "当前不在设定尾盘时间窗口"),
+            detail="该规则已停用" if not settings.time_enabled else ("处于当前尾盘实时窗口" if current < settings.end_time else "使用收盘冻结的尾盘最后时点" if time_passed else "当前不在设定尾盘时间窗口"),
         ),
         _range_rule(key="change_percent", label="涨幅", actual=quote.change_percent, lower=settings.change_min, upper=settings.change_max, target=f"{settings.change_min}%–{settings.change_max}%", enabled=settings.change_enabled),
         _range_rule(key="volume_ratio", label="量比", actual=quote.volume_ratio, lower=settings.volume_ratio_min, upper=settings.volume_ratio_max, target=f"{settings.volume_ratio_min}–{settings.volume_ratio_max}", enabled=settings.volume_ratio_enabled),

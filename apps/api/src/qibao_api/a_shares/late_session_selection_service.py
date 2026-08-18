@@ -13,6 +13,7 @@ from qibao_api.contracts.late_session_selection import (
     LateSessionRuleSettings,
     LateSessionSelectionResponse,
 )
+from qibao_api.gongbu.tdx_local_overview import derive_intraday_average_price
 
 
 CHINA_TZ = ZoneInfo("Asia/Shanghai")
@@ -48,7 +49,13 @@ class LateSessionSelectionService:
         evaluated: list[LateSessionCandidateResult] = []
         for raw in quotes:
             data = enriched.get(raw.symbol, {})
-            average = data.get("intraday_average_price") or getattr(raw, "intraday_average_price", None)
+            explicit_average = data.get("intraday_average_price") or getattr(raw, "intraday_average_price", None)
+            average = explicit_average or derive_intraday_average_price(
+                amount_wan=getattr(raw, "amount_wan", None),
+                volume=getattr(raw, "volume", None),
+                low=getattr(raw, "low", None),
+                high=getattr(raw, "high", None),
+            )
             volume_ratio = data.get("volume_ratio") or self._volume_ratio(raw.symbol, raw.volume)
             quote = LateSessionQuote(
                 symbol=raw.symbol,
@@ -62,9 +69,13 @@ class LateSessionSelectionService:
                 twenty_day_limit_up_count=self._twenty_day_limit_count(raw.symbol, trading_date),
                 intraday_average_price=average,
                 observed_at=raw.observed_at or now,
-                source="tdx-local-realtime" + ("+tencent" if data else ""),
+                source=("tdx-local-realtime" + ("+tencent" if data else "") + ("+vwap" if explicit_average is None and average is not None else "")),
             )
-            result = evaluate_candidate(quote, settings=settings)
+            result = evaluate_candidate(
+                quote,
+                settings=settings,
+                allow_close_boundary=phase == "post_close",
+            )
             above = None if average is None else raw.price > average
             tags = classify_behavior(change_percent=raw.change_percent, volume_ratio=quote.volume_ratio, above_average=above)
             evaluated.append(result.model_copy(update={"behavior_tags": tags}))
@@ -74,7 +85,13 @@ class LateSessionSelectionService:
             if all(rule.status in {"passed", "disabled"} for rule in item.rules if rule.key != "time_window")
         ]
         candidates = tuple((passed if phase != "pre_screen" else pre_screened)[: max(1, limit)])
-        source_quality = "ready" if all(item.quote.turnover_rate is not None and item.quote.market_cap_yi is not None for item in evaluated) else "partial"
+        source_quality = "ready" if all(
+            item.quote.turnover_rate is not None
+            and item.quote.market_cap_yi is not None
+            and (not settings.intraday_average_enabled or item.quote.intraday_average_price is not None)
+            and (not settings.twenty_day_limit_up_enabled or item.quote.twenty_day_limit_up_count is not None)
+            for item in evaluated
+        ) else "partial"
         limitations: list[str] = []
         if any(item.quote.intraday_average_price is None for item in evaluated):
             limitations.append("本地快照未提供真实分时黄线，相关规则保持不可用")
@@ -84,6 +101,9 @@ class LateSessionSelectionService:
             limitations.append("14:30前展示六项条件预筛结果，时间闸门和尾盘行为需实时窗口确认")
         if phase == "post_close":
             limitations.append("15:00后停止高频刷新，结果为收盘冻结快照")
+        source_evidence = ["通达信本地全市场实时快照", "本地日线仓储20交易日窗口"]
+        if any("+vwap" in item.quote.source for item in evaluated):
+            source_evidence.append("通达信成交额/成交量推导累计成交均价（VWAP）")
         return LateSessionSelectionResponse(
             status="ready" if candidates else ("partial" if evaluated else "unavailable"),
             trading_date=trading_date,
@@ -102,7 +122,7 @@ class LateSessionSelectionService:
             default_settings=DEFAULT_LATE_SESSION_RULE_SETTINGS,
             candidates=candidates,
             behaviors=self._behaviors(phase, evaluated),
-            source_evidence=("通达信本地全市场实时快照", "本地日线仓储20交易日窗口") + (("腾讯行情补充市值/换手率",) if self.tencent_source else ()),
+            source_evidence=tuple(source_evidence) + (("腾讯行情补充市值/换手率",) if self.tencent_source else ()),
             limitations=tuple(limitations),
         )
 
@@ -149,18 +169,20 @@ class LateSessionSelectionService:
 
     def _twenty_day_limit_count(self, symbol: str, as_of: date) -> int | None:
         try:
-            bars = self.bar_repository.latest(symbol, limit=20, cutoff=None)
+            bars = self.bar_repository.latest(symbol, limit=21, cutoff=None)
         except Exception:
             return None
-        if len(bars) < 20:
+        if any(getattr(bar, "trade_date", None) is not None for bar in bars):
+            bars = [bar for bar in bars if bar.trade_date <= as_of]
+        if len(bars) < 21:
             return None
         count = 0
-        for bar in bars:
-            previous = bar.open if bar.open > 0 else bar.close
-            if previous <= 0:
+        for index, bar in enumerate(bars[:20]):
+            previous_close = bars[index + 1].close
+            if previous_close <= 0:
                 continue
             rate = Decimal("0.2") if symbol.startswith(("300", "301", "688", "689")) else Decimal("0.1")
-            if bar.close >= (previous * (Decimal(1) + rate) * Decimal("0.995")):
+            if bar.close >= (previous_close * (Decimal(1) + rate) * Decimal("0.995")):
                 count += 1
         return count
 

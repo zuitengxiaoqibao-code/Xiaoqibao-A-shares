@@ -60,6 +60,26 @@ def test_parse_tdx_snapshot_uses_real_amount_and_prices() -> None:
     assert result.amount_wan == Decimal("60919.41")
 
 
+def test_parse_tdx_snapshot_derives_real_intraday_vwap_when_average_field_is_missing() -> None:
+    result = parse_tdx_snapshot(
+        "600000.SH",
+        "浦发银行",
+        {
+            "ErrorId": "0",
+            "LastClose": "9.19",
+            "Now": "9.33",
+            "Max": "9.34",
+            "Min": "9.17",
+            "Open": "9.19",
+            "Volume": "655951",
+            "Amount": "60919.41",
+        },
+    )
+
+    assert result is not None
+    assert result.intraday_average_price == Decimal("9.29")
+
+
 def test_parse_tdx_snapshot_accepts_only_explicit_market_cap_yi() -> None:
     result = parse_tdx_snapshot(
         "600000.SH",

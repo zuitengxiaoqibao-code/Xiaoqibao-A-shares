@@ -13,6 +13,7 @@ from qibao_api.gongbu.tdx_client import TDX_SERVERS
 from qibao_api.gongbu.tdx_local_overview import (
     TdxRealtimeQuote,
     build_market_statistics,
+    derive_intraday_average_price,
 )
 from qibao_api.gongbu.tencent_quotes import market_prefix
 
@@ -211,6 +212,12 @@ def parse_tencent_realtime_quotes(
             volume=volume,
             amount_wan=amount_wan,
             observed_at=observed_at,
+            intraday_average_price=derive_intraday_average_price(
+                amount_wan=amount_wan,
+                volume=volume,
+                low=low,
+                high=high,
+            ),
         )
     return tuple(quotes.values())
 

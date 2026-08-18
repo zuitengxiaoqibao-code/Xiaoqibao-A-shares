@@ -278,6 +278,33 @@ def _decimal(value: object) -> Decimal | None:
         return None
 
 
+def derive_intraday_average_price(
+    *,
+    amount_wan: Decimal | None,
+    volume: Decimal | None,
+    low: Decimal | None,
+    high: Decimal | None,
+) -> Decimal | None:
+    """Derive the real cumulative VWAP from TDX amount (10k yuan) and lots.
+
+    TDX snapshots commonly omit an explicit average-price field, while Amount
+    and Volume are still present.  The result is accepted only when it falls
+    within the observed intraday range; otherwise the unit semantics are not
+    trusted and the field remains unavailable.
+    """
+    if amount_wan is None or volume is None or amount_wan <= 0 or volume <= 0:
+        return None
+    average = (amount_wan * Decimal("100") / volume).quantize(
+        TWO_PLACES,
+        rounding=ROUND_HALF_UP,
+    )
+    if low is not None and low > 0 and average < low - PRICE_TICK:
+        return None
+    if high is not None and high > 0 and average > high + PRICE_TICK:
+        return None
+    return average
+
+
 def parse_tdx_snapshot(
     exchange_code: str,
     name: str,
@@ -304,6 +331,13 @@ def parse_tdx_snapshot(
         or payload.get("average_price")
         or payload.get("intraday_average_price")
     )
+    if intraday_average_price is None:
+        intraday_average_price = derive_intraday_average_price(
+            amount_wan=amount_wan,
+            volume=volume,
+            low=low,
+            high=high,
+        )
     if intraday_average_price is not None and intraday_average_price <= 0:
         intraday_average_price = None
     if (
