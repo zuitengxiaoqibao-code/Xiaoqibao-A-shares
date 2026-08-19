@@ -74,8 +74,8 @@ describe("OperationsView", () => {
 
     expect(await screen.findByRole("heading", { name: "本地目录与数据库" })).toBeInTheDocument();
     const inventoryDetails = screen.getByRole("heading", { name: "本地目录与数据库" }).closest("details");
-    expect(inventoryDetails).not.toHaveAttribute("open");
-    fireEvent.click(screen.getByRole("heading", { name: "本地目录与数据库" }));
+    expect(inventoryDetails).toHaveAttribute("open");
+    expect(inventoryDetails).toHaveClass("operations-collapsible");
     expect(screen.getByText("data/market.duckdb")).toBeVisible();
     expect(screen.getByText("程序 3.00 MB · 持久数据 4.00 MB")).toBeVisible();
     expect(screen.getByText(/只允许清理 cache、logs/)).toBeVisible();
@@ -101,15 +101,18 @@ describe("OperationsView", () => {
     }
   });
 
-  it("previews rebuildable storage before confirmed cleanup and keeps performance folded", async () => {
+  it("previews rebuildable storage and keeps performance expanded by default", async () => {
     const previewCleanup = vi.fn(() => Promise.resolve({ candidate_count: 3, candidate_bytes: 4096, categories: { cache: 2, logs: 1 } }));
     const cleanupStorage = vi.fn(() => Promise.resolve({ removed_count: 3, removed_bytes: 4096 }));
     render(<OperationsView loadStatus={() => Promise.resolve(status)} setSchedulerPaused={() => Promise.resolve(status.scheduler)} createBackup={() => Promise.resolve(status.backups[0])} verifyBackup={() => Promise.reject(new Error("unused"))} runManualJob={() => Promise.resolve({ report_id: "report-manual" })} previewCleanup={previewCleanup} cleanupStorage={cleanupStorage} loadPerformance={() => Promise.resolve({ generated_at: "2026-08-12T08:00:00Z", metrics: [{ kind: "api", name: "/company-research", sample_count: 5, p50_ms: 800, p95_ms: 1600, failure_rate: 0, cache_hit_rate: 60, recent_ms: [500, 700, 800, 1200, 1600] }], snapshots: [{ kind: "market_cross_section", snapshot_version: 2, trade_date: "2026-08-12", observed_at: "2026-08-12T08:00:00Z", coverage_percent: 99, content_hash: "a".repeat(64), freshness: "live", source: "local-tdx", compute_count: 3, reuse_count: 4, duplicate_compute_count: 1, cache_hit_rate: 57.14, slowest_compute_ms: 320, latest_latency_ms: 8 }] })} />);
 
-    expect(await screen.findByText("页面与接口性能 · 默认折叠")).toBeInTheDocument();
+    const performanceHeading = await screen.findByRole("heading", { name: "页面与接口性能" });
+    const performanceDetails = performanceHeading.closest("details");
+    expect(performanceDetails).toHaveAttribute("open");
+    expect(performanceDetails).toHaveClass("operations-collapsible");
+    expect(performanceDetails).toHaveTextContent("默认展开");
     expect(screen.getByText(/本次会话请求合并/)).toBeInTheDocument();
-    expect(screen.getByText("/company-research")).not.toBeVisible();
-    fireEvent.click(screen.getByText("页面与接口性能 · 默认折叠"));
+    expect(screen.getByText("/company-research")).toBeVisible();
     expect(screen.getByText(/市场横截面/)).toBeVisible();
     expect(screen.getByText(/复用 4 · 重复计算 1/)).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "预览可清理空间" }));
@@ -117,6 +120,52 @@ describe("OperationsView", () => {
     fireEvent.click(screen.getByRole("button", { name: "确认清理" }));
     expect(await screen.findByText(/已安全清理 3 个可重建文件/)).toBeInTheDocument();
     expect(cleanupStorage).toHaveBeenCalledWith(72);
+  });
+
+  it("expands every primary operations disclosure except task scripts by default", async () => {
+    render(<OperationsView
+      loadStatus={() => Promise.resolve(status)}
+      setSchedulerPaused={() => Promise.resolve(status.scheduler)}
+      createBackup={() => Promise.resolve(status.backups[0])}
+      verifyBackup={() => Promise.reject(new Error("unused"))}
+      runManualJob={() => Promise.resolve({ report_id: "report-manual" })}
+      loadDiagnostics={() => Promise.resolve({
+        generated_at: "2026-08-19T08:00:00Z", scheduler_paused: false, backup_count: 1,
+        persistent_bytes: 1024, rebuildable_bytes: 512,
+        source_health: { ready: 2, degraded: 0, unavailable: 1 },
+        tdx_auto_import: status.tdx_auto_import!,
+        source_conflicts: { state: "ready", conflict_count: 0, conflicts: [] },
+      })}
+      loadObservability={() => Promise.resolve({
+        generated_at: "2026-08-19T08:00:00Z", window_size: 20, events: [], alerts: [],
+      })}
+      loadPerformance={() => Promise.resolve({ generated_at: "2026-08-19T08:00:00Z", metrics: [], snapshots: [] })}
+    />);
+
+    const expandedHeadings = ["运行诊断摘要", "可观测性事件与告警", "本地目录与数据库", "页面与接口性能"];
+    for (const name of expandedHeadings) {
+      const details = (await screen.findByRole("heading", { name })).closest("details");
+      expect(details).toHaveAttribute("open");
+      expect(details).toHaveClass("operations-collapsible");
+    }
+    expect(screen.getByRole("heading", { name: "任务运行脚本" }).closest("details")).not.toHaveAttribute("open");
+  });
+
+  it("preserves a user's collapsed section during the five-second status refresh", async () => {
+    vi.useFakeTimers();
+    try {
+      render(<OperationsView loadStatus={() => Promise.resolve(status)} setSchedulerPaused={() => Promise.resolve(status.scheduler)} createBackup={() => Promise.resolve(status.backups[0])} verifyBackup={() => Promise.reject(new Error("unused"))} runManualJob={() => Promise.resolve({ report_id: "report-manual" })} />);
+      await vi.waitFor(() => expect(screen.getByRole("heading", { name: "本地目录与数据库" })).toBeInTheDocument());
+      const inventoryDetails = screen.getByRole("heading", { name: "本地目录与数据库" }).closest("details")!;
+      expect(inventoryDetails).toHaveAttribute("open");
+      fireEvent.click(screen.getByRole("heading", { name: "本地目录与数据库" }));
+      expect(inventoryDetails).not.toHaveAttribute("open");
+
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(inventoryDetails).not.toHaveAttribute("open");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("shows the truthful daily-bar repair watermark and gaps", async () => {
@@ -155,7 +204,7 @@ describe("OperationsView", () => {
     render(<OperationsView loadStatus={() => Promise.resolve(status)} setSchedulerPaused={() => Promise.resolve(status.scheduler)} createBackup={() => Promise.resolve(status.backups[0])} verifyBackup={() => Promise.reject(new Error("unused"))} runManualJob={() => Promise.resolve({ report_id: "report-manual" })} loadHistoryRepairCenter={() => Promise.resolve({ coverage: { target_date: "2026-08-11", universe_count: 5000, backfill_complete_count: 5000, eligible_count: 5000, target_date_count: 5000, dominant_trade_date: "2026-08-11", dominant_date_count: 5000, dominant_date_coverage_percent: 100, coverage_percent: 100, fragmented_latest_count: 0, missing_history_count: 0, quality: "ready", blockers: [] }, current_job: null, total_gap_count: 0, offset: 0, limit: 100, gaps: [] })} loadHistoryRepairAudits={() => Promise.resolve([{ audit_id: "audit-1", job_id: "job-1", mode: "backfill", target_date: "2026-08-11", started_at: "2026-08-11T08:00:00Z", completed_at: "2026-08-11T08:05:00Z", source: "tdx-local-day", gap_count_before: 10, coverage_before_percent: 99.8, written_rows: 10, ready_count: 10, failed_count: 0, skipped_count: 0, coverage_after_percent: 100, final_state: "completed", failure_reasons: [] }])} />);
 
     expect(await screen.findByText("修复审计 · 1 条最近记录")).toBeInTheDocument();
-    fireEvent.click(screen.getByText("修复审计 · 1 条最近记录"));
+    expect(screen.getByText("修复审计 · 1 条最近记录").closest("details")).toHaveAttribute("open");
     expect(screen.getByText(/覆盖 99.8% → 100%/)).toBeVisible();
     expect(screen.getByText(/写入 10 行/)).toBeVisible();
   });
