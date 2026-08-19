@@ -26,8 +26,13 @@ describe("FieldEvidenceDetails", () => {
 
     fireEvent.click(screen.getByText("关键字段真实性"));
     expect(screen.getByRole("group", { name: "关键字段证据" })).toHaveAttribute("open");
+    expect(screen.getByText("市场情绪评分")).toHaveAttribute("title", "sentiment.score");
+    expect(screen.getByText("本地市场情绪快照")).toHaveAttribute("title", "market-sentiment-cache");
+    expect(screen.getByText("情绪评分")).toHaveAttribute("title", "score");
+    expect(screen.getByText("A股市场情绪模型 v2")).toHaveAttribute("title", "a-share-sentiment-v2");
+    expect(screen.queryByText("sentiment.score")).not.toBeInTheDocument();
+    expect(screen.queryByText("market-sentiment-cache")).not.toBeInTheDocument();
     expect(screen.getByText("原始字段")).toBeInTheDocument();
-    expect(screen.getByText("a-share-sentiment-v2")).toBeInTheDocument();
     expect(screen.getByText("88.50%")).toBeInTheDocument();
   });
 
@@ -49,6 +54,7 @@ describe("FieldEvidenceDetails", () => {
     expect(screen.getByRole("group", { name: "关键字段证据" })).toHaveTextContent("1 项冲突");
     expect(screen.getByText("20 日成交基准尚未形成")).toBeInTheDocument();
     expect(screen.getByText("备用来源相差 12 家，采用本地全市场快照")).toBeInTheDocument();
+    expect(screen.getByTitle("breadth.rising_count")).toHaveTextContent("上涨家数");
     expect(screen.getAllByText("--").length).toBeGreaterThan(0);
   });
 
@@ -63,9 +69,24 @@ describe("FieldEvidenceDetails", () => {
       affects_conclusion: false,
     }]} defaultOpen />);
 
-    expect(screen.getByText("12.90 · tencent")).toBeInTheDocument();
+    expect(screen.getByText("12.90 · 腾讯行情")).toBeInTheDocument();
     expect(screen.getByText("-0.40 (-3.10%)")).toBeInTheDocument();
     expect(screen.getByText("采用本地通达信估值明细")).toBeInTheDocument();
     expect(screen.getByText("不影响当前结论")).toBeInTheDocument();
+  });
+
+  it("uses a Chinese fallback for unknown internal identifiers", () => {
+    render(<FieldEvidenceDetails entries={[{
+      field_path: "experimental.unknown_metric", value: "1", source: "vendor-unknown-feed",
+      source_field: "mystery_value", status: "derived", trade_date: null, observed_at: null,
+      coverage_percent: null, derived: true, formula: "experimental-formula-v9",
+      evidence_ids: [], limitations: ["unknown_backend_blocker"],
+    }]} defaultOpen />);
+
+    expect(screen.getByText("未识别指标")).toHaveAttribute("title", "experimental.unknown_metric");
+    expect(screen.getByText("未识别数据来源")).toHaveAttribute("title", "vendor-unknown-feed");
+    expect(screen.getByText("未识别原始字段")).toHaveAttribute("title", "mystery_value");
+    expect(screen.getByText("未登记公式版本")).toHaveAttribute("title", "experimental-formula-v9");
+    expect(screen.getByText("数据完整性限制")).toHaveAttribute("title", "unknown_backend_blocker");
   });
 });

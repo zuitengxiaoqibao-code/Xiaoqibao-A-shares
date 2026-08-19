@@ -56,3 +56,7 @@ export function freshnessDetail(status: EvidenceStatus): string {
 export function blockerLabel(code: string): string {
   return BLOCKERS[code] ?? "数据完整性待检查";
 }
+
+export function isKnownBlocker(code: string): boolean {
+  return Object.prototype.hasOwnProperty.call(BLOCKERS, code);
+}

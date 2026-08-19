@@ -1,5 +1,12 @@
 import { ChevronDown, Database, ShieldAlert } from "lucide-react";
 
+import {
+  evidenceFormulaLabel,
+  evidenceLimitationLabel,
+  evidenceOperationLabel,
+  evidenceSourceLabel,
+} from "./evidenceCopy";
+
 export type EvidenceLedgerEntry = {
   source: string;
   operation: string;
@@ -37,16 +44,20 @@ export function EvidenceLedger({ entries, defaultOpen = false }: { entries: Evid
     <summary><span><Database size={15} /><b>证据账本</b><small>{entries.length} 条来源链路</small></span><ChevronDown size={15} /></summary>
     <div>
       {entries.map((entry) => <article data-status={entry.status} key={`${entry.source}:${entry.operation}`}>
-        <header><div><b>{entry.operation}</b><span>{entry.source}</span></div><em>{statusLabels[entry.status]}</em></header>
+        <header><div><b title={entry.operation}>{evidenceOperationLabel(entry.operation)}</b><span title={entry.source}>{evidenceSourceLabel(entry.source)}</span></div><em>{statusLabels[entry.status]}</em></header>
         <dl>
           <div><dt>交易日</dt><dd>{entry.trade_date ?? "--"}</dd></div>
           <div><dt>观测时间</dt><dd>{timeLabel(entry.observed_at)}</dd></div>
-          <div><dt>公式版本</dt><dd>{entry.formula_version ?? "--"}</dd></div>
+          <div><dt>公式版本</dt><dd title={entry.formula_version ?? undefined}>{entry.formula_version ? evidenceFormulaLabel(entry.formula_version) : "--"}</dd></div>
           <div><dt>样本量</dt><dd>{entry.sample_count === null ? "--" : `${entry.sample_count.toLocaleString("zh-CN")} 条样本`}</dd></div>
           <div><dt>覆盖率</dt><dd><b>{coverageLabel(entry.coverage_percent)}</b>{entry.total_count === null || entry.total_count === undefined ? "" : ` · ${entry.total_count.toLocaleString("zh-CN")} 总样本`}</dd></div>
         </dl>
-        {entry.limitations.length > 0 && <footer><ShieldAlert size={13} />{entry.limitations.map((item) => <span key={item}>{item}</span>)}</footer>}
+        {entry.limitations.length > 0 && <footer><ShieldAlert size={13} />{entry.limitations.map((item) => <span title={containsRawIdentifier(item) ? item : undefined} key={item}>{evidenceLimitationLabel(item)}</span>)}</footer>}
       </article>)}
     </div>
   </details>;
+}
+
+function containsRawIdentifier(value: string): boolean {
+  return !/[\u3400-\u9fff]/u.test(value);
 }
