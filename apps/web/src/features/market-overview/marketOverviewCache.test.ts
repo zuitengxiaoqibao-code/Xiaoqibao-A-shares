@@ -37,6 +37,9 @@ describe("market overview cache", () => {
 
     expect(restored?.value.market_data.phase).toBe("premarket");
     expect(restored?.value.market_data.freshness).toBe("previous_close");
+    expect(restored?.value.minute_series).toEqual([]);
+    expect(restored?.value.anomalies).toEqual([]);
+    expect(restored?.value.live_feed).toEqual([]);
   });
 
   it("drops a snapshot with an invalid observation timestamp", () => {

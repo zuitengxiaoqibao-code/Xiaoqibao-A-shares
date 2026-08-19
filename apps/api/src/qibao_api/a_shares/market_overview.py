@@ -3,7 +3,7 @@ import json
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from collections import defaultdict
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from typing import Callable
@@ -263,6 +263,10 @@ class MarketOverviewService:
         current: MarketOverviewResponse,
     ) -> MarketOverviewResponse:
         """Prevent a slow full build from regressing a newer core refresh."""
+        if current.as_of > response.as_of:
+            return current
+        if current.as_of < response.as_of:
+            return response
         merged_minutes = cls._merge_minute_series(
             response.minute_series, current.minute_series,
         )
@@ -332,7 +336,8 @@ class MarketOverviewService:
         with self._lock:
             if self._closed or self._cached is None:
                 return
-            current = self._cached
+            trading_day = refresh_now.astimezone(CHINA_TZ).date()
+            current = self._temporal_payload_for_day(self._cached, trading_day)
             quote_anomalies = self._local_quote_anomalies(
                 baseline_market_stocks,
                 local_market.market_stocks if local_market is not None else (),
@@ -380,7 +385,13 @@ class MarketOverviewService:
                     + [item.observed_at for item in minute_series[-1:]],
                 )
                 updates["observed_at"] = latest_observed
+            if minute_series or (
+                local_market is not None
+                and local_market.observed_at.astimezone(CHINA_TZ).date() == trading_day
+            ):
+                updates["as_of"] = trading_day
             response = current.model_copy(update=updates)
+            response = self._temporal_payload_for_day(response, trading_day)
             self._cached = response
             self._cached_at = refresh_now
             self._write_cache(response)
@@ -393,7 +404,9 @@ class MarketOverviewService:
         with self._lock:
             if self._closed or self._cached is None:
                 return
-            current = self._cached
+            current = self._temporal_payload_for_day(
+                self._cached, refresh_now.astimezone(CHINA_TZ).date(),
+            )
             event_updates: dict[str, object] = {}
             if anomalies:
                 event_updates["anomalies"] = self._merge_anomalies(
@@ -423,6 +436,34 @@ class MarketOverviewService:
         by_time = {item.observed_at: item for item in previous}
         by_time.update({item.observed_at: item for item in incoming})
         return tuple(by_time[key] for key in sorted(by_time))
+
+    @staticmethod
+    def _temporal_payload_for_day(
+        response: MarketOverviewResponse,
+        trading_day: date,
+    ) -> MarketOverviewResponse:
+        minute_series = tuple(
+            item for item in response.minute_series
+            if item.observed_at.astimezone(CHINA_TZ).date() == trading_day
+        )
+        anomalies = tuple(
+            item for item in response.anomalies
+            if item.occurred_at.astimezone(CHINA_TZ).date() == trading_day
+        )
+        live_feed = tuple(
+            item for item in response.live_feed
+            if item.occurred_at.astimezone(CHINA_TZ).date() == trading_day
+        )
+        updates: dict[str, object] = {}
+        if minute_series != response.minute_series:
+            updates["minute_series"] = minute_series
+        if anomalies != response.anomalies:
+            updates["anomalies"] = anomalies
+        if live_feed != response.live_feed:
+            updates["live_feed"] = live_feed
+        if response.status == "ready" and not minute_series:
+            updates["status"] = "partial"
+        return response.model_copy(update=updates) if updates else response
 
     @staticmethod
     def _local_quote_anomalies(
@@ -671,6 +712,7 @@ class MarketOverviewService:
         updates: dict[str, object] = {}
         if now is not None:
             local_now = now.astimezone(CHINA_TZ)
+            response = self._temporal_payload_for_day(response, local_now.date())
             market_data = response.market_data.model_copy(update={
                 "phase": self._market_phase(local_now),
                 "freshness": self._market_freshness(
@@ -815,6 +857,10 @@ class MarketOverviewService:
             warnings.append("index_quotes_unavailable")
         try:
             minute_series, minute_warnings = self.source.fetch_minutes()
+            minute_series = tuple(
+                item for item in minute_series
+                if item.observed_at.astimezone(CHINA_TZ).date() == as_of
+            )
             warnings.extend(minute_warnings)
             if minute_series:
                 sources.append("tencent-index-minute")
@@ -855,6 +901,10 @@ class MarketOverviewService:
             events = []
             warnings.append("news_events_unavailable")
         events = [event for event in events if self._event_symbols(event)]
+        events = [
+            event for event in events
+            if event.occurred_at.astimezone(CHINA_TZ).date() == as_of
+        ]
         live_feed = self._live_feed(events[:30])
         try:
             interpretations = self.news_repository.interpretations_for_events(

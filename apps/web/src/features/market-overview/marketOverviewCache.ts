@@ -1,5 +1,6 @@
 import type { MarketOverviewResponse } from "./types";
-import { isUsableSnapshotDay, marketPhase, shanghaiDay } from "../../shared/tradingDayContext";
+import { isUsableSnapshotDay, shanghaiDay } from "../../shared/tradingDayContext";
+import { isTimestampOnShanghaiDay } from "./marketSessionDisplay";
 
 const CACHE_KEY = "yishu.market-overview.daily.v1";
 
@@ -8,6 +9,15 @@ type CacheEnvelope = {
   cachedAt: string;
   value: MarketOverviewResponse;
 };
+
+export function filterMarketOverviewTemporalData(value: MarketOverviewResponse, day: string): MarketOverviewResponse {
+  return {
+    ...value,
+    minute_series: (value.minute_series ?? []).filter((item) => isTimestampOnShanghaiDay(item.observed_at, day)),
+    anomalies: (value.anomalies ?? []).filter((item) => isTimestampOnShanghaiDay(item.occurred_at, day)),
+    live_feed: (value.live_feed ?? []).filter((item) => isTimestampOnShanghaiDay(item.occurred_at, day)),
+  };
+}
 
 export function isMarketOverviewSnapshotCurrent(value: Pick<MarketOverviewResponse, "observed_at"> | null, now = new Date()): boolean {
   if (!value?.observed_at) return false;
@@ -28,9 +38,10 @@ export function readMarketOverviewCache(now = new Date()): { value: MarketOvervi
       return null;
     }
     const snapshotDay = shanghaiDay(new Date(Date.parse(parsed.value.observed_at)));
-    const value = snapshotDay !== shanghaiDay(now) && parsed.value.market_data && !parsed.value.market_data.freshness
+    const targetDay = shanghaiDay(now);
+    const value = snapshotDay !== targetDay && parsed.value.market_data
       ? {
-          ...parsed.value,
+          ...filterMarketOverviewTemporalData(parsed.value, targetDay),
           market_data: { ...parsed.value.market_data, phase: "premarket" as const, freshness: "previous_close" as const },
         }
       : parsed.value;

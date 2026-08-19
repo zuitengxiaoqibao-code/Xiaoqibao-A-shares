@@ -18,7 +18,9 @@ import type { SpeechSynthesizer } from "../speech/types";
 import { isAShareSymbol } from "../instrument-selection/SelectedInstrumentProvider";
 import { DistinctMarketWorkspace } from "./workspaces/DistinctMarketWorkspace";
 import { HomepageStartupOverlay } from "./HomepageStartupOverlay";
-import { isMarketOverviewSnapshotCurrent, readMarketOverviewCache, writeMarketOverviewCache } from "./marketOverviewCache";
+import { filterMarketOverviewTemporalData, isMarketOverviewSnapshotCurrent, readMarketOverviewCache, writeMarketOverviewCache } from "./marketOverviewCache";
+import { formatOpeningCountdown, marketSessionDisplay } from "./marketSessionDisplay";
+import { shanghaiDay } from "../../shared/tradingDayContext";
 import { MetricBand } from "../../shared/visualization/VisualPrimitives";
 import { EvidenceLedger } from "../../shared/evidence/EvidenceLedger";
 import { FieldEvidenceDetails } from "../../shared/evidence/FieldEvidenceDetails";
@@ -96,13 +98,24 @@ export function mergeStableAnomalySnapshot(
     tradeDate: (value) => value.as_of,
     observedAt: (value) => value.observed_at,
     isEmpty: (value) => value.market_data.quote_count === 0 && value.market_stocks.length === 0 && value.indices.length === 0,
-    merge: (previous, next) => ({
-      ...next,
-      anomalies: appendUniqueEntities(previous.anomalies, next.anomalies, (item) => item.anomaly_id),
-      live_feed: appendUniqueEntities(previous.live_feed, next.live_feed, (item) => item.event_id),
-      minute_series: mergeEntitySnapshot(previous.minute_series, next.minute_series, (item) => item.observed_at),
-      market_stocks: mergeEntitySnapshot(previous.market_stocks, next.market_stocks, (item) => item.symbol),
-    }),
+    merge: (previous, next) => {
+      const mergeTemporalData = next.market_data.phase === undefined
+        || ((next.market_data.phase === "intraday" || next.market_data.phase === "postclose")
+          && next.market_data.freshness !== "previous_close");
+      return {
+        ...next,
+        anomalies: mergeTemporalData
+          ? appendUniqueEntities(previous.anomalies, next.anomalies, (item) => item.anomaly_id)
+          : next.anomalies,
+        live_feed: mergeTemporalData
+          ? appendUniqueEntities(previous.live_feed, next.live_feed, (item) => item.event_id)
+          : next.live_feed,
+        minute_series: mergeTemporalData
+          ? mergeEntitySnapshot(previous.minute_series, next.minute_series, (item) => item.observed_at)
+          : next.minute_series,
+        market_stocks: mergeEntitySnapshot(previous.market_stocks, next.market_stocks, (item) => item.symbol),
+      };
+    },
   });
 }
 
@@ -141,6 +154,7 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, onOpenCompa
   const [cacheTimestamp, setCacheTimestamp] = useState<string | null>(initialCache?.cachedAt ?? null);
   const [usingCache, setUsingCache] = useState(() => Boolean(initialCache));
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [clockNow, setClockNow] = useState(() => new Date());
   const [realtimeTransport, setRealtimeTransport] = useState<"sse" | "polling">("polling");
   const [visible, setVisible] = useState(document.visibilityState !== "hidden");
   const [storedFeature] = useState(storedWorkspace);
@@ -151,6 +165,7 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, onOpenCompa
   const requestRef = useRef<AbortController | null>(null);
   const hasAppliedDefaultFeatureRef = useRef(Boolean(storedFeature));
   const userSelectedFeatureRef = useRef(Boolean(storedFeature));
+  const openingRefreshDayRef = useRef<string | null>(null);
   const dataRef = useRef<MarketOverviewResponse | null>(data);
   dataRef.current = data;
   const alertState = useBreakingNewsAlerts(loadAlerts, undefined, 6);
@@ -160,7 +175,12 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, onOpenCompa
   }), [alertState]);
 
   const applyIncoming = useCallback((raw: MarketOverviewResponse) => {
-    const incoming = keepAShareInformation(raw);
+    const temporalReference = raw.market_data.phase === undefined
+      ? new Date(raw.observed_at)
+      : new Date();
+    const incoming = keepAShareInformation(
+      filterMarketOverviewTemporalData(raw, shanghaiDay(temporalReference)),
+    );
     const next = mergeStableAnomalySnapshot(dataRef.current, incoming);
     setData(next);
     if (next.status !== "unavailable" && next.market_data.quality !== "unavailable") {
@@ -230,6 +250,11 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, onOpenCompa
   }, []);
 
   useEffect(() => {
+    const timer = window.setInterval(() => setClockNow(new Date()), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
     if (!autoRefresh || !visible) return;
     const timer = window.setInterval(() => void refresh(), realtimeTransport === "sse" ? 30_000 : 5_000);
     return () => window.clearInterval(timer);
@@ -258,9 +283,26 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, onOpenCompa
   const focusedRegion = anomalyFeatures.has(activeFeature)
     ? "anomalies"
     : feedFeatures.has(activeFeature) ? "feed" : "sectors";
+  const displayNow = data?.market_data.phase === undefined && data?.observed_at
+    ? new Date(data.observed_at)
+    : clockNow;
+  const displayDay = shanghaiDay(displayNow);
+  const temporalData = useMemo(
+    () => data ? filterMarketOverviewTemporalData(data, displayDay) : null,
+    [data, displayDay],
+  );
+  const session = marketSessionDisplay({
+    now: displayNow,
+    phase: data?.market_data.phase,
+    points: temporalData?.minute_series ?? [],
+  });
+  const sessionAnomalies = temporalData?.anomalies ?? [];
+  const sessionLiveFeed = temporalData?.live_feed ?? [];
+  const showMinuteChart = (session.stage === "live" || session.stage === "postclose")
+    && (temporalData?.minute_series.length ?? 0) > 0;
   const slots = useMemo(() => indexSlots(data?.indices ?? []), [data?.indices]);
-  const numberedAnomalyItems = useMemo(() => numberedAnomalies(data?.anomalies ?? []), [data?.anomalies]);
-  const selectedAnomaly = data?.anomalies.find((item) => item.anomaly_id === selectedAnomalyId) ?? null;
+  const numberedAnomalyItems = useMemo(() => numberedAnomalies(sessionAnomalies), [sessionAnomalies]);
+  const selectedAnomaly = sessionAnomalies.find((item) => item.anomaly_id === selectedAnomalyId) ?? null;
   const effectiveSelectedAnomaly = selectedAnomaly ?? numberedAnomalyItems[0]?.event ?? null;
   const effectiveSelectedAnomalyId = effectiveSelectedAnomaly?.anomaly_id ?? null;
   const marketData = data?.market_data;
@@ -276,6 +318,12 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, onOpenCompa
     && !error
   );
   const liveReady = snapshotReady && freshness === "live";
+
+  useEffect(() => {
+    if (session.stage !== "awaiting_first_tick" || openingRefreshDayRef.current === displayDay) return;
+    openingRefreshDayRef.current = displayDay;
+    void refresh();
+  }, [displayDay, refresh, session.stage]);
 
   const statusLabel = data && loading
     ? "正在更新最新数据"
@@ -413,13 +461,23 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, onOpenCompa
           <div><small>{timeLabel(effectiveSelectedAnomaly.occurred_at)} · {effectiveSelectedAnomaly.direction === "positive" ? "正向异动" : effectiveSelectedAnomaly.direction === "negative" ? "负向异动" : effectiveSelectedAnomaly.direction === "uncertain" ? "影响待核验" : "中性异动"}</small><strong>{effectiveSelectedAnomaly.headline}</strong></div>
           <div>{effectiveSelectedAnomaly.themes.length ? effectiveSelectedAnomaly.themes.slice(0, 3).map((theme) => <em key={theme}>{theme}</em>) : <em>无题材标签</em>}</div>
         </section>}
-        <div className="overview-chart-shell"><OverviewMinuteChart points={data?.minute_series ?? []} anomalies={data?.anomalies ?? []} selectedAnomalyId={effectiveSelectedAnomalyId} /></div>
+        <div className="overview-chart-shell">{showMinuteChart
+          ? <OverviewMinuteChart points={temporalData?.minute_series ?? []} anomalies={sessionAnomalies} selectedAnomalyId={effectiveSelectedAnomalyId} />
+          : <div className="overview-market-wait" data-stage={session.stage} role="status">
+              <span className="overview-market-wait-pulse" aria-hidden="true" />
+              <small>{session.stage === "waiting_open" || session.stage === "call_auction" ? "距离 09:30 开盘" : "A 股实时行情"}</small>
+              <strong>{session.title}</strong>
+              {(session.stage === "waiting_open" || session.stage === "call_auction")
+                && <time dateTime={`PT${session.secondsToOpen}S`}>{formatOpeningCountdown(session.secondsToOpen)}</time>}
+              <p>{session.detail}</p>
+            </div>}
+        </div>
       </section>
 
       <section className={`overview-anomaly-panel ${focusedRegion === "anomalies" ? "focused" : ""}`} aria-label="异动记录">
-        <header><b>异动记录</b><span>{data?.anomalies.length ?? 0} 条</span></header>
-        <div className="overview-anomaly-list">{(data?.anomalies.length ?? 0) === 0
-          ? <p className="overview-empty">暂无已验证异动</p>
+        <header><b>异动记录</b><span>{sessionAnomalies.length} 条</span></header>
+        <div className="overview-anomaly-list">{sessionAnomalies.length === 0
+          ? <p className="overview-empty">{session.stage === "waiting_open" || session.stage === "call_auction" ? "等待开盘后接收今日异动" : session.stage === "closed" ? "今日休市，无盘中异动" : "正在监控今日已验证异动"}</p>
           : numberedAnomalyItems.map(({ event: item, number }) => <button
             key={item.anomaly_id} type="button" aria-pressed={effectiveSelectedAnomalyId === item.anomaly_id}
             aria-label={`${timeLabel(item.occurred_at)} ${item.label}`}
@@ -429,9 +487,9 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, onOpenCompa
 
       <section className={`overview-feed-panel ${focusedRegion === "feed" ? "focused" : ""}`} aria-label="A 股关联资讯">
         <header><div><b>A 股关联资讯</b><span>仅保留已关联 A 股的公开来源</span></div><Activity size={15} /></header>
-        <div className="overview-feed-list">{(data?.live_feed.length ?? 0) === 0
-          ? <p className="overview-empty">暂无已关联 A 股的实时资讯</p>
-          : data?.live_feed.map((item) => <article key={item.event_id}>
+        <div className="overview-feed-list">{sessionLiveFeed.length === 0
+          ? <p className="overview-empty">{session.stage === "waiting_open" || session.stage === "call_auction" ? "等待开盘后接收今日关联资讯" : session.stage === "closed" ? "今日休市，暂不关联盘中资讯" : "正在接收今日 A 股关联资讯"}</p>
+          : sessionLiveFeed.map((item) => <article key={item.event_id}>
             <time><Clock3 size={12} />{timeLabel(item.occurred_at)}</time><h2>{item.headline}</h2>
             {item.summary && <p>{item.summary}</p>}
             <div>{item.themes.map((theme) => <span key={theme}>{theme}</span>)}<small>{item.source}</small></div>

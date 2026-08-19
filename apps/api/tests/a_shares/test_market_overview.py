@@ -383,6 +383,33 @@ def test_overview_labels_previous_close_snapshot_before_open() -> None:
     assert result.market_data.quality == "ready"
 
 
+def test_overview_removes_previous_session_tape_events_and_news_before_open(tmp_path) -> None:
+    cache_path = tmp_path / "market-overview.json"
+    timestamped_news = event(0, event_type="market_news")
+    previous = service(
+        Source(),
+        news_repository=NewsRepository(events=[timestamped_news]),
+    ).current(NOW)
+    assert previous.minute_series
+    assert previous.anomalies
+    assert previous.live_feed
+    cache_path.write_text(previous.model_dump_json(), encoding="utf-8")
+    premarket = datetime(2026, 7, 30, 0, 20, tzinfo=timezone.utc)
+
+    restored = service(
+        Source(),
+        clock=lambda: premarket,
+        cache_path=cache_path,
+        defer_initial_refresh=True,
+    ).current(premarket)
+
+    assert restored.market_data.phase == "premarket"
+    assert restored.market_data.freshness == "previous_close"
+    assert restored.minute_series == ()
+    assert restored.anomalies == ()
+    assert restored.live_feed == ()
+
+
 def test_overview_labels_same_day_snapshot_as_live_during_session() -> None:
     intraday = datetime(2026, 7, 29, 2, 30, tzinfo=timezone.utc)
     result = service(

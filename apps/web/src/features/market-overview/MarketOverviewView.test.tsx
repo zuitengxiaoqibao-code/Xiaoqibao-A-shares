@@ -404,6 +404,7 @@ describe("MarketOverviewView", () => {
 
   it("does not call a previous-close snapshot real-time before the session opens", async () => {
     localStorage.clear();
+    vi.setSystemTime(new Date("2026-07-30T09:20:00+08:00"));
     const previousClose = {
       ...overview,
       market_data: {
@@ -416,6 +417,11 @@ describe("MarketOverviewView", () => {
     render(<MarketOverviewView load={() => Promise.resolve(previousClose)} />);
 
     expect(await screen.findByText("已加载上一交易日快照 · 等待开盘")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "上证指数分时与异动" })).toHaveTextContent("集合竞价进行中");
+    expect(screen.getByRole("region", { name: "上证指数分时与异动" })).toHaveTextContent("00:10:00");
+    expect(screen.getByRole("region", { name: "异动记录" })).not.toHaveTextContent("光电共封装 CPO");
+    expect(screen.getByRole("region", { name: "A 股关联资讯" })).not.toHaveTextContent("算力方向活跃");
+    expect(screen.queryByLabelText("上证指数分时图")).not.toBeInTheDocument();
     expect(screen.queryByText("已加载最新数据 · 实时监控中")).not.toBeInTheDocument();
     expect(screen.getByRole("progressbar", { name: "首页数据加载进度" })).toHaveAttribute("data-verified-target", "100");
     localStorage.clear();
