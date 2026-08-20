@@ -1,6 +1,7 @@
 import asyncio
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+import time
 
 import pytest
 
@@ -353,6 +354,28 @@ async def test_diagnosis_keeps_local_analysis_when_fundamentals_fail() -> None:
     assert result.overall_status == "partial"
     assert "fundamentals" in result.missing_data
     assert result.action == "observe"
+
+
+@pytest.mark.asyncio
+async def test_diagnosis_bounds_slow_finance_without_blocking_local_analysis() -> None:
+    class SlowFinance:
+        def fetch(self, _symbol: str):
+            time.sleep(0.2)
+            raise RuntimeError("finance remained unavailable")
+
+    service = AShareDiagnosisService(
+        bar_repository=FakeBars({"600000": bars()}), market_source=FakeMarket(),
+        finance_source=SlowFinance(), news_repository=EmptyNews(),
+        realtime_source_timeout_seconds=0.02,
+    )
+
+    result = await asyncio.wait_for(
+        service.diagnose("600000", AS_OF, persist=False), timeout=0.1
+    )
+
+    assert result.sections["trend"].status == "ready"
+    assert result.sections["fundamentals"].status == "unavailable"
+    assert "读取超时" in result.sections["fundamentals"].explanation
 
 
 @pytest.mark.asyncio

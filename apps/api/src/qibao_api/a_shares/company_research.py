@@ -446,15 +446,24 @@ class CompanyResearchService:
                 latest = await asyncio.to_thread(self.version_repository.latest, symbol)
             except Exception:
                 latest = None
-            if latest is not None and latest.as_of == selected_date:
+            if latest is not None and latest.as_of <= selected_date:
                 self._schedule_core_refresh(symbol, selected_date)
-                cached_reason = (
-                    f"已展示本地研究缓存（生成于 {latest.generated_at.astimezone().strftime('%Y-%m-%d %H:%M:%S')}），"
-                    "后台正在刷新最新真实数据。"
-                )
+                if latest.as_of == selected_date:
+                    cached_reason = (
+                        f"已展示本地研究缓存（生成于 {latest.generated_at.astimezone().strftime('%Y-%m-%d %H:%M:%S')}），"
+                        "后台正在刷新最新真实数据。"
+                    )
+                    cached_status = latest.status
+                else:
+                    cached_reason = (
+                        f"已展示历史研究缓存（研究截止日 {latest.as_of.isoformat()}），"
+                        "后台正在刷新当前研究日的真实数据。"
+                    )
+                    cached_status = "partial"
                 if progress_callback is not None:
                     progress_callback("cache", cached_reason)
                 return latest.model_copy(update={
+                    "status": cached_status,
                     "reasons": tuple(dict.fromkeys((*latest.reasons, cached_reason))),
                 })
         diagnosis_task = asyncio.create_task(self.diagnosis_service.diagnose(symbol, selected_date))

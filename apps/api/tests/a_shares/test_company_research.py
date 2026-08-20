@@ -254,6 +254,46 @@ async def test_company_research_returns_same_day_cache_before_slow_core_refresh(
 
 
 @pytest.mark.asyncio
+async def test_company_research_returns_previous_cache_while_new_day_refreshes() -> None:
+    cached = await CompanyResearchService(
+        DiagnosisService(diagnosis()), FinancialSource(financial_history()),
+        ProfileSource(), clock=lambda: NOW - timedelta(days=1),
+    ).get("600519", date(2026, 8, 2))
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class BlockingDiagnosis:
+        async def diagnose(self, _symbol: str, _as_of: date) -> AShareDiagnosis:
+            started.set()
+            await release.wait()
+            return diagnosis()
+
+    class Versions:
+        def latest(self, _symbol: str):
+            return cached
+
+        def append(self, value):
+            return value
+
+    service = CompanyResearchService(
+        BlockingDiagnosis(), FinancialSource(financial_history()), ProfileSource(),
+        version_repository=Versions(), clock=lambda: NOW,
+    )
+    try:
+        result = await asyncio.wait_for(
+            service.get("600519", date(2026, 8, 3)), timeout=0.1
+        )
+        assert result.as_of == date(2026, 8, 2)
+        assert result.status == "partial"
+        assert any("研究截止日 2026-08-02" in reason for reason in result.reasons)
+        await asyncio.wait_for(started.wait(), timeout=1)
+    finally:
+        release.set()
+        await asyncio.sleep(0)
+        service.close()
+
+
+@pytest.mark.asyncio
 async def test_company_research_keeps_latest_frozen_version_when_core_refresh_fails() -> None:
     cached = await CompanyResearchService(
         DiagnosisService(diagnosis()), FinancialSource(financial_history()),
@@ -269,14 +309,17 @@ async def test_company_research_keeps_latest_frozen_version_when_core_refresh_fa
             assert symbol == "600519"
             return cached
 
-    result = await CompanyResearchService(
+    service = CompanyResearchService(
         DiagnosisFailure(), FinancialSource(financial_history()), ProfileSource(),
         version_repository=Versions(), clock=lambda: NOW,
-    ).get("600519", date(2026, 8, 3))
+    )
+    result = await service.get("600519", date(2026, 8, 3))
+    await asyncio.sleep(0)
 
     assert result.as_of == date(2026, 8, 2)
     assert result.status == "partial"
-    assert any("沿用最近冻结研究版本" in reason for reason in result.reasons)
+    assert any("历史研究缓存" in reason for reason in result.reasons)
+    service.close()
 
 
 @pytest.mark.asyncio

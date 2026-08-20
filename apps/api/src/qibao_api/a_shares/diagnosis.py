@@ -142,6 +142,7 @@ class AShareDiagnosisService:
         classification_repository: ClassificationRepositoryPort | None = None,
         fund_flow_repository: FundFlowRepositoryPort | None = None,
         trading_calendar=None,
+        realtime_source_timeout_seconds: float = 3.0,
     ) -> None:
         self.bar_repository = bar_repository
         self.market_source = market_source
@@ -152,6 +153,7 @@ class AShareDiagnosisService:
         self.classification_repository = classification_repository
         self.fund_flow_repository = fund_flow_repository
         self.trading_calendar = trading_calendar
+        self.realtime_source_timeout_seconds = realtime_source_timeout_seconds
         self._factor_cache = QuantFactorCache()
 
     async def inspect_sources(
@@ -379,7 +381,7 @@ class AShareDiagnosisService:
             self._market(
                 symbol, as_of, cutoff=cutoff, degrade_authorization=not persist
             ),
-            self._finance(
+            self._bounded_finance(
                 symbol, as_of, cutoff=cutoff, degrade_authorization=not persist
             ),
         )
@@ -439,6 +441,26 @@ class AShareDiagnosisService:
             diagnosis, input_payload=input_payload
         )
         return self.research_repository.get_diagnosis(snapshot_id)
+
+    async def _bounded_finance(
+        self, symbol: str, as_of: date, *, cutoff: datetime | None = None,
+        degrade_authorization: bool = False,
+    ) -> tuple[FundamentalSnapshot | None, str | None]:
+        try:
+            return await asyncio.wait_for(
+                self._finance(
+                    symbol,
+                    as_of,
+                    cutoff=cutoff,
+                    degrade_authorization=degrade_authorization,
+                ),
+                timeout=self.realtime_source_timeout_seconds,
+            )
+        except TimeoutError:
+            return (
+                None,
+                f"通达信财务读取超时（{self.realtime_source_timeout_seconds:g}秒），已保留本地行情分析。",
+            )
 
     async def _market(
         self, symbol: str, as_of: date, *, cutoff: datetime | None = None,

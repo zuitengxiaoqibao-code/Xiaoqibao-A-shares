@@ -1,4 +1,5 @@
 from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -228,23 +229,38 @@ class SinaFinancialHistorySource:
     def fetch(self, symbol: str, limit: int = 20) -> FinancialHistory:
         prefix = "sh" if symbol.startswith(("6", "9")) else "sz"
         client = self._client or self._client_factory()
-        rows: list[tuple[str, tuple[SinaReportRow, ...]]] = []
+
+        def fetch_report(report_type: str) -> tuple[SinaReportRow, ...]:
+            response = client.get(
+                "https://quotes.sina.cn/cn/api/openapi.php/CompanyFinanceService.getFinanceReport2022",
+                params={
+                    "paperCode": f"{prefix}{symbol}",
+                    "source": report_type,
+                    "type": "0",
+                    "page": "1",
+                    "num": str(limit),
+                },
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=self._timeout,
+            )
+            response.raise_for_status()
+            return parse_sina_report(
+                response.json(), report_type=report_type, limit=limit
+            )
+
+        report_types = ("lrb", "fzb", "llb")
         try:
-            for report_type in ("lrb", "fzb", "llb"):
-                response = client.get(
-                    "https://quotes.sina.cn/cn/api/openapi.php/CompanyFinanceService.getFinanceReport2022",
-                    params={
-                        "paperCode": f"{prefix}{symbol}",
-                        "source": report_type,
-                        "type": "0",
-                        "page": "1",
-                        "num": str(limit),
-                    },
-                    headers={"User-Agent": "Mozilla/5.0"},
-                    timeout=self._timeout,
-                )
-                response.raise_for_status()
-                rows.append((report_type, parse_sina_report(response.json(), report_type=report_type, limit=limit)))
+            with ThreadPoolExecutor(
+                max_workers=len(report_types), thread_name_prefix="sina-financial"
+            ) as executor:
+                futures = {
+                    report_type: executor.submit(fetch_report, report_type)
+                    for report_type in report_types
+                }
+                rows = [
+                    (report_type, futures[report_type].result())
+                    for report_type in report_types
+                ]
         finally:
             if self._owns_client and client is not self._client:
                 client.close()

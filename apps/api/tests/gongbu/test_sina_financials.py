@@ -1,7 +1,10 @@
 from datetime import date
 from decimal import Decimal
+import threading
+import time
 
 from qibao_api.gongbu.sina_financials import (
+    SinaFinancialHistorySource,
     merge_financial_reports,
     parse_sina_report,
 )
@@ -104,3 +107,33 @@ def test_merge_financial_reports_calculates_ratios_and_annual_series() -> None:
     assert history.revenue_cagr_3y == Decimal("0.224744871391589049098642037")
     assert history.net_profit_cagr_3y == Decimal("0.224744871391589049098642037")
     assert history.latest_period.period == date(2025, 12, 31)
+
+
+def test_sina_financial_history_fetches_three_reports_concurrently() -> None:
+    class Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return payload({"20251231": []})
+
+    class Client:
+        def __init__(self) -> None:
+            self.lock = threading.Lock()
+            self.active = 0
+            self.max_active = 0
+
+        def get(self, *_args, **_kwargs) -> Response:
+            with self.lock:
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+            time.sleep(0.05)
+            with self.lock:
+                self.active -= 1
+            return Response()
+
+    client = Client()
+    result = SinaFinancialHistorySource(client=client).fetch("600519")
+
+    assert result.periods
+    assert client.max_active == 3
