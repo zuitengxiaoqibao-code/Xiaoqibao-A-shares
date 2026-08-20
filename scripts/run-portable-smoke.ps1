@@ -471,14 +471,18 @@ try {
                     candidate_count = if ($null -eq $QuantStrategy) { 0 } else { $QuantStrategy.candidates.Count }
                     coverage_percent = if ($null -eq $QuantStrategy) { $null } else { $QuantStrategy.regime.coverage_percent }
                     formula_version = if ($null -eq $QuantStrategy) { $null } else { $QuantStrategy.formula_version }
-                    detail = $QuantDetail
+                    detail = Repair-Utf8Text ([string]$QuantDetail)
                 }
                 late_session = [ordered]@{
                     status = $LateSession.status
                     candidate_count = $LateSession.candidate_count
                     monitor_stage = $LateSession.monitor_stage
                     source_quality = $LateSession.source_quality
-                    detail = $LateSession.no_data_reason
+                    detail = if ($LateSession.no_data_reason) {
+                        Repair-Utf8Text ([string]$LateSession.no_data_reason)
+                    } else {
+                        $null
+                    }
                 }
                 portfolio_risk = [ordered]@{
                     status = $PortfolioRisk.status
@@ -491,7 +495,7 @@ try {
                     symbol = if ($null -eq $CompanyResearch) { $null } else { $CompanyResearch.symbol }
                     evidence_coverage = if ($null -eq $CompanyResearch) { $null } else { $CompanyResearch.evidence_coverage }
                     counter_case_count = if ($null -eq $CompanyResearch) { 0 } else { $CompanyResearch.counter_case.Count }
-                    detail = $CompanyResearchDetail
+                    detail = Repair-Utf8Text ([string]$CompanyResearchDetail)
                 }
                 tdx_professional = [ordered]@{
                     status = $ProfessionalStatus
@@ -541,7 +545,15 @@ try {
             Assert-NoManifestMojibake $ManifestJson
             [IO.File]::WriteAllText($ReleaseManifestPath, $ManifestJson, [Text.UTF8Encoding]::new($false))
         } catch {
-            Write-Warning "Release manifest quality gate summary could not be updated."
+            $DiagnosticMatch = if ($null -ne $ManifestJson) {
+                [regex]::Match($ManifestJson, '\uFFFD|[\u00C3\u00C2\u00E5\u00E6\u00E7\u00E8\u00E9\u00EF\u00F0][^\r\n]{0,2}[\u0080-\u00BF]')
+            }
+            $DiagnosticValue = if ($DiagnosticMatch -and $DiagnosticMatch.Success) {
+                $DiagnosticMatch.Value
+            } else {
+                "none"
+            }
+            Write-Warning ("Release manifest quality gate summary could not be updated: {0}; diagnostic_match={1}" -f $_.Exception.Message, $DiagnosticValue)
         }
     }
     $StartupEvidence = [ordered]@{
