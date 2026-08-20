@@ -281,6 +281,64 @@ def test_service_reuses_slow_history_factors_across_same_day_refreshes() -> None
     assert bars.calls == 1
 
 
+def test_cached_quote_first_response_skips_slow_history_until_live_refresh() -> None:
+    quote = TdxRealtimeQuote(
+        symbol="600000",
+        exchange_code="600000.SH",
+        name="浦发银行",
+        previous_close=Decimal("9.19"),
+        price=Decimal("9.65"),
+        high=Decimal("9.65"),
+        low=Decimal("9.17"),
+        open=Decimal("9.19"),
+        volume=Decimal("300"),
+        amount_wan=Decimal("27.90"),
+        observed_at=datetime(2026, 8, 17, 15, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+        intraday_average_price=None,
+    )
+
+    class CachedSource:
+        def current_quotes(self):
+            return (quote,)
+
+        def current_quotes_are_cached(self):
+            return True
+
+    class SlowBars:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def latest_many(self, *_args, **_kwargs):
+            self.calls += 1
+            return {}
+
+        def latest(self, *_args, **_kwargs):
+            self.calls += 1
+            return ()
+
+    bars = SlowBars()
+
+    service = LateSessionSelectionService(
+        local_market_source=CachedSource(),
+        bar_repository=bars,
+        instrument_directory=SimpleNamespace(resolve=lambda _symbol: None),
+        tencent_source=None,
+        clock=lambda: datetime(2026, 8, 17, 7, 1, tzinfo=ZoneInfo("UTC")),
+    )
+
+    result = service.current(
+        settings=LateSessionRuleSettings(
+            turnover_rate_enabled=False,
+            market_cap_enabled=False,
+            twenty_day_limit_up_enabled=False,
+        )
+    )
+
+    assert result.status in {"partial", "ready"}
+    assert result.candidate_count == 1
+    assert bars.calls == 0
+
+
 def test_live_monitor_reduces_full_market_to_bounded_pool_and_keeps_strict_match() -> None:
     observed_at = datetime(2026, 8, 17, 14, 31, tzinfo=ZoneInfo("Asia/Shanghai"))
     quotes = tuple(

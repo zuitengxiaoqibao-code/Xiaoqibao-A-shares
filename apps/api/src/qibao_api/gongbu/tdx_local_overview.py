@@ -628,6 +628,7 @@ class LocalTdxOverviewSource:
         self._fallback_refresh_lock = threading.Lock()
         self._snapshot = self._load_cache()
         self._quotes: tuple[TdxRealtimeQuote, ...] = self._load_quotes_cache()
+        self._quotes_are_cached = bool(self._quotes)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._refresh_failure_count = 0
@@ -641,6 +642,11 @@ class LocalTdxOverviewSource:
         """Return the latest full local quote set, never a representative sample."""
         with self._lock:
             return self._quotes
+
+    def current_quotes_are_cached(self) -> bool:
+        """Whether the quote set is from disk and awaits a live refresh."""
+        with self._lock:
+            return self._quotes_are_cached
 
     def start(self) -> None:
         with self._lock:
@@ -707,6 +713,7 @@ class LocalTdxOverviewSource:
         with self._lock:
             self._snapshot = snapshot
             self._quotes = quotes
+            self._quotes_are_cached = False
         self._save_cache(snapshot)
         return snapshot
 
@@ -720,6 +727,7 @@ class LocalTdxOverviewSource:
             # screeners instead of publishing an empty quote set.
             if fallback_quotes:
                 self._quotes = fallback_quotes
+                self._quotes_are_cached = False
         self._save_cache(snapshot)
         return snapshot
 

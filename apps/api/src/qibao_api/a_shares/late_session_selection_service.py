@@ -80,7 +80,10 @@ class LateSessionSelectionService:
             return self._publish_if_changed(self._unavailable(trading_date, local_now, phase, "本地通达信全市场实时快照尚未就绪"))
         enriched = self._enrich(quotes, now)
         symbols = tuple(raw.symbol for raw in quotes)
-        slow_factors = self.factor_cache.get_or_build(
+        quotes_are_cached = bool(
+            getattr(self.local_market_source, "current_quotes_are_cached", lambda: False)()
+        )
+        slow_factors = {} if quotes_are_cached else self.factor_cache.get_or_build(
             trading_date,
             symbols,
             lambda requested: self._history_windows(requested, trading_date),
@@ -125,6 +128,7 @@ class LateSessionSelectionService:
             volume_ratio = data.get("volume_ratio") or (
                 self._volume_ratio_from_baseline(raw.volume, slow.volume_baseline_5d)
                 if slow is not None
+                else None if quotes_are_cached
                 else self._volume_ratio(raw.symbol, raw.volume)
             )
             quote = LateSessionQuote(
@@ -137,7 +141,9 @@ class LateSessionSelectionService:
                 turnover_rate=turnover_rate,
                 market_cap_yi=market_cap_yi,
                 twenty_day_limit_up_count=(
-                    slow.twenty_day_limit_up_count
+                    None
+                    if quotes_are_cached
+                    else slow.twenty_day_limit_up_count
                     if slow is not None
                     else self._twenty_day_limit_count(raw.symbol, trading_date)
                 ),
@@ -213,6 +219,8 @@ class LateSessionSelectionService:
             limitations.append("15:00后停止高频刷新，结果为收盘冻结快照")
         if len(evaluation_quotes) < len(quotes):
             limitations.append(f"全市场 {len(quotes)} 只已缩减为 {len(evaluation_quotes)} 只尾盘实时监控池")
+        if quotes_are_cached:
+            limitations.append("当前使用上次真实行情缓存；历史因子将在实时行情刷新后补齐")
         if has_observation_candidates:
             limitations.append("严格候选为空；当前展示通过时间、涨幅、换手率和市值核心条件的观察候选，未通过与待补齐项已逐股标注")
         source_evidence = ["通达信本地全市场实时快照", "本地日线仓储20交易日窗口"]
