@@ -1,4 +1,4 @@
-import { Database, KeyRound, Play, Save, ShieldAlert, Volume2 } from "lucide-react";
+import { KeyRound, Play, Save, ShieldAlert, Volume2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { friendlyError } from "../../shared/friendlyError";
@@ -10,10 +10,6 @@ import type {
   AShareUniverseSyncLoader,
   ComplianceAction,
   ComplianceLoader,
-  HistoryCoverageLoader,
-  HistorySyncController,
-  HistorySyncLoader,
-  HistorySyncStarter,
   LocalSourceSettingsLoader,
   LocalSourceSettingsWriter,
   PreparationLoader,
@@ -22,10 +18,6 @@ import type {
   SpeechSettingsSaver,
   SpeechSynthesizer,
   SpeechVoiceLoader,
-  TdxImportController,
-  TdxImportLoader,
-  TdxImportScanner,
-  TdxImportStarter,
 } from "./types";
 import type { StockPreparation } from "../stock-cockpit/types";
 import { LocalSourceSettingsSection } from "./LocalSourceSettingsSection";
@@ -44,11 +36,15 @@ type Props = {
   complianceAction?: ComplianceAction;
   syncAShareUniverse?: AShareUniverseSyncLoader;
   loadSourceHealth?: SourceHealthLoader;
-  loadHistorySync?: HistorySyncLoader;
-  loadHistoryCoverage?: HistoryCoverageLoader;
-  startHistoryBackfill?: HistorySyncStarter;
-  pauseHistorySync?: HistorySyncController;
-  resumeHistorySync?: HistorySyncController;
+  loadHistorySync?: import("./types").HistorySyncLoader;
+  loadHistoryCoverage?: import("./types").HistoryCoverageLoader;
+  retryFailedHistory?: import("./types").HistorySyncController;
+  restartCurrentHistory?: import("./types").HistorySyncStarter;
+  loadOfficialTdxInfo?: import("./types").OfficialTdxInfoLoader;
+  loadHistorySupplement?: import("./types").HistorySupplementLoader;
+  loadTdxImport?: import("./types").TdxImportLoader;
+  scanTdxImport?: import("./types").TdxImportScanner;
+  startOfficialTdxSupplement?: import("./types").HistorySupplementStarter;
   loadSpeech?: SpeechSettingsLoader;
   loadSpeechVoices?: SpeechVoiceLoader;
   saveSpeech?: SpeechSettingsSaver;
@@ -56,11 +52,6 @@ type Props = {
   loadLocalSources?: LocalSourceSettingsLoader;
   detectLocalSources?: LocalSourceSettingsWriter;
   saveLocalSources?: LocalSourceSettingsWriter;
-  loadTdxImport?: TdxImportLoader;
-  scanTdxImport?: TdxImportScanner;
-  startTdxImport?: TdxImportStarter;
-  pauseTdxImport?: TdxImportController;
-  resumeTdxImport?: TdxImportController;
 };
 
 export function DataSettingsView({
@@ -76,11 +67,6 @@ export function DataSettingsView({
   detectLocalSources,
   saveLocalSources,
   loadSourceHealth,
-  loadTdxImport,
-  scanTdxImport,
-  startTdxImport,
-  pauseTdxImport,
-  resumeTdxImport,
 }: Props) {
   const [settings, setSettings] = useState<AISettingsView | null>(null);
   const [baseUrl, setBaseUrl] = useState("");
@@ -93,10 +79,6 @@ export function DataSettingsView({
   const [speechVoices, setSpeechVoices] = useState<Array<{ id: string; label: string }>>([]);
   const [speechBusy, setSpeechBusy] = useState(false);
   const [speechMessage, setSpeechMessage] = useState("");
-  const [tdxImport, setTdxImport] = useState<import("./types").TdxImportJob | null>(null);
-  const [tdxScan, setTdxScan] = useState<import("./types").TdxImportScan | null>(null);
-  const [tdxMessage, setTdxMessage] = useState("");
-  const [tdxBusy, setTdxBusy] = useState(false);
   const mounted = useRef(true);
   const generation = useRef(0);
   const controller = useRef<AbortController | null>(null);
@@ -158,33 +140,6 @@ export function DataSettingsView({
     });
     return () => nextController.abort();
   }, [loadSpeech, loadSpeechVoices]);
-
-  useEffect(() => {
-    if (!loadTdxImport) return;
-    let active = true;
-    const poll = async () => {
-      try { const value = await loadTdxImport(); if (active) setTdxImport(value); } catch (error) { if (active) setTdxMessage(friendlyError(error, "通达信导入状态")); }
-    };
-    void poll();
-    const timer = window.setInterval(() => void poll(), 1200);
-    return () => { active = false; window.clearInterval(timer); };
-  }, [loadTdxImport]);
-
-  const scanLocalTdx = async () => {
-    if (!scanTdxImport) return;
-    setTdxBusy(true); setTdxMessage("");
-    try { setTdxScan(await scanTdxImport()); } catch (error) { setTdxMessage(friendlyError(error, "本地通达信扫描")); } finally { setTdxBusy(false); }
-  };
-  const importLocalTdx = async () => {
-    if (!startTdxImport) return;
-    setTdxBusy(true); setTdxMessage("");
-    try { setTdxImport(await startTdxImport()); } catch (error) { setTdxMessage(friendlyError(error, "本地通达信导入")); } finally { setTdxBusy(false); }
-  };
-  const controlTdxImport = async (action: "pause" | "resume") => {
-    if (!tdxImport || !(action === "pause" ? pauseTdxImport : resumeTdxImport)) return;
-    setTdxBusy(true); setTdxMessage("");
-    try { setTdxImport(await (action === "pause" ? pauseTdxImport! : resumeTdxImport!)(tdxImport.job_id)); } catch (error) { setTdxMessage(friendlyError(error, "通达信导入任务")); } finally { setTdxBusy(false); }
-  };
 
   const save = async () => {
     const request = ++generation.current;
@@ -304,19 +259,12 @@ export function DataSettingsView({
       detect={detectLocalSources}
       save={saveLocalSources}
     />}
-    {(loadTdxImport || scanTdxImport || startTdxImport) && <section className="settings-section tdx-import-section">
-      <div className="settings-heading"><div><Database size={20} /><span><h2>通达信日线数据导入</h2><p>读取本机 vipdoc 或日线压缩包；只增量写入，不关闭通达信。</p></span></div></div>
-      <div className="settings-actions"><button type="button" className="settings-action secondary" disabled={tdxBusy || !scanTdxImport} onClick={() => void scanLocalTdx()}>扫描本地数据</button><button type="button" className="settings-action" disabled={tdxBusy || !startTdxImport} onClick={() => void importLocalTdx()}>导入本地增量</button>{tdxImport?.state === "running" && <button type="button" className="settings-action danger" disabled={tdxBusy || !pauseTdxImport} onClick={() => void controlTdxImport("pause")}>暂停导入</button>}{tdxImport?.state === "paused" && <button type="button" className="settings-action" disabled={tdxBusy || !resumeTdxImport} onClick={() => void controlTdxImport("resume")}>继续导入</button>}</div>
-      {tdxScan && <p className="speech-settings-message" role="status">发现日线文件 {tdxScan.day_files} 个 · 可读取 {tdxScan.readable_files} 个 · 最新日期 {tdxScan.latest_trade_date ?? "--"}</p>}
-      {tdxImport && <div className="tdx-import-progress" role="status" aria-live="polite"><strong>{tdxImport.stage} · {tdxImport.percent.toFixed(2)}%</strong><progress max={100} value={tdxImport.percent} /><small>{tdxImport.processed_files}/{tdxImport.total_files} 文件 · 新增 {tdxImport.imported_rows} · 替换 {tdxImport.replaced_rows} · 跳过 {tdxImport.skipped_rows} · 失败 {tdxImport.failed_files}{tdxImport.latest_trade_date ? ` · 最新 ${tdxImport.latest_trade_date}` : ""}</small>{tdxImport.errors.slice(0, 3).map((item) => <small key={`${item.path}-${item.code}`} className="settings-error-line">{item.code}: {item.detail}</small>)}</div>}
-      {tdxMessage && <p className="speech-settings-message" role="alert">{tdxMessage}</p>}
-    </section>}
     {loadSourceHealth && <SourceHealthPanel load={loadSourceHealth} />}
     <section className="settings-section">
       <div className="settings-heading">
         <div><KeyRound size={20} /><span>
           <h2>OpenAI 兼容接口</h2>
-          <p>{settings?.configured ? `密钥已保存 · ${settings.api_key_hint ?? "已脱敏"}` : "尚未配置 AI"}</p>
+          <p>{settings ? `${settings.message ?? (settings.configured ? "AI 接口已配置" : "尚未配置 AI 接口")}${settings.configured ? ` · 密钥已保存 ${settings.api_key_hint ?? "已脱敏"}` : ""}` : "正在读取本地 AI 配置"}</p>
         </span></div>
       </div>
       <div className="settings-form">

@@ -7,8 +7,9 @@ import { friendlyError } from "../../shared/friendlyError";
 import { DataWatermarkStrip } from "../../shared/evidence/DataWatermarkStrip";
 import { WatchlistRiskPanel } from "../portfolio-risk/WatchlistRiskPanel";
 import type { WatchlistRiskLoader } from "../portfolio-risk/types";
+import { readRiskSnapshot, writeRiskSnapshot } from "./riskSnapshotCache";
 
-export function BeginnerRiskView({ load, analyzePortfolio, loadPortfolio, savePortfolioPosition, removePortfolioPosition, selectedSymbol, loadWatchlistRisk }: {
+export function BeginnerRiskView({ load, analyzePortfolio, loadPortfolio, savePortfolioPosition, removePortfolioPosition, selectedSymbol, loadWatchlistRisk, now }: {
   load?: () => Promise<RiskStatus>;
   analyzePortfolio?: PortfolioRiskAnalyzer;
   loadPortfolio?: PortfolioRiskLoader;
@@ -16,21 +17,64 @@ export function BeginnerRiskView({ load, analyzePortfolio, loadPortfolio, savePo
   removePortfolioPosition?: PortfolioPositionRemover;
   selectedSymbol?: string | null;
   loadWatchlistRisk?: WatchlistRiskLoader;
+  now?: Date;
 }) {
-  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  const initial = useRef<ReturnType<typeof readRiskSnapshot> | undefined>(undefined);
+  if (initial.current === undefined) initial.current = readRiskSnapshot(now ?? new Date());
+  const [state, setState] = useState<"loading" | "ready" | "error">(
+    initial.current ? "ready" : "loading",
+  );
   const [message, setMessage] = useState("");
-  const [data, setData] = useState<RiskStatus | null>(null);
+  const [data, setData] = useState<RiskStatus | null>(initial.current?.value ?? null);
+  const [refreshing, setRefreshing] = useState(false);
   const request = useRef(0);
+  const dataRef = useRef(data);
+  dataRef.current = data;
   const reload = useCallback(async () => {
     const current = ++request.current;
     if (!load) { setState("error"); setMessage("风险数据服务尚未连接"); return; }
-    setState("loading"); setMessage("");
-    try { const loaded = await load(); if (current === request.current) { setData(loaded); setState("ready"); } }
-    catch (error) { if (current === request.current) { setState("error"); setMessage(friendlyError(error, "风险数据")); } }
-  }, [load]);
-  useEffect(() => { void reload(); return () => { request.current += 1; }; }, [reload]);
+    setRefreshing(true);
+    if (dataRef.current === null) setState("loading");
+    setMessage("");
+    try {
+      const loaded = await load();
+      if (current === request.current) {
+        const stored = writeRiskSnapshot(loaded, now ?? new Date());
+        dataRef.current = stored.value;
+        setData(stored.value);
+        setState("ready");
+      }
+    } catch (error) {
+      if (current === request.current) {
+        const reason = friendlyError(error, "风险数据");
+        if (dataRef.current) {
+          setState("ready");
+          setMessage(`最新风险刷新失败：${reason}`);
+        } else {
+          setState("error");
+          setMessage(reason);
+        }
+      }
+    } finally {
+      if (current === request.current) setRefreshing(false);
+    }
+  }, [load, now]);
+  useEffect(() => {
+    void reload();
+    const refreshIfVisible = () => {
+      if (document.visibilityState === "visible") void reload();
+    };
+    const interval = window.setInterval(refreshIfVisible, 60_000);
+    document.addEventListener("visibilitychange", refreshIfVisible);
+    return () => {
+      request.current += 1;
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", refreshIfVisible);
+    };
+  }, [reload]);
   return <main className="beginner-page beginner-risk"><header><p className="eyebrow">风险提醒</p><h1>当前风险状态</h1><p>这里汇总研究过程中需要优先留意的数据与市场风险。</p></header>
-    {state === "loading" && <section className="beginner-empty" aria-busy="true"><RefreshCw className="spin" /><h2>正在检查风险状态</h2></section>}
+    {data && <div className="risk-refresh-state" role="status" data-state={message ? "delayed" : refreshing ? "refreshing" : "ready"}>{message || (refreshing ? "正在后台核验最新风险，当前继续展示完整缓存" : "已加载最新风险快照，实时监控中")}</div>}
+    {state === "loading" && !data && <section className="beginner-empty" aria-busy="true"><RefreshCw className="spin" /><h2>正在检查风险状态</h2></section>}
     {state === "error" && <section className="beginner-empty risk-error" role="alert"><AlertTriangle /><h2>{message}</h2><button type="button" onClick={() => void reload()}>重试</button></section>}
     {state === "ready" && data && <><DataWatermarkStrip
       status={data.overall_level === "unavailable" ? "unavailable" : "ready"}

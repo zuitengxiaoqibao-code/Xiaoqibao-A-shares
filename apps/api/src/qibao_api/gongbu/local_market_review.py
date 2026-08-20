@@ -1,5 +1,6 @@
 import threading
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Callable
 
@@ -22,6 +23,7 @@ class LocalMarketReviewSource:
         dragon_tiger_source=None,
         bar_repository=None,
         symbol_provider: Callable[[], tuple[str, ...] | list[str]] | None = None,
+        trading_calendar=None,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         refresh_seconds: int = 600,
         scan_workers: int = 2,
@@ -38,6 +40,7 @@ class LocalMarketReviewSource:
         self.dragon_tiger_source = dragon_tiger_source
         self.bar_repository = bar_repository
         self.symbol_provider = symbol_provider
+        self.trading_calendar = trading_calendar
         self.clock = clock
         self.refresh_seconds = refresh_seconds
         self.scan_workers = scan_workers
@@ -46,7 +49,7 @@ class LocalMarketReviewSource:
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
-        self._current = None if defer_cache_validation else self._load_cache()
+        self._current = self._load_cache(validate_cache=not defer_cache_validation)
 
     def current(self) -> MarketReviewSnapshot | None:
         with self._lock:
@@ -56,7 +59,7 @@ class LocalMarketReviewSource:
         """Return whether the persisted review is behind the local bar store."""
         if self.defer_cache_validation:
             with self._lock:
-                return self._current is None
+                return self._current is None or self._current.refresh_required
         if self.cache_path is None or not self.cache_path.exists():
             return False
         try:
@@ -119,6 +122,7 @@ class LocalMarketReviewSource:
                 observed_at=observed_at,
                 name_resolver=self.name_resolver,
                 history_source=history_source,
+                expected_trade_date=self._expected_trade_date(target_date, observed_at),
             )
         if self._stop.is_set():
             raise RuntimeError("local market review refresh cancelled")
@@ -258,7 +262,7 @@ class LocalMarketReviewSource:
                 pass
             self._stop.wait(self.refresh_seconds)
 
-    def _load_cache(self) -> MarketReviewSnapshot | None:
+    def _load_cache(self, *, validate_cache: bool = True) -> MarketReviewSnapshot | None:
         if not self.cache_path.exists():
             return None
         try:
@@ -267,8 +271,20 @@ class LocalMarketReviewSource:
             )
         except (OSError, ValueError):
             return None
+        if not validate_cache:
+            return cached.model_copy(update={
+                "quality": "stale",
+                "refresh_required": True,
+                "refresh_reason": "历史复盘缓存正在后台校验",
+                "warnings": tuple(dict.fromkeys((*cached.warnings, "market_review_cache_validation_pending"))),
+            })
         if self.cache_is_stale():
-            return None
+            return cached.model_copy(update={
+                "quality": "stale",
+                "refresh_required": True,
+                "refresh_reason": "本地历史库存在更晚记录，等待真实复盘刷新",
+                "warnings": tuple(dict.fromkeys((*cached.warnings, "market_review_cache_stale"))),
+            })
         return cached
 
     def _repository_latest_trade_date(self) -> date | None:
@@ -289,6 +305,20 @@ class LocalMarketReviewSource:
             return date.fromisoformat(str(value))
         except ValueError:
             return None
+
+    def _expected_trade_date(self, target_date: date, observed_at: datetime) -> date:
+        calendar = self.trading_calendar
+        if calendar is None:
+            return target_date
+        local_now = observed_at.astimezone(ZoneInfo("Asia/Shanghai"))
+        try:
+            if not calendar.is_trading_day(target_date):
+                return calendar.previous_trading_day(target_date)
+            if target_date == local_now.date() and local_now.time() < time(15, 30):
+                return calendar.previous_trading_day(target_date)
+        except (OSError, RuntimeError, ValueError):
+            return target_date
+        return target_date
 
     def _save_cache(self, snapshot: MarketReviewSnapshot) -> None:
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)

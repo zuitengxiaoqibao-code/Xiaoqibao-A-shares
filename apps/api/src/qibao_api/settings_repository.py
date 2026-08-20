@@ -3,6 +3,7 @@ import os
 import re
 import secrets
 import tempfile
+import threading
 import unicodedata
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -86,8 +87,18 @@ class AISettingsRepository:
     ) -> None:
         self.path = data_dir / "ai-settings.json"
         self.protector = protector
+        self._lock = threading.RLock()
+        self._cached: AISettingsState | None = None
 
     def load(self) -> AISettingsState:
+        with self._lock:
+            if self._cached is not None:
+                return self._cached
+            loaded = self._load_from_disk()
+            self._cached = loaded
+            return loaded
+
+    def _load_from_disk(self) -> AISettingsState:
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
             if not isinstance(raw, dict):
@@ -126,44 +137,44 @@ class AISettingsRepository:
         return revision
 
     def save(self, settings: AISettings) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "base_url": settings.base_url,
-            "model": settings.model,
-            "revision": secrets.token_hex(16),
-        }
-        if self.protector is None:
-            payload["api_key"] = settings.api_key
-        else:
-            payload["api_key_protected"] = self.protector.protect(settings.api_key)
-        descriptor, temporary_name = tempfile.mkstemp(
-            prefix=f".{self.path.name}.", suffix=".tmp", dir=self.path.parent
-        )
-        temporary_path = Path(temporary_name)
-        try:
-            if os.name != "nt":
-                os.fchmod(descriptor, 0o600)
-            with os.fdopen(descriptor, "w", encoding="utf-8") as file:
-                json.dump(
-                    payload,
-                    file,
-                    ensure_ascii=False,
-                )
-                file.flush()
-                os.fsync(file.fileno())
-            os.replace(temporary_path, self.path)
-            if os.name != "nt":
-                self.path.chmod(0o600)
-        except Exception:
+        with self._lock:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "base_url": settings.base_url,
+                "model": settings.model,
+                "revision": secrets.token_hex(16),
+            }
+            if self.protector is None:
+                payload["api_key"] = settings.api_key
+            else:
+                payload["api_key_protected"] = self.protector.protect(settings.api_key)
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=f".{self.path.name}.", suffix=".tmp", dir=self.path.parent
+            )
+            temporary_path = Path(temporary_name)
             try:
-                os.close(descriptor)
-            except OSError:
-                pass
-            temporary_path.unlink(missing_ok=True)
-            raise
+                if os.name != "nt":
+                    os.fchmod(descriptor, 0o600)
+                with os.fdopen(descriptor, "w", encoding="utf-8") as file:
+                    json.dump(payload, file, ensure_ascii=False)
+                    file.flush()
+                    os.fsync(file.fileno())
+                os.replace(temporary_path, self.path)
+                if os.name != "nt":
+                    self.path.chmod(0o600)
+                self._cached = settings
+            except Exception:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+                temporary_path.unlink(missing_ok=True)
+                raise
 
     def delete(self) -> None:
-        self.path.unlink(missing_ok=True)
+        with self._lock:
+            self.path.unlink(missing_ok=True)
+            self._cached = UnconfiguredAISettings(reason="missing")
 
 
 class EffectiveAISettingsResolver:

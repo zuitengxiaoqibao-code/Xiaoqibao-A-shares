@@ -5,7 +5,9 @@ import { blockerLabel, compactFreshnessLabel } from "./freshnessCopy";
 type Props = {
   status: "ready" | "partial" | "unavailable" | "stale" | "error";
   tradeDate?: string | null;
+  tradeDateLabel?: string;
   observedAt?: string | null;
+  observedLabel?: string;
   generatedAt?: string | null;
   sourceCount?: number | null;
   sampleCount?: number | null;
@@ -23,11 +25,11 @@ function time(value: string | null | undefined): string {
   return Number.isFinite(parsed.getTime()) ? parsed.toLocaleString("zh-CN", { hour12: false }) : "--";
 }
 
-export function DataWatermarkStrip({ status, tradeDate = null, observedAt = null, generatedAt = null, sourceCount = null, sampleCount = null, totalCount = null, coveragePercent = null, refreshState = "ready", limitations = [] }: Props) {
+export function DataWatermarkStrip({ status, tradeDate = null, tradeDateLabel = "交易日", observedAt = null, observedLabel = "观测", generatedAt = null, sourceCount = null, sampleCount = null, totalCount = null, coveragePercent = null, refreshState = "ready", limitations = [] }: Props) {
   return <section className="data-watermark-strip" data-status={status} aria-label="数据证据水印">
     <span><ShieldCheck size={14} /><b>{compactFreshnessLabel(status)}</b></span>
-    <span><Database size={14} />交易日 <b>{tradeDate ?? "--"}</b></span>
-    <span><Clock3 size={14} />观测 <b>{time(observedAt)}</b></span>
+    <span><Database size={14} />{tradeDateLabel} <b>{tradeDate ?? "--"}</b></span>
+    <span><Clock3 size={14} />{observedLabel} <b>{time(observedAt)}</b></span>
     <span>生成 <b>{time(generatedAt)}</b></span>
     <span>{sourceCount === null ? "来源数不可用" : `${sourceCount} 个来源`}</span>
     <span>{sampleCount === null ? "样本数不可用" : `${sampleCount} 条样本`}</span>

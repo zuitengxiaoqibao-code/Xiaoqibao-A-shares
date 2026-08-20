@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { OperationsView } from "./OperationsView";
@@ -207,5 +207,72 @@ describe("OperationsView", () => {
     expect(screen.getByText("修复审计 · 1 条最近记录").closest("details")).toHaveAttribute("open");
     expect(screen.getByText(/覆盖 99.8% → 100%/)).toBeVisible();
     expect(screen.getByText(/写入 10 行/)).toBeVisible();
+  });
+
+  it("puts the full data repair workflow at the top with a truthful stale-data gate", async () => {
+    const startRepair = vi.fn().mockResolvedValue({
+      job_id: "full-repair", state: "pending", stage: "queued", percent: 0,
+      source_url: "https://data.tdx.com.cn/vipdoc/hsjday.zip", downloaded_bytes: 0,
+      day_file_count: 0, supported_file_count: 0, imported_rows: 0, replaced_rows: 0,
+      skipped_rows: 0, failed_files: 0, validated_bytes: 0, total_validation_bytes: 0,
+      extracted_files: 0, total_extract_files: 0, processed_files: 0,
+      total_import_files: 0, online_total: 0, online_ready: 0, online_failed: 0,
+      online_pending: 0, remaining_gap_count: 0, source_attempts: [],
+      created_at: "2026-08-19T02:00:00Z", updated_at: "2026-08-19T02:00:00Z",
+    });
+    render(<OperationsView
+      loadStatus={() => Promise.resolve(status)}
+      setSchedulerPaused={() => Promise.resolve(status.scheduler)}
+      createBackup={() => Promise.resolve(status.backups[0])}
+      verifyBackup={() => Promise.reject(new Error("unused"))}
+      runManualJob={() => Promise.resolve({ report_id: "report-manual" })}
+      loadHistoryRepairCenter={() => Promise.resolve({
+        coverage: {
+          target_date: "2026-08-18", universe_count: 5970, backfill_complete_count: 5816,
+          eligible_count: 5816, target_date_count: 5540, target_date_coverage_percent: 92.8,
+          dominant_trade_date: "2026-08-15", dominant_date_count: 5540,
+          dominant_date_coverage_percent: 92.8, coverage_percent: 97.42,
+          fragmented_latest_count: 430, missing_history_count: 154, quality: "stale",
+          blockers: ["dominant_trade_date_behind_target"], lag_trading_days: 1, is_fresh: false,
+        }, current_job: null, total_gap_count: 430, offset: 0, limit: 100,
+        gaps: [{ symbol: "600001", bar_count: 250, latest_trade_date: "2026-08-15", gap_kind: "behind_dominant_date" }],
+      })}
+      loadOfficialTdxInfo={() => Promise.resolve({ size_label: "520.67MB", modified_at: "2026-08-18T15:58:48+08:00" })}
+      loadHistorySupplement={() => Promise.resolve({
+        job_id: "full-repair-old", state: "partial", stage: "partial", percent: 100,
+        source_url: "https://data.tdx.com.cn/vipdoc/hsjday.zip", downloaded_bytes: 545971146,
+        total_bytes: 545971146, validated_bytes: 545971146, total_validation_bytes: 545971146,
+        day_file_count: 6000, supported_file_count: 5970, extracted_files: 6000,
+        total_extract_files: 6000, processed_files: 5970, total_import_files: 5970,
+        imported_rows: 931444, replaced_rows: 84, skipped_rows: 100,
+        failed_files: 0, online_total: 154, online_ready: 140, online_failed: 14,
+        online_pending: 0, final_target_date: "2026-08-18",
+        final_dominant_trade_date: "2026-08-15", final_dominant_coverage_percent: 92.8,
+        final_history_coverage_percent: 97.42, remaining_gap_count: 154,
+        final_quality: "stale", final_blockers: ["dominant_trade_date_behind_target"],
+        result_detail: "主导交易日仍落后，剩余缺口已保留，可继续重试。",
+        source_attempts: [
+          { source: "tdx_local", state: "completed", detail: "本机增量导入完成", observed_at: "2026-08-19T02:00:00Z" },
+          { source: "tdx_official", state: "completed", detail: "官方包导入完成", observed_at: "2026-08-19T02:00:00Z" },
+          { source: "mootdx", state: "completed", detail: "通达信在线成功 100 只", observed_at: "2026-08-19T02:00:00Z" },
+          { source: "baidu", state: "completed", detail: "百度后备成功 40 只", observed_at: "2026-08-19T02:00:00Z" },
+        ],
+        created_at: "2026-08-19T01:00:00Z", updated_at: "2026-08-19T02:00:00Z",
+        finished_at: "2026-08-19T02:00:00Z",
+      })}
+      startOfficialTdxSupplement={startRepair}
+    />);
+
+    const heading = await screen.findByRole("heading", { name: "数据完整性与补齐中心" });
+    expect(heading.compareDocumentPosition(screen.getByRole("heading", { name: "全市场日线修复中心" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText(/数据不完整，相关分析已降级/)).toBeInTheDocument();
+    expect(screen.getByText(/落后 1 个交易日/)).toBeInTheDocument();
+    expect(screen.getByText(/下载与校验/)).toBeInTheDocument();
+    expect(screen.getByText(/解压文件/)).toBeInTheDocument();
+    expect(screen.getByText("在线补缺")).toBeInTheDocument();
+    expect(screen.getByText(/通达信在线成功 100 只/)).toBeInTheDocument();
+    expect(screen.getByText(/百度后备成功 40 只/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "一键全面修复" }));
+    await waitFor(() => expect(startRepair).toHaveBeenCalledTimes(1));
   });
 });

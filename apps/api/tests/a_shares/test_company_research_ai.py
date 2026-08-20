@@ -1,6 +1,8 @@
 import json
 from datetime import datetime, timezone
 
+import httpx
+
 from qibao_api.a_shares.company_research_ai import CompanyResearchAIGateway
 from qibao_api.contracts.company_research import CompanyResearchAIRequest, CompanyResearchAIEvidence
 
@@ -55,3 +57,22 @@ def test_company_research_ai_rejects_unfrozen_evidence_or_trade_instructions() -
 
     assert result.status == "invalid"
     assert result.analysis is None
+
+
+def test_company_research_ai_exposes_rate_limit_without_hiding_frozen_research() -> None:
+    http_request = httpx.Request("POST", "https://provider.example/v1/chat/completions")
+
+    class Provider:
+        def complete(self, _payload):
+            raise httpx.HTTPStatusError(
+                "limited", request=http_request,
+                response=httpx.Response(429, request=http_request),
+            )
+
+    result = CompanyResearchAIGateway(
+        Provider(), provider_name="openai-compatible", model="model",
+    ).analyze(request())
+
+    assert result.status == "http_error"
+    assert result.ai_state == "rate_limited"
+    assert result.ai_message == "AI 接口触发限流，稍后将自动重试"

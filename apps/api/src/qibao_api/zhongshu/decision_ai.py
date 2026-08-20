@@ -7,6 +7,7 @@ from typing import Literal, Protocol
 import httpx
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from qibao_api.ai_status import AIConnectionState, classify_ai_exception
 from qibao_api.settings_repository import AISettings, EffectiveAISettingsResolver
 
 
@@ -130,6 +131,8 @@ class DecisionAIResult(BaseModel):
     evidence_ids: tuple[str, ...]
     invalid_output_count: int = Field(ge=0)
     provider_error_count: int = Field(ge=0)
+    ai_state: AIConnectionState | None = None
+    ai_message: str | None = None
 
 
 _PLAN_LANGUAGE = re.compile(
@@ -162,8 +165,12 @@ class DecisionAIGateway:
         evidence_ids = tuple(item.evidence_id for item in request.evidence)
         try:
             raw = self.provider.complete(self._request(request))
-        except Exception:
-            return self._unavailable(request, provider_errors=1)
+        except Exception as error:
+            status = classify_ai_exception(error)
+            return self._unavailable(
+                request, provider_errors=1,
+                ai_state=status.state, ai_message=status.message,
+            )
         try:
             payload = _ProviderOutput.model_validate_json(raw)
             self._validate(payload, request)
@@ -203,12 +210,14 @@ class DecisionAIGateway:
 
     def _unavailable(
         self, request: DecisionAIRequest, *, invalid: int = 0, provider_errors: int = 0,
+        ai_state: AIConnectionState | None = None, ai_message: str | None = None,
     ) -> DecisionAIResult:
         return DecisionAIResult(
             status="unavailable", explanation=None, statements=(), provider=self.provider_name,
             model=self.model, prompt_version=self.prompt_version, generated_at=self.clock(),
             evidence_ids=tuple(item.evidence_id for item in request.evidence),
             invalid_output_count=invalid, provider_error_count=provider_errors,
+            ai_state=ai_state, ai_message=ai_message,
         )
 
 

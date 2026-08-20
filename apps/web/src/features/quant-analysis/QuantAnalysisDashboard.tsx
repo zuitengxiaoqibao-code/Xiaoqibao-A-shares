@@ -248,7 +248,10 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
   );
   const strategyResource = useQuantLiveResource({
     loader: strategyLoader,
-    intervalMs: 5_000,
+    // The realtime snapshot stream carries strategy updates. HTTP polling is
+    // a deliberately slower fallback so a candidate scan is never restarted
+    // by a five-second full-dashboard request.
+    intervalMs: 30_000,
     enabled: Boolean(loadQuantStrategy),
     errorMessage: "短线策略数据暂不可用",
     mergeData: retainReadyStrategySnapshot,

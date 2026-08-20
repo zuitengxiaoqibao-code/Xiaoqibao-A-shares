@@ -73,3 +73,17 @@ def test_terminal_job_cannot_be_paused_or_resumed_through_service(tmp_path) -> N
         assert "paused" in str(error)
     else:
         raise AssertionError("completed import job must not be resumed")
+
+
+def test_recover_interrupted_pauses_orphaned_running_and_pending_job(tmp_path) -> None:
+    repository = TdxImportRepository(tmp_path / "tdx-import.sqlite3", clock=lambda: NOW)
+    running = repository.create_job(("D:/tdx/vipdoc",))
+    repository.update(running.job_id, state="running", stage="importing", total_files=10, processed_files=3)
+
+    repository.recover_interrupted()
+
+    recovered = repository.get(running.job_id)
+    assert recovered.state == "paused"
+    assert recovered.stage == "restart_paused"
+    assert recovered.processed_files == 3
+    assert recovered.finished_at == NOW

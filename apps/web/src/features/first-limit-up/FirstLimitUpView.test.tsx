@@ -9,6 +9,10 @@ const board: FirstLimitUpBoard = {
   asset: "a_share",
   status: "ready",
   as_of: "2026-07-24",
+  scan_date: "2026-07-24",
+  expected_scan_date: "2026-07-24",
+  scan_updated_at: "2026-07-24T08:00:00Z",
+  refresh_required: false,
   rule_version: "first-limit-up-v1",
   universe_count: 5980,
   history_eligible_count: 5980,
@@ -254,5 +258,32 @@ describe("FirstLimitUpView", () => {
     expect(await screen.findByText(/当前尚未完成全市场筛选/)).toBeInTheDocument();
     expect(document.body).not.toHaveTextContent(/旧版|老版|旧数据/);
     expect(screen.getByRole("region", { name: "首次涨停摘要" })).toHaveTextContent(/已识别涨停\s*0\s*只/);
+  });
+
+  it("keeps stale cache visible while triggering one real refresh", async () => {
+    const staleBoard: FirstLimitUpBoard = {
+      ...board,
+      as_of: "2026-08-19",
+      scan_date: "2026-07-29",
+      expected_scan_date: "2026-08-19",
+      scan_updated_at: "2026-07-30T01:17:31Z",
+      refresh_required: true,
+    };
+    const refreshedBoard: FirstLimitUpBoard = {
+      ...staleBoard,
+      scan_date: "2026-08-19",
+      scan_updated_at: "2026-08-19T07:30:00Z",
+      refresh_required: false,
+    };
+    let resolveRefresh: ((value: FirstLimitUpBoard) => void) | undefined;
+    const refresh = vi.fn(() => new Promise<FirstLimitUpBoard>((resolve) => { resolveRefresh = resolve; }));
+
+    render(<FirstLimitUpView load={() => Promise.resolve(staleBoard)} refresh={refresh} />);
+
+    expect(await screen.findByText("2026-07-29")).toBeInTheDocument();
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+    resolveRefresh?.(refreshedBoard);
+    expect(await screen.findByText("2026-08-19")).toBeInTheDocument();
+    expect(screen.getByText(/更新于/)).toBeInTheDocument();
   });
 });

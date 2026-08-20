@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 from threading import Event
 from zoneinfo import ZoneInfo
 
@@ -33,6 +33,7 @@ class FullMarketHistoryService:
         job_repository: HistorySyncRepository,
         clock: Callable[[], datetime],
         failure_pause_threshold: int = 20,
+        trading_calendar=None,
     ) -> None:
         if failure_pause_threshold < 1:
             raise ValueError("failure_pause_threshold must be positive")
@@ -43,11 +44,12 @@ class FullMarketHistoryService:
         self.jobs = job_repository
         self.clock = clock
         self.failure_pause_threshold = failure_pause_threshold
+        self.trading_calendar = trading_calendar
         self._shutdown_requested = Event()
 
     def create_backfill(self) -> HistorySyncJob:
         return self.jobs.create_job(
-            "backfill", self._today(), self.directory.active_symbols()
+            "backfill", self.default_target_date(), self.directory.active_symbols()
         )
 
     def create_incremental(self, target_date: date) -> HistorySyncJob:
@@ -55,7 +57,11 @@ class FullMarketHistoryService:
             "incremental", target_date, self.directory.active_symbols()
         )
 
-    def run(self, job_id: str) -> HistorySyncJob:
+    def run(
+        self,
+        job_id: str,
+        progress: Callable[[HistorySyncJob], None] | None = None,
+    ) -> HistorySyncJob:
         job = self.jobs.get(job_id)
         if job.state in ("paused", "completed", "failed"):
             return job
@@ -91,6 +97,8 @@ class FullMarketHistoryService:
                 return self.jobs.mark_paused(job_id)
             self.jobs.mark_running(job_id, item.symbol)
             state = self._sync_item(job_id, item.symbol)
+            if progress is not None:
+                progress(self.jobs.get(job_id))
             if state == "failed":
                 consecutive_failures += 1
                 if consecutive_failures >= self.failure_pause_threshold:
@@ -106,6 +114,22 @@ class FullMarketHistoryService:
 
     def resume(self, job_id: str) -> HistorySyncJob:
         return self.jobs.resume(job_id)
+
+    def retry_failed(self, job_id: str) -> HistorySyncJob:
+        return self.jobs.retry_failed(job_id)
+
+    def restart_current(self, target_date: date) -> HistorySyncJob:
+        current = self.current_job()
+        if current is not None and current.state in ("pending", "running"):
+            raise ValueError("history sync job is still active")
+        if current is not None and current.state == "paused":
+            if current.target_date == target_date:
+                return self.jobs.retry_failed(current.job_id)
+            self.jobs.mark_failed(current.job_id)
+        job = self.create_incremental(target_date)
+        if job.state in ("completed", "failed") and job.failed_count:
+            return self.jobs.retry_failed(job.job_id)
+        return job
 
     def job(self, job_id: str) -> HistorySyncJob:
         return self.jobs.get(job_id)
@@ -141,6 +165,9 @@ class FullMarketHistoryService:
             if aggregate.universe_count else None
         )
         blockers: list[str] = []
+        lag_trading_days = self._trading_day_lag(
+            aggregate.dominant_trade_date, target_date,
+        )
         if not aggregate.universe_count:
             blockers.append("a_share_universe_unavailable")
         if aggregate.dominant_trade_date is None:
@@ -149,9 +176,12 @@ class FullMarketHistoryService:
             blockers.append("dominant_date_coverage_below_98_percent")
         if coverage is not None and coverage < 98:
             blockers.append("history_coverage_below_98_percent")
+        if lag_trading_days:
+            blockers.append("dominant_trade_date_behind_target")
         quality = (
             "ready"
             if aggregate.universe_count and not blockers
+            else "stale" if aggregate.universe_count and lag_trading_days
             else "partial" if aggregate.universe_count else "unavailable"
         )
         return HistoryCoverageSummary(
@@ -169,7 +199,26 @@ class FullMarketHistoryService:
             missing_history_count=aggregate.missing_history_count,
             quality=quality,
             blockers=tuple(blockers),
+            lag_trading_days=lag_trading_days,
+            is_fresh=bool(
+                aggregate.universe_count
+                and aggregate.dominant_trade_date == target_date
+            ),
         )
+
+    def create_target_repair(self, target_date: date) -> HistorySyncJob | None:
+        """Create an online multi-source job only for symbols with a real gap."""
+        symbols = self.directory.active_symbols()
+        values = self.bar_repository.coverage(symbols, target_date)
+        gaps = tuple(
+            symbol for symbol in symbols
+            if values[symbol].bar_count < self.ELIGIBLE_BARS
+            or values[symbol].latest_trade_date is None
+            or values[symbol].latest_trade_date < target_date
+        )
+        if not gaps:
+            return None
+        return self.jobs.create_job("backfill", target_date, gaps)
 
     def repair_center(
         self,
@@ -249,6 +298,8 @@ class FullMarketHistoryService:
         if (
             job.mode == "backfill"
             and coverage.bar_count >= self.BACKFILL_BARS
+            and coverage.latest_trade_date is not None
+            and coverage.latest_trade_date >= job.target_date
         ) or (
             job.mode == "incremental"
             and coverage.latest_trade_date is not None
@@ -328,3 +379,37 @@ class FullMarketHistoryService:
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("history sync clock must return an aware datetime")
         return value.astimezone(ZoneInfo("Asia/Shanghai")).date()
+
+    def default_target_date(self) -> date:
+        value = self.clock()
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("history sync clock must return an aware datetime")
+        local = value.astimezone(ZoneInfo("Asia/Shanghai"))
+        candidate = local.date()
+        if local.time() < time(15, 5):
+            candidate -= timedelta(days=1)
+        if self.trading_calendar is None:
+            while candidate.weekday() >= 5:
+                candidate -= timedelta(days=1)
+            return candidate
+        for _ in range(15):
+            if self.trading_calendar.is_trading_day(candidate):
+                return candidate
+            candidate -= timedelta(days=1)
+        raise ValueError("最近已完成交易日无法确认")
+
+    def _trading_day_lag(self, dominant_date: date | None, target_date: date) -> int:
+        if dominant_date is None or dominant_date >= target_date:
+            return 0
+        count = 0
+        candidate = dominant_date + timedelta(days=1)
+        while candidate <= target_date:
+            is_session = (
+                self.trading_calendar.is_trading_day(candidate)
+                if self.trading_calendar is not None
+                else candidate.weekday() < 5
+            )
+            if is_session:
+                count += 1
+            candidate += timedelta(days=1)
+        return count

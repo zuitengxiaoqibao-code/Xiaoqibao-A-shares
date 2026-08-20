@@ -98,7 +98,7 @@ describe("DataSettingsView", () => {
       onAIChanged={refresh}
     /></StrictMode>);
 
-    await screen.findByText("尚未配置 AI");
+    await screen.findByText("尚未配置 AI 接口");
     fireEvent.change(screen.getByLabelText("API 地址"), { target: { value: "https://strict.example/v1" } });
     fireEvent.change(screen.getByLabelText("模型"), { target: { value: "strict-model" } });
     fireEvent.change(screen.getByLabelText("API 密钥"), { target: { value: "secret" } });
@@ -292,7 +292,7 @@ describe("DataSettingsView", () => {
       deleteAI={vi.fn()}
     />);
 
-    expect(await screen.findByText("密钥已保存 · ****alue")).toBeInTheDocument();
+    expect(await screen.findByText("AI 接口已配置 · 密钥已保存 ****alue")).toBeInTheDocument();
     expect(screen.queryByDisplayValue("secret-value")).not.toBeInTheDocument();
     expect(screen.getByLabelText("API 密钥")).toHaveValue("");
   });
@@ -308,7 +308,7 @@ describe("DataSettingsView", () => {
       onAIChanged={refresh}
     />);
 
-    await screen.findByText("尚未配置 AI");
+    await screen.findByText("尚未配置 AI 接口");
     fireEvent.change(screen.getByLabelText("API 地址"), { target: { value: "https://ai.example/v1" } });
     fireEvent.change(screen.getByLabelText("模型"), { target: { value: "model" } });
     fireEvent.change(screen.getByLabelText("API 密钥"), { target: { value: "secret-value" } });
@@ -330,9 +330,9 @@ describe("DataSettingsView", () => {
       deleteAI={deleteAI}
     />);
 
-    await screen.findByText("密钥已保存 · ****ocal");
+    await screen.findByText("AI 接口已配置 · 密钥已保存 ****ocal");
     fireEvent.click(screen.getByRole("button", { name: "清除 AI 配置" }));
-    expect(await screen.findByText("密钥已保存 · ****env1")).toBeInTheDocument();
+    expect(await screen.findByText("AI 接口已配置 · 密钥已保存 ****env1")).toBeInTheDocument();
     expect(screen.getByLabelText("API 地址")).toHaveValue("https://env.example/v1");
   });
 
@@ -347,7 +347,7 @@ describe("DataSettingsView", () => {
       onAIChanged={refresh}
     />);
 
-    await screen.findByText("尚未配置 AI");
+    await screen.findByText("尚未配置 AI 接口");
     fireEvent.change(screen.getByLabelText("API 地址"), { target: { value: "https://ai.example/v1" } });
     fireEvent.change(screen.getByLabelText("模型"), { target: { value: "model" } });
     fireEvent.change(screen.getByLabelText("API 密钥"), { target: { value: "secret" } });
@@ -355,5 +355,103 @@ describe("DataSettingsView", () => {
     view.unmount();
     await act(async () => finish({ configured: true, base_url: "https://ai.example/v1", model: "model", api_key_hint: "****cret" }));
     expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("keeps history repair controls out of data settings after migration to operations", async () => {
+    const scanLocal = vi.fn().mockResolvedValue({
+      scanned_paths: [], day_files: 5545, archive_files: 0, readable_files: 5545,
+      latest_trade_date: "2026-07-17", errors: [],
+    });
+    const startOfficial = vi.fn().mockResolvedValue({
+      job_id: "supplement-1", state: "pending", stage: "queued", percent: 0,
+      source_url: "https://data.tdx.com.cn/vipdoc/hsjday.zip", downloaded_bytes: 0,
+      day_file_count: 0, supported_file_count: 0, imported_rows: 0,
+      replaced_rows: 0, skipped_rows: 0, failed_files: 0,
+      created_at: "2026-08-19T02:00:00Z", updated_at: "2026-08-19T02:00:00Z",
+    });
+    const retryFailed = vi.fn().mockResolvedValue({
+      job_id: "history-old", mode: "backfill", target_date: "2026-07-29",
+      state: "pending", pause_requested: false, total_count: 5981,
+      ready_count: 5256, failed_count: 0, skipped_count: 0, pending_count: 725,
+      tdx_ready_count: 0, baidu_ready_count: 5256,
+      created_at: "2026-07-29T02:00:00Z", updated_at: "2026-08-19T02:00:00Z",
+    });
+    const restartCurrent = vi.fn().mockResolvedValue({ ...await retryFailed(), target_date: "2026-08-19" });
+
+    render(<DataSettingsView
+      loadAI={() => Promise.resolve(emptySettings)} saveAI={vi.fn()} deleteAI={vi.fn()}
+      loadHistoryCoverage={() => Promise.resolve({
+        target_date: "2026-08-19", universe_count: 5584, backfill_complete_count: 5118,
+        eligible_count: 5118, target_date_count: 1, target_date_coverage_percent: 0.02,
+        dominant_trade_date: "2026-07-29", dominant_date_count: 5118,
+        dominant_date_coverage_percent: 91.65, coverage_percent: 91.65,
+        fragmented_latest_count: 1, missing_history_count: 466, quality: "partial", blockers: [],
+      })}
+      loadHistorySync={() => Promise.resolve({
+        job_id: "history-old", mode: "backfill", target_date: "2026-07-29",
+        state: "paused", pause_requested: true, total_count: 5981,
+        ready_count: 5256, failed_count: 391, skipped_count: 0, pending_count: 334,
+        tdx_ready_count: 0, baidu_ready_count: 5256,
+        created_at: "2026-07-29T02:00:00Z", updated_at: "2026-08-17T02:00:00Z",
+      })}
+      loadOfficialTdxInfo={() => Promise.resolve({ size_label: "520.67MB", modified_at: "2026-08-18T15:58:48+08:00" })}
+      loadHistorySupplement={() => Promise.resolve(null)}
+      loadTdxImport={() => Promise.resolve({
+        job_id: "tdx-old", state: "paused", stage: "restart_paused", paths: [],
+        total_files: 5544, processed_files: 62, imported_rows: 0, replaced_rows: 0,
+        skipped_rows: 29091, failed_files: 0, latest_trade_date: "2026-07-17",
+        current_file: null,
+        percent: 1.12, errors: [], created_at: "2026-08-19T01:00:00Z",
+        updated_at: "2026-08-19T02:00:00Z", finished_at: "2026-08-19T02:00:00Z",
+      })}
+      startOfficialTdxSupplement={startOfficial}
+      retryFailedHistory={retryFailed}
+      restartCurrentHistory={restartCurrent}
+      scanTdxImport={scanLocal}
+    />);
+
+    await waitFor(() => expect(screen.getByRole("heading", { name: "数据源、AI 与语音" })).toBeInTheDocument());
+    expect(screen.queryByRole("heading", { name: "历史数据补齐中心" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "通达信日线数据导入" })).not.toBeInTheDocument();
+    expect(scanLocal).not.toHaveBeenCalled();
+    expect(startOfficial).not.toHaveBeenCalled();
+    expect(restartCurrent).not.toHaveBeenCalled();
+  });
+
+  it("does not poll repair state from data settings after migration", async () => {
+    vi.useFakeTimers();
+    const loadOfficial = vi.fn().mockResolvedValue({
+      size_label: "520.67MB", modified_at: "2026-08-18T15:58:48+08:00",
+    });
+    const loadCoverage = vi.fn().mockResolvedValue({
+      target_date: "2026-08-18", universe_count: 5585, backfill_complete_count: 5119,
+      eligible_count: 5119, target_date_count: 1, target_date_coverage_percent: 0.02,
+      dominant_trade_date: "2026-07-29", dominant_date_count: 5119,
+      dominant_date_coverage_percent: 91.66, coverage_percent: 97.44,
+      fragmented_latest_count: 466, missing_history_count: 143, quality: "partial", blockers: [],
+    });
+    const loadSupplement = vi.fn().mockResolvedValue({
+      job_id: "supplement-running", state: "running", stage: "downloading", percent: 30,
+      source_url: "https://data.tdx.com.cn/vipdoc/hsjday.zip", downloaded_bytes: 100,
+      total_bytes: 1000, day_file_count: 0, supported_file_count: 0,
+      imported_rows: 0, replaced_rows: 0, skipped_rows: 0, failed_files: 0,
+      created_at: "2026-08-19T02:00:00Z", updated_at: "2026-08-19T02:00:01Z",
+    });
+
+    render(<DataSettingsView
+      loadAI={() => Promise.resolve(emptySettings)} saveAI={vi.fn()} deleteAI={vi.fn()}
+      loadOfficialTdxInfo={loadOfficial}
+      loadHistoryCoverage={loadCoverage}
+      loadHistorySupplement={loadSupplement}
+    />);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(loadOfficial).not.toHaveBeenCalled();
+    expect(loadCoverage).not.toHaveBeenCalled();
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(2500); });
+    expect(loadSupplement).not.toHaveBeenCalled();
+    expect(loadOfficial).not.toHaveBeenCalled();
+    expect(loadCoverage).not.toHaveBeenCalled();
+    vi.useRealTimers();
   });
 });

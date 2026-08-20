@@ -66,6 +66,28 @@ def test_trade_dates_are_distinct_and_descending(tmp_path) -> None:
     assert repository.trade_dates(limit=10) == [date(2026, 7, 13)]
 
 
+def test_read_only_repository_can_read_an_existing_database_without_schema_writes(tmp_path) -> None:
+    database = tmp_path / "market.duckdb"
+    writable = BarRepository(database, tmp_path / "parquet")
+    writable.upsert([make_bar()])
+
+    readonly = BarRepository(database, tmp_path / "parquet", read_only=True)
+
+    assert readonly.trade_dates(limit=10) == [date(2026, 7, 13)]
+
+
+def test_schema_check_disabled_repository_can_share_database_with_an_open_writer(tmp_path) -> None:
+    database = tmp_path / "market.duckdb"
+    writable = BarRepository(database, tmp_path / "parquet")
+    writable.upsert([make_bar()])
+    writer = duckdb.connect(str(database))
+    try:
+        reader = BarRepository(database, tmp_path / "parquet", ensure_schema=False)
+        assert reader.trade_dates(limit=10) == [date(2026, 7, 13)]
+    finally:
+        writer.close()
+
+
 def test_dominant_trade_date_ignores_sparse_symbols_with_insufficient_history(tmp_path) -> None:
     repository = BarRepository(tmp_path / "market.duckdb", tmp_path / "parquet")
     latest = date(2026, 7, 13)

@@ -1,6 +1,6 @@
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from qibao_api.contracts.bars import DailyBar
@@ -197,7 +197,58 @@ def test_stale_disk_review_cache_is_not_loaded_when_repository_has_newer_day(tmp
         clock=lambda: datetime(2026, 8, 7, tzinfo=timezone.utc),
     )
 
-    assert current.current() is None
+    assert current.current() is not None
+    assert current.current().latest_trade_date == date(2026, 7, 17)
+    assert current.current().refresh_required is True
+    assert current.current().quality == "stale"
+
+
+def test_stale_disk_review_cache_is_retained_with_refresh_state(tmp_path) -> None:
+    class Repository:
+        def __init__(self, latest):
+            self.latest = latest
+
+        def trade_dates(self, limit=1):
+            return [self.latest]
+
+        def latest_many(self, symbols, limit, as_of):
+            return {"600001": [
+                DailyBar(
+                    symbol="600001", trade_date="2026-07-29", open=Decimal("10"),
+                    high=Decimal("10"), low=Decimal("10"), close=Decimal("10"),
+                    volume=100, amount=Decimal("100000"), source="baidu",
+                ),
+                DailyBar(
+                    symbol="600001", trade_date="2026-07-29", open=Decimal("11"),
+                    high=Decimal("11"), low=Decimal("11"), close=Decimal("11"),
+                    volume=200, amount=Decimal("200000"), source="baidu",
+                ),
+            ]}
+
+    cache_path = tmp_path / "market-review.json"
+    cached = LocalMarketReviewSource(
+        vipdoc_root=None,
+        cache_path=cache_path,
+        name_resolver=lambda symbol: "测试股",
+        bar_repository=Repository("2026-07-29"),
+        symbol_provider=lambda: ("600001",),
+        clock=lambda: datetime(2026, 7, 29, tzinfo=timezone.utc),
+    )
+    cached.refresh(as_of=datetime(2026, 7, 29, tzinfo=timezone.utc).date(), include_dragon_tiger=False)
+
+    current = LocalMarketReviewSource(
+        vipdoc_root=None,
+        cache_path=cache_path,
+        name_resolver=lambda symbol: "测试股",
+        bar_repository=Repository("2026-08-18"),
+        symbol_provider=lambda: ("600001",),
+        clock=lambda: datetime(2026, 8, 19, tzinfo=timezone.utc),
+    )
+
+    assert current.current() is not None
+    assert current.current().latest_trade_date == date(2026, 7, 29)
+    assert current.current().refresh_required is True
+    assert current.current().quality == "stale"
 
 
 def test_deferred_cache_validation_does_not_touch_bar_store_during_construction(
@@ -224,5 +275,49 @@ def test_deferred_cache_validation_does_not_touch_bar_store_during_construction(
         defer_cache_validation=True,
     )
 
-    assert deferred.current() is None
+    assert deferred.current() is not None
+    assert deferred.current().quality == "stale"
+    assert deferred.current().refresh_required is True
+    assert deferred.current().refresh_reason == "历史复盘缓存正在后台校验"
     assert deferred.cache_is_stale()
+
+
+def test_non_trading_day_uses_previous_confirmed_session_as_expected_date(tmp_path) -> None:
+    class Calendar:
+        def is_trading_day(self, value):
+            return False
+
+        def previous_trading_day(self, value):
+            return date(2026, 8, 14)
+
+    class Repository:
+        def latest_many(self, symbols, limit, as_of):
+            return {"600001": [
+                DailyBar(
+                    symbol="600001", trade_date="2026-08-13", open=Decimal("10"),
+                    high=Decimal("10"), low=Decimal("10"), close=Decimal("10"),
+                    volume=100, amount=Decimal("100000"), source="baidu",
+                ),
+                DailyBar(
+                    symbol="600001", trade_date="2026-08-14", open=Decimal("11"),
+                    high=Decimal("11"), low=Decimal("11"), close=Decimal("11"),
+                    volume=200, amount=Decimal("200000"), source="baidu",
+                ),
+            ]}
+
+    source = LocalMarketReviewSource(
+        vipdoc_root=None,
+        cache_path=tmp_path / "market-review.json",
+        name_resolver=lambda symbol: "测试股",
+        bar_repository=Repository(),
+        symbol_provider=lambda: ("600001",),
+        trading_calendar=Calendar(),
+        clock=lambda: datetime(2026, 8, 16, 4, 0, tzinfo=timezone.utc),
+    )
+
+    result = source.refresh(as_of=date(2026, 8, 16), include_dragon_tiger=False)
+
+    assert result.expected_trade_date == date(2026, 8, 14)
+    assert result.latest_trade_date == date(2026, 8, 14)
+    assert result.refresh_required is False
+    assert result.quality == "ready"

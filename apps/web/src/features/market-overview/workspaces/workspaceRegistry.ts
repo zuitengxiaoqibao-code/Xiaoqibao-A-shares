@@ -140,7 +140,7 @@ export const WORKSPACE_DEFINITIONS: WorkspaceDefinition[] = [
   define("异动提醒", "竞价与盘中", "alert-inbox", "哪些最新异动按方向、时间和影响股票需要优先处理？", "先处理风险方向和涉及多股的事件，再核对原始来源。", newsTruth, ["local-news"], [
     b("risk-board", "高优先级提醒", "alert-priority", "half"), b("event-timeline", "异动提醒收件箱", "latest-first", "half"), b("evidence-map", "提醒关联股票", "alert-links", "wide"),
   ]),
-  define("板块资金动图", "资金与席位", "sector-flow-audit", "是否获得板块级真实净流入序列，能够描述资金迁移？", "只有取得连续净流入序列才展示资金迁移动图；缺失时直接列出待接字段。", "当前接口未提供板块真实净流入；板块成交额不能替代资金流向。", ["sector-capital-flow"], [
+  define("板块资金动图", "资金与席位", "sector-flow-audit", "是否获得板块级真实净流入序列，能够描述资金迁移？", "只有取得连续净流入序列才展示资金迁移动图；缺失时直接列出待接字段。", "仅采用东财板块主力、大单和超大单净流入原始字段；每个采样点独立标记新鲜度，板块成交额不能替代资金流向。", ["sector-capital-flow"], [
     b("capital-audit", "板块资金字段审计", "sector-flow", "wide"), b("data-audit", "资金动图口径", "flow-boundary", "wide"),
   ]),
   define("个股异动", "竞价与盘中", "stock-anomaly-scatter", "哪些代表股票出现显著振幅、开盘缺口或涨跌变化？", "异动用于发现需要核验的股票，不代表异常原因已经确认。", quoteTruth, ["realtime-quotes", "local-news"], [

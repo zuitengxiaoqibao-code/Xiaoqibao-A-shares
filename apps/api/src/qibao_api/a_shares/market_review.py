@@ -110,6 +110,7 @@ def build_market_review(
     observed_at: datetime,
     name_resolver: Callable[[str], str],
     history_source: str = "tdx-local-day",
+    expected_trade_date: date | None = None,
 ) -> MarketReviewSnapshot:
     latest_trade_date, latest_available_trade_date, latest_trade_date_count, coverage = _review_trade_dates(histories)
     consecutive: list[MarketReviewStock] = []
@@ -243,6 +244,21 @@ def build_market_review(
         else "partial" if ready_count
         else "unavailable"
     )
+    expected_trade_date = expected_trade_date or as_of
+    refresh_required = latest_trade_date != expected_trade_date
+    if latest_trade_date is None:
+        refresh_reason = "历史日线不可用，无法生成复盘"
+    elif latest_trade_date != expected_trade_date:
+        refresh_reason = (
+            "历史日线覆盖日期分散，不能代表查询日期全市场"
+            if latest_available_trade_date == expected_trade_date
+            and latest_available_trade_date != latest_trade_date
+            else "历史日线主导日期落后查询日期"
+        )
+    else:
+        refresh_reason = None
+    if refresh_required and quality == "ready":
+        quality = "stale"
     watermark = MarketDataWatermark(
         dominant_trade_date=latest_trade_date,
         latest_available_trade_date=latest_available_trade_date,
@@ -269,6 +285,7 @@ def build_market_review(
     )
     return MarketReviewSnapshot(
         as_of=as_of,
+        expected_trade_date=expected_trade_date,
         observed_at=observed_at,
         latest_trade_date=latest_trade_date,
         latest_available_trade_date=latest_available_trade_date,
@@ -281,7 +298,9 @@ def build_market_review(
         latest_trade_date_coverage_percent=coverage,
         source=history_source if latest_trade_date else "unavailable",
         quality=quality,
-        universe_count=len(histories),
+        refresh_required=refresh_required,
+        refresh_reason=refresh_reason,
+        universe_count=stock_universe_count,
         history_ready_count=ready_count,
         consecutive_limit_up=tuple(consecutive),
         first_limit_up=tuple(first),

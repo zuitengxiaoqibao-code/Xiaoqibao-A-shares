@@ -105,6 +105,7 @@ class MarketReviewSnapshot(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     as_of: date
+    expected_trade_date: date | None = None
     observed_at: AwareDatetime
     latest_trade_date: date | None = None
     latest_available_trade_date: date | None = None
@@ -112,6 +113,8 @@ class MarketReviewSnapshot(BaseModel):
     latest_trade_date_coverage_percent: Decimal | None = Field(default=None, ge=0, le=100)
     source: str = "unavailable"
     quality: ReviewQuality = "unavailable"
+    refresh_required: bool = False
+    refresh_reason: str | None = None
     universe_count: int = Field(default=0, ge=0)
     history_ready_count: int = Field(default=0, ge=0)
     consecutive_limit_up: tuple[MarketReviewStock, ...] = ()

@@ -64,6 +64,29 @@ describe("workspace insights", () => {
     expect(insights.map((item) => item.label)).not.toContain("成交活跃");
   });
 
+  it("derives sector-flow instruments from the real fund-flow series when present", () => {
+    const withSectorFlow = {
+      ...data,
+      data_scope: { ...data.data_scope, sector_fund_flow_sample_count: 2, sector_fund_flow_snapshot_count: 2 },
+      sector_fund_flow: [
+        { sector_code: "BK1036", sector_name: "人工智能", observed_at: "2026-07-30T10:29:00+08:00", main_net_yi: "20.00", large_net_yi: "9.00", super_net_yi: "11.00", source: "eastmoney-sector-fund-flow", quality: "ready" },
+        { sector_code: "BK1036", sector_name: "人工智能", observed_at: "2026-07-30T10:30:00+08:00", main_net_yi: "23.80", large_net_yi: "10.80", super_net_yi: "13.00", source: "eastmoney-sector-fund-flow", quality: "ready" },
+        { sector_code: "BK0475", sector_name: "银行", observed_at: "2026-07-30T10:29:00+08:00", main_net_yi: "-8.00", large_net_yi: "-4.00", super_net_yi: "-4.00", source: "eastmoney-sector-fund-flow", quality: "ready" },
+        { sector_code: "BK0475", sector_name: "银行", observed_at: "2026-07-30T10:30:00+08:00", main_net_yi: "-9.60", large_net_yi: "-5.40", super_net_yi: "-4.20", source: "eastmoney-sector-fund-flow", quality: "ready" },
+      ],
+    } as unknown as MarketOverviewResponse;
+
+    const insights = buildWorkspaceInsights("板块资金动图", withSectorFlow, buildWorkspaceMarketModel(withSectorFlow));
+
+    expect(insights.map((item) => item.quality)).toEqual(["ready", "ready", "ready", "ready"]);
+    expect(insights.find((item) => item.key === "sector-flow")).toMatchObject({ value: "+14.20亿" });
+    expect(insights.find((item) => item.key === "sector-flow-timeline")).toMatchObject({ value: "2次" });
+    expect(insights.find((item) => item.key === "sector-flow-direction")).toMatchObject({ value: "人工智能" });
+    expect(insights.find((item) => item.key === "sector-flow-persistence")).toMatchObject({ value: "2个" });
+    expect(insights.every((item) => item.contract?.source === "eastmoney-sector-fund-flow")).toBe(true);
+    expect(insights.every((item) => item.contract?.observedAt === "2026-07-30T10:30:00+08:00")).toBe(true);
+  });
+
   it("keeps an unavailable empty dragon-tiger response unavailable", () => {
     const emptySeats = {
       ...data,
@@ -169,6 +192,30 @@ describe("workspace insights", () => {
       .toMatchObject({ quality: "unavailable", value: "未接入" });
     expect(buildWorkspaceInsights("昨涨停", unavailableReview, model).find((item) => item.key === "history-previous-limit"))
       .toMatchObject({ quality: "unavailable", value: "未接入" });
+  });
+
+  it("marks every historical metric partial when the review snapshot is stale", () => {
+    const stale = {
+      ...data,
+      as_of: "2026-08-19",
+      review: {
+        ...data.review!,
+        as_of: "2026-07-29",
+        expected_trade_date: "2026-08-19",
+        latest_trade_date: "2026-07-29",
+        quality: "stale" as const,
+        refresh_required: true,
+        refresh_reason: "历史日线主导日期落后查询日期",
+      },
+    } as unknown as MarketOverviewResponse;
+    const insights = buildWorkspaceInsights("首板梯队", stale, buildWorkspaceMarketModel(stale));
+    const firstBoard = insights.find((item) => item.key === "first-board");
+    const coverage = insights.find((item) => item.key === "history-coverage");
+
+    expect(firstBoard?.quality).toBe("partial");
+    expect(coverage?.quality).toBe("partial");
+    expect(firstBoard?.detail).toContain("2026-07-29");
+    expect(firstBoard?.detail).toContain("待补齐");
   });
 
   it("does not aggregate missing seat amounts as verified zero", () => {

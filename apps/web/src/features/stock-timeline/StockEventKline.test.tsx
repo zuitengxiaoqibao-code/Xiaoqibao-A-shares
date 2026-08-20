@@ -215,6 +215,23 @@ describe("StockEventKline", () => {
     await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
   });
 
+  it("keeps the cached timeline and explains a failed background refresh", async () => {
+    const cacheKeySymbol = "600888";
+    const cachedLoad = vi.fn().mockResolvedValue(timeline());
+    const first = render(<StockEventKline symbol={cacheKeySymbol} asOf="2026-07-28" load={cachedLoad} />);
+    expect((await screen.findAllByText("消费政策迎来边际变化")).length).toBeGreaterThan(0);
+    first.unmount();
+
+    render(<StockEventKline
+      symbol={cacheKeySymbol}
+      asOf="2026-07-28"
+      load={() => Promise.reject(new Error("timeline request timeout"))}
+    />);
+
+    expect(screen.getAllByText("消费政策迎来边际变化").length).toBeGreaterThan(0);
+    expect(await screen.findByText("更新失败：请求超时，请稍后重试。当前保留上次的本地快照")).toBeInTheDocument();
+  });
+
   it("refreshes the live timeline when a verified realtime snapshot arrives", async () => {
     const load = vi.fn().mockResolvedValue(timeline());
     const encoder = new TextEncoder();

@@ -14,6 +14,7 @@ from qibao_api.contracts.news import (
     NormalizedNewsEvent,
 )
 from qibao_api.gongbu.news_collection import NewsCluster
+from qibao_api.gongbu.news_retention import NewsRetentionPolicy
 
 
 class NewsIntegrityError(RuntimeError):
@@ -89,6 +90,12 @@ class NewsRepository:
           canonical_hash TEXT NOT NULL,
           payload TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS news_event_archives (
+          event_id TEXT PRIMARY KEY,
+          archived_at TEXT NOT NULL,
+          expiry_at TEXT NOT NULL,
+          reason TEXT NOT NULL
+        );
         CREATE TRIGGER IF NOT EXISTS reject_update_news_articles
         BEFORE UPDATE ON news_articles
         BEGIN SELECT RAISE(ABORT, 'append-only news articles'); END;
@@ -120,6 +127,7 @@ class NewsRepository:
         BEFORE DELETE ON news_corrections
         BEGIN SELECT RAISE(ABORT, 'append-only news corrections'); END;
         """)
+        self.retention_policy = NewsRetentionPolicy()
 
     @_serialized
     def append_articles(self, articles: tuple[NewsArticle, ...]) -> int:
@@ -335,12 +343,34 @@ class NewsRepository:
             ):
                 continue
             corrections_by_event.setdefault(correction.event_id, []).append(correction)
+        archived = {
+            row["event_id"] for row in self.connection.execute(
+                "SELECT event_id FROM news_event_archives"
+            ).fetchall()
+        }
         return [
             self._apply_corrections(
                 event, corrections_by_event.get(event.event_id, [])
             )
             for event in self.events()
+            if event.event_id not in archived
         ]
+
+    @_serialized
+    def archive_expired(self, *, now: datetime | None = None) -> int:
+        observed = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        inserted = 0
+        for event in self.events():
+            expiry = self.retention_policy.expiry_for(event)
+            if expiry > observed:
+                continue
+            with self.connection:
+                result = self.connection.execute(
+                    "INSERT OR IGNORE INTO news_event_archives(event_id, archived_at, expiry_at, reason) VALUES(?,?,?,?)",
+                    (event.event_id, observed.isoformat(), expiry.isoformat(), "retention_expired"),
+                )
+            inserted += int(result.rowcount > 0)
+        return inserted
 
     @staticmethod
     def _apply_corrections(
@@ -392,6 +422,10 @@ class NewsRepository:
                json_each(json_extract(news_events.payload, '$.affected_instruments')) linked
                WHERE json_extract(linked.value, '$[0]') = 'a_share'
                  AND json_extract(linked.value, '$[1]') = ?
+                 AND NOT EXISTS (
+                     SELECT 1 FROM news_event_archives archived
+                     WHERE archived.event_id = news_events.event_id
+                 )
                  AND json_extract(news_events.payload, '$.review_state') = 'verified'
                  AND (? IS NULL OR json_extract(
                      news_events.payload, '$.normalized_at'

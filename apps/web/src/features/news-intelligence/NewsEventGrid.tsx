@@ -90,6 +90,7 @@ export function NewsEventGrid({ events, interpretationByEvent, onSelect }: {
           {uncertain && <div className="news-event-card__uncertain"><ShieldAlert size={15}/><div><b>不确定性较高</b><span>{interpretation?.degraded ? "解释已降级" : "关联或方向仍需复核"}</span></div></div>}
           <footer>
             <button type="button" onClick={() => onSelect(event)}><BookOpen size={14}/>查看 {event.citations.length} 条证据</button>
+            <span>{`事件发生 ${new Date(event.occurred_at).toLocaleString("zh-CN", { hour12: false })}`}</span>
             <span>{source ? `${event.event_type === "market_hotspot" ? "同花顺热点" : source.publisher} · 来源时间 ${new Date(source.published_at).toLocaleString("zh-CN", { hour12: false })}` : "来源待补齐"}</span>
           </footer>
         </article>;

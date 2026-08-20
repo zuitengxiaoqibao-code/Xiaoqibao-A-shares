@@ -103,16 +103,34 @@ class CallbackSource(Source):
         return super().fetch_daily(symbol, limit)
 
 
-def service(tmp_path, *, symbols, coverage, tdx, baidu, threshold=20):
+def service(tmp_path, *, symbols, coverage, tdx, baidu, threshold=20, clock=lambda: NOW, trading_calendar=None):
     return FullMarketHistoryService(
         directory=Directory(symbols),
         bar_repository=Bars(coverage),
         tdx_source=tdx,
         baidu_source=baidu,
         job_repository=HistorySyncRepository(tmp_path / "history-sync.sqlite3"),
-        clock=lambda: NOW,
+        clock=clock,
         failure_pause_threshold=threshold,
+        trading_calendar=trading_calendar,
     )
+
+
+def test_default_target_is_latest_completed_trading_day_before_close(tmp_path) -> None:
+    class Calendar:
+        @staticmethod
+        def is_trading_day(value):
+            return value.weekday() < 5
+
+    value = service(
+        tmp_path, symbols=("600000",), coverage={},
+        tdx=Source({"600000": []}), baidu=Source({"600000": []}),
+        clock=lambda: datetime(2026, 8, 19, 6, 11, tzinfo=timezone.utc),
+        trading_calendar=Calendar(),
+    )
+
+    assert value.default_target_date() == date(2026, 8, 18)
+    assert value.create_backfill().target_date == date(2026, 8, 18)
 
 
 def test_backfill_skips_complete_symbols_and_falls_back_to_baidu(tmp_path) -> None:
@@ -201,6 +219,55 @@ def test_coverage_reports_real_universe_eligibility_and_target_freshness(tmp_pat
     assert summary.eligible_count == 2
     assert summary.target_date_count == 2
     assert summary.target_date_coverage_percent == 66.67
+
+
+def test_coverage_reports_trading_day_lag_and_target_repair_only_selects_real_gaps(tmp_path) -> None:
+    class Calendar:
+        @staticmethod
+        def is_trading_day(value):
+            return value.weekday() < 5
+
+    value = service(
+        tmp_path,
+        symbols=("000001", "600000", "688001"),
+        coverage={
+            "000001": (300, TARGET),
+            "600000": (250, TARGET - timedelta(days=1)),
+            "688001": (20, TARGET),
+        },
+        tdx=Source({}),
+        baidu=Source({}),
+        trading_calendar=Calendar(),
+    )
+
+    summary = value.coverage(TARGET)
+    repair = value.create_target_repair(TARGET)
+
+    assert summary.lag_trading_days == 0
+    assert summary.is_fresh is True
+    assert repair is not None
+    assert repair.total_count == 2
+
+
+def test_coverage_marks_a_dominant_date_multiple_sessions_behind_as_stale(tmp_path) -> None:
+    target = date(2026, 8, 19)
+    value = service(
+        tmp_path,
+        symbols=("000001", "600000"),
+        coverage={
+            "000001": (300, date(2026, 8, 14)),
+            "600000": (300, date(2026, 8, 14)),
+        },
+        tdx=Source({}),
+        baidu=Source({}),
+    )
+
+    summary = value.coverage(target)
+
+    assert summary.lag_trading_days == 3
+    assert summary.is_fresh is False
+    assert summary.quality == "stale"
+    assert "dominant_trade_date_behind_target" in summary.blockers
 
 
 def test_repair_center_classifies_real_history_gaps(tmp_path) -> None:

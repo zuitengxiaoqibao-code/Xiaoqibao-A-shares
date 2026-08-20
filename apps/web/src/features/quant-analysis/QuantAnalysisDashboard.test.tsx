@@ -388,6 +388,10 @@ describe("QuantAnalysisDashboard", () => {
 
       await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
 
+      expect(loadQuantStrategy).toHaveBeenCalledTimes(1);
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(25_000); });
+
       expect(loadQuantStrategy).toHaveBeenCalledTimes(2);
       expect(screen.getByRole("region", { name: "市场风格评分" })).toHaveTextContent("76.0");
       expect(screen.getByRole("progressbar", { name: "候选扫描后台预热" })).toHaveAttribute("aria-valuenow", "20");
@@ -535,10 +539,11 @@ describe("QuantAnalysisDashboard", () => {
       expect(loadTicks).toHaveBeenCalledTimes(2);
 
       await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
-      expect(loadQuantStrategy).toHaveBeenCalledTimes(2);
+      expect(loadQuantStrategy).toHaveBeenCalledTimes(1);
       expect(loadTicks).toHaveBeenCalledTimes(6);
 
-      await act(async () => { await vi.advanceTimersByTimeAsync(25000); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(26000); });
+      expect(loadQuantStrategy).toHaveBeenCalledTimes(2);
       expect(loadBoard).toHaveBeenCalledTimes(2);
     } finally {
       view.unmount();

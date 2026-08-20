@@ -28,6 +28,11 @@ import {
   loadSourceHealth,
   pauseHistorySync,
   resumeHistorySync,
+  retryFailedHistory,
+  restartCurrentHistory,
+  loadOfficialTdxInfo,
+  loadHistorySupplement,
+  startOfficialTdxSupplement,
   saveAISettings,
   startHistoryBackfill,
   syncAShareUniverse,
@@ -83,7 +88,7 @@ export function App() {
     loadAISettings={loadAISettings} saveAISettings={saveAISettings} deleteAISettings={deleteAISettings}
     loadLocalSourceSettings={loadLocalSourceSettings} detectLocalSourceSettings={detectLocalSourceSettings} saveLocalSourceSettings={saveLocalSourceSettings}
     syncAShareUniverse={syncAShareUniverse} loadSourceHealth={loadSourceHealth}
-    loadHistorySync={loadHistorySync} loadHistoryCoverage={loadHistoryCoverage} loadHistoryRepairCenter={loadHistoryRepairCenter} loadHistoryRepairAudits={loadHistoryRepairAudits} startHistoryBackfill={startHistoryBackfill} pauseHistorySync={pauseHistorySync} resumeHistorySync={resumeHistorySync}
+    loadHistorySync={loadHistorySync} loadHistoryCoverage={loadHistoryCoverage} loadHistoryRepairCenter={loadHistoryRepairCenter} loadHistoryRepairAudits={loadHistoryRepairAudits} startHistoryBackfill={startHistoryBackfill} pauseHistorySync={pauseHistorySync} resumeHistorySync={resumeHistorySync} retryFailedHistory={retryFailedHistory} restartCurrentHistory={restartCurrentHistory} loadOfficialTdxInfo={loadOfficialTdxInfo} loadHistorySupplement={loadHistorySupplement} startOfficialTdxSupplement={startOfficialTdxSupplement}
     loadTdxImport={loadTdxImport} scanTdxImport={scanTdxImport} startTdxImport={startTdxImport} pauseTdxImport={pauseTdxImport} resumeTdxImport={resumeTdxImport}
     loadDecisionCurrent={loadCurrentDecision} loadDecisionDate={loadDecisionDate}
     loadMarketSentiment={loadCurrentMarketSentiment} refreshMarketSentiment={refreshMarketSentiment}

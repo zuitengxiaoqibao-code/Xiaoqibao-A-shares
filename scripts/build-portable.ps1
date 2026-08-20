@@ -198,6 +198,11 @@ if ($SourceState -notin @("clean", "dirty", "unknown")) {
 $LockHash = (Get-FileHash -LiteralPath (Join-Path $Root "pnpm-lock.yaml") -Algorithm SHA256).Hash
 $MigrationVersion = [int](& $Python -c "from qibao_desktop.data_migration import CURRENT_MIGRATION_VERSION; print(CURRENT_MIGRATION_VERSION)")
 if ($LASTEXITCODE -ne 0) { throw "Migration version could not be resolved" }
+[IO.File]::WriteAllText(
+    (Join-Path $BuiltRelease ".migration-version"),
+    $MigrationVersion.ToString(),
+    [Text.Encoding]::ASCII
+)
 $DatabaseFiles = @(Get-ChildItem -LiteralPath (Join-Path $BuiltRelease "data") -Recurse -File -ErrorAction SilentlyContinue |
     Where-Object { $_.Extension -in @(".sqlite3", ".duckdb", ".db") } |
     ForEach-Object {

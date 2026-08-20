@@ -77,6 +77,7 @@ describe("NewsIntelligenceView", () => {
     expect(screen.getByRole("region", { name: "新闻卡片流" })).toHaveClass("news-card-grid");
     expect(screen.getByRole("button", { name: /政策监管/ })).toBeInTheDocument();
     expect(screen.getByText("A股 600000")).toBeInTheDocument();
+    expect(screen.getByText(/事件发生 2026\/7\/14 09:00:00/)).toBeInTheDocument();
   });
 
   it("renders the event graph above the cards and opens the evidence drawer", async () => {
@@ -229,6 +230,18 @@ describe("NewsIntelligenceView", () => {
     fireEvent.change(screen.getByLabelText("复核理由"), { target: { value: "确认政策主题归属" } });
     fireEvent.click(screen.getByRole("button", { name: "确认并存档" }));
     expect(createCorrection).toHaveBeenCalledWith(expect.objectContaining({ event_id: "event-1", review_state: "verified" }));
+  });
+
+  it("keeps event time, source time and analysis generation time separate", async () => {
+    render(<NewsIntelligenceView loadBundle={() => Promise.resolve(bundle)} syncNews={() => Promise.resolve({ fetched: 0 })} createCorrection={() => Promise.resolve()} />);
+    await screen.findByRole("heading", { name: "先进制造专项政策发布" });
+    fireEvent.click(screen.getByRole("tab", { name: "数据状态" }));
+
+    expect(screen.getByText("最新事件发生")).toBeInTheDocument();
+    expect(screen.getByText("最新来源发布时间")).toBeInTheDocument();
+    expect(screen.getByText("最新标准化时间")).toBeInTheDocument();
+    expect(screen.getByText("最新分析生成")).toBeInTheDocument();
+    expect(screen.queryByText("最近更新时间")).not.toBeInTheDocument();
   });
 
   it("shows briefing content without rendering the input snapshot hash", async () => {

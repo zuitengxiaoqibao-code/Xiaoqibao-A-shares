@@ -21,4 +21,16 @@ describe("CompanyResearchAIInsight", () => {
     expect(region).toHaveTextContent("证据 risk-1");
     expect(region).toHaveTextContent("不生成新事实");
   });
+
+  it("shows a configured provider failure instead of calling it unconfigured", () => {
+    render(<CompanyResearchAIInsight loading={false} error="" result={{
+      status: "http_error", snapshot_id: "version-2", provider: "openai-compatible", model: "model",
+      prompt_version: "company-research-ai-v1", generated_at: "2026-08-12T15:00:00+08:00",
+      ai_state: "rate_limited", ai_message: "AI 接口触发限流，稍后将自动重试", analysis: null,
+    }} />);
+
+    expect(screen.getByText(/AI 接口触发限流/)).toBeInTheDocument();
+    expect(screen.getByText(/完整确定性研究仍可正常查看/)).toBeInTheDocument();
+    expect(screen.queryByText(/未配置/)).not.toBeInTheDocument();
+  });
 });

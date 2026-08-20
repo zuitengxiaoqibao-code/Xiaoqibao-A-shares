@@ -1,5 +1,6 @@
 from qibao_api.contracts.market import AssetKind
 from qibao_api.gongbu.news_collection import deduplicate_articles
+from qibao_api.gongbu.news_quality_policy import NewsQualityPolicy
 
 
 class NewsIngestionService:
@@ -13,6 +14,7 @@ class NewsIngestionService:
         self.linker = linker
         self.compliance = compliance
         self.ai_gateway = ai_gateway
+        self.quality_policy = NewsQualityPolicy()
         self.max_ai_interpretations_per_sync = max_ai_interpretations_per_sync
 
     async def sync(self) -> dict[str, int]:
@@ -39,11 +41,16 @@ class NewsIngestionService:
         *,
         context_instruments: tuple[tuple[AssetKind, str], ...] = (),
     ) -> dict[str, int]:
-        clusters = deduplicate_articles(articles)
-        inserted = self.repository.append_articles(tuple(articles))
+        accepted_articles = []
+        for article in articles:
+            event = self.linker.link(article, context_instruments=context_instruments)
+            if self.quality_policy.evaluate(article, event).accepted:
+                accepted_articles.append(article)
+        clusters = deduplicate_articles(accepted_articles)
+        inserted = self.repository.append_articles(tuple(accepted_articles))
         for cluster in clusters:
             self.repository.append_cluster(cluster)
-        article_ids = tuple(article.article_id for article in articles)
+        article_ids = tuple(article.article_id for article in accepted_articles)
         article_by_id = {
             article.article_id: article
             for article in self.repository.articles_by_ids(article_ids)
@@ -78,6 +85,9 @@ class NewsIngestionService:
                 interpretation_count += int(appended)
                 if appended:
                     interpretations = (*interpretations, interpretation)
+        archive_expired = getattr(self.repository, "archive_expired", None)
+        if callable(archive_expired):
+            archive_expired(now=articles[0].fetched_at if articles else None)
         return {
             "fetched": len(articles),
             "inserted": inserted,

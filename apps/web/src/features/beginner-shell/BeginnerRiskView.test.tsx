@@ -1,8 +1,33 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BeginnerRiskView } from "./BeginnerRiskView";
 
 describe("BeginnerRiskView", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it("shows today's cached risk snapshot immediately and keeps it when refresh fails", async () => {
+    window.localStorage.setItem(
+      "qibao.risk-snapshot.v1.2026-07-30",
+      JSON.stringify({
+        day: "2026-07-30",
+        cachedAt: "2026-07-30T02:00:00.000Z",
+        value: {
+          rule_version: "cached-v1", limits: {}, overall_level: "low", generated_at: "2026-07-30T02:00:00Z",
+          dimensions: [{ id: "market", label: "缓存市场", level: "low", value: "已缓存", evidence: "本地快照", action: "继续复核" }], alerts: [],
+        },
+      }),
+    );
+    const load = vi.fn().mockRejectedValue(new Error("最新风险服务超时"));
+    render(<BeginnerRiskView load={load} now={new Date("2026-07-30T02:01:00Z")} />);
+
+    expect(screen.getByText("当前风险：较低")).toBeInTheDocument();
+    expect(screen.getByText("缓存市场")).toBeInTheDocument();
+    expect(await screen.findByText(/最新风险刷新失败/)).toBeInTheDocument();
+    expect(screen.getByText("缓存市场")).toBeInTheDocument();
+  });
+
   it("loads a plain-language risk status without internal rules or order concepts", async () => {
     render(<BeginnerRiskView load={() => Promise.resolve({
       rule_version: "internal-v9", limits: { max_position: "0.2" }, overall_level: "medium", generated_at: "2026-07-30T02:00:00Z",

@@ -82,7 +82,8 @@ export function DistinctMarketWorkspace({ feature, data, onOpenAShare, onOpenCom
     : null;
   const status = workspaceStatus(data.market_data);
   const dataScope = data.data_scope;
-  const liveDate = data.as_of || data.market_data.observed_at?.slice(0, 10) || null;
+  const queryDate = data.as_of || null;
+  const liveDate = data.market_data.observed_at?.slice(0, 10) || data.as_of || null;
   const historyDate = data.review?.latest_trade_date ?? null;
   const latestAvailableHistoryDate = data.review?.latest_available_trade_date ?? historyDate;
   const historyDateFragmented = Boolean(
@@ -98,7 +99,7 @@ export function DistinctMarketWorkspace({ feature, data, onOpenAShare, onOpenCom
   const historyLag = calendarLagDays(liveDate, historyDate);
   const historyState = historyDate === null
     ? "unavailable"
-    : data.review?.quality === "stale" || (historyLag !== null && historyLag > 0)
+    : data.review?.refresh_required || data.review?.quality === "stale" || data.review?.quality === "partial" || (historyLag !== null && historyLag > 0)
       ? "stale"
       : "ready";
 
@@ -124,8 +125,10 @@ export function DistinctMarketWorkspace({ feature, data, onOpenAShare, onOpenCom
     </section>
 
     <section className="distinct-history-freshness" data-state={historyState} aria-label="历史日线新鲜度">
+      <div><small>查询日期</small><strong>{queryDate ?? "--"}</strong></div>
       <div><small>实时行情日期</small><strong>实时行情 {liveDate ?? "--"}</strong></div>
       <div><small>历史日线最新交易日</small><strong>{historyDate ?? "--"}</strong></div>
+      <div><small>快照生成时间</small><strong>{fullTime(data.review?.observed_at ?? null)}</strong></div>
       {historyDateFragmented && <>
         <div><small>主导历史交易日</small><strong>{historyDate ?? "--"}</strong></div>
         <div><small>零散最新记录</small><strong>最新零散记录 {latestAvailableHistoryDate ?? "--"}{latestAvailableCount !== null ? `（仅 ${latestAvailableCount} 只）` : ""}</strong></div>
@@ -133,8 +136,8 @@ export function DistinctMarketWorkspace({ feature, data, onOpenAShare, onOpenCom
       <div className="distinct-history-freshness-status">
         <b>{historyState === "stale" ? "历史日线待补齐" : historyState === "ready" ? "历史日线与行情日期一致" : "历史日线不可用"}</b>
         <span>{historyDateFragmented
-          ? `当前复盘使用覆盖率 ${historyCoverage ?? "--"}% 的主导交易日 ${historyDate ?? "--"}；更晚日期仅有少量零散记录，不纳入全市场复盘。来源：${historySourceName(data.review?.source)}`
-          : historyState === "stale" ? `当前复盘使用 ${historyDate} 的真实历史数据，落后 ${historyLag} 个日历日；补齐前不把实时快照当作历史序列。来源：${historySourceName(data.review?.source)}`
+          ? `当前复盘使用覆盖率 ${historyCoverage ?? "--"}% 的主导交易日 ${historyDate ?? "--"}；更晚日期仅有少量零散记录，不纳入全市场复盘。${data.review?.refresh_reason ?? "历史日线覆盖日期分散，不能代表查询日期全市场"}。来源：${historySourceName(data.review?.source)}`
+          : historyState === "stale" ? `当前复盘使用 ${historyDate} 的真实历史数据，落后 ${historyLag ?? "未知"} 个日历日；${data.review?.refresh_reason ?? "历史日线待补齐"}；补齐前不把实时快照当作历史序列。来源：${historySourceName(data.review?.source)}`
             : historyState === "ready" ? `历史筛选与当前交易日对齐。来源：${historySourceName(data.review?.source)}`
               : "没有可验证的历史交易日，相关历史筛选保持不可用。"}</span>
       </div>

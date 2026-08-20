@@ -57,6 +57,14 @@ def get_tdx_import_executor(request: Request):
     return request.app.state.tdx_import_executor
 
 
+def get_history_supplement_service(request: Request):
+    return request.app.state.history_supplement_service
+
+
+def get_history_supplement_executor(request: Request):
+    return request.app.state.history_supplement_executor
+
+
 def get_compliance_repository(request: Request) -> ComplianceRepository:
     return request.app.state.compliance_repository
 

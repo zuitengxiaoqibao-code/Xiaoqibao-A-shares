@@ -38,6 +38,10 @@ export type FirstLimitUpBoard = {
   asset: "a_share";
   status: "ready" | "partial" | "empty";
   as_of: string;
+  scan_date?: string | null;
+  expected_scan_date?: string | null;
+  scan_updated_at?: string | null;
+  refresh_required?: boolean;
   rule_version: "first-limit-up-v1";
   universe_count: number;
   history_eligible_count: number;

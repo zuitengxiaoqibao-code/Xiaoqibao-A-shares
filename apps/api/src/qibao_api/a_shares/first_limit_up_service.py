@@ -1,7 +1,8 @@
 import inspect
 import re
 from collections.abc import Callable, Sequence
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -29,6 +30,7 @@ class FirstLimitUpService:
         quote_source,
         repository: FirstLimitUpRepository,
         universe_provider=None,
+        trading_calendar=None,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         pool_limit: int = 120,
     ) -> None:
@@ -36,6 +38,7 @@ class FirstLimitUpService:
         self.quote_source = quote_source
         self.repository = repository
         self.universe_provider = universe_provider
+        self.trading_calendar = trading_calendar
         self.clock = clock
         self.pool_limit = pool_limit
         self._missing_data: tuple[str, ...] = ()
@@ -140,7 +143,7 @@ class FirstLimitUpService:
             scan_coverage_count=scan_coverage_count,
             coverage_complete=coverage_complete,
         )
-        board = self.current(scan_date)
+        board = self.current(as_of)
         has_scanned_samples = bool(displayed_today)
         return board.model_copy(update={
             "today": tuple(
@@ -209,6 +212,11 @@ class FirstLimitUpService:
             scan_coverage_count = 0
             scanned = ()
             missing.append("full_market_scan_required")
+        scan_date = latest_scan.scan_date if latest_scan is not None else None
+        expected_scan_date = self._expected_scan_date(as_of)
+        refresh_required = scan_date != expected_scan_date
+        if refresh_required:
+            missing.append("current_trading_day_scan_required")
         coverage_complete = (
             latest_scan.coverage_complete
             if latest_scan is not None
@@ -216,7 +224,7 @@ class FirstLimitUpService:
         )
         status = (
             "ready"
-            if refreshed and coverage_complete
+            if refreshed and coverage_complete and not refresh_required
             else "partial"
             if missing or scanned or latest_scan is not None
             else "empty"
@@ -224,6 +232,10 @@ class FirstLimitUpService:
         return FirstLimitUpBoard(
             status=status,
             as_of=as_of,
+            scan_date=scan_date,
+            expected_scan_date=expected_scan_date,
+            scan_updated_at=(latest_scan.updated_at if latest_scan is not None else None),
+            refresh_required=refresh_required,
             universe_count=universe_count,
             history_eligible_count=history_eligible_count,
             scan_coverage_count=scan_coverage_count,
@@ -248,6 +260,18 @@ class FirstLimitUpService:
         provider = self.universe_provider
         values = provider() if callable(provider) else provider.active_symbols()
         return tuple(dict.fromkeys(values))
+
+    def _expected_scan_date(self, as_of: date) -> date:
+        calendar = self.trading_calendar
+        now = self.clock().astimezone(ZoneInfo("Asia/Shanghai"))
+        if calendar is None:
+            return as_of
+        candidate = as_of
+        if not calendar.is_trading_day(candidate):
+            return calendar.previous_trading_day(candidate)
+        if candidate == now.date() and now.time() < time(15, 30):
+            return calendar.previous_trading_day(candidate)
+        return candidate
 
 
 class SynchronousTencentQuoteSource:

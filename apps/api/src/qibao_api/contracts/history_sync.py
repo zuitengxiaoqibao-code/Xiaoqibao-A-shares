@@ -68,6 +68,8 @@ class HistoryCoverageSummary(BaseModel):
     missing_history_count: int = Field(default=0, ge=0)
     quality: HistoryCoverageQuality = "unavailable"
     blockers: tuple[str, ...] = ()
+    lag_trading_days: int = Field(default=0, ge=0)
+    is_fresh: bool = False
 
 
 class HistoryCoverageGap(BaseModel):

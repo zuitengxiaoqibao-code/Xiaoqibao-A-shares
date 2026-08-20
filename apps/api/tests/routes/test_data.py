@@ -10,13 +10,16 @@ from qibao_api.contracts.history_sync import (
     HistoryRepairCenter,
     HistorySyncJob,
 )
+from qibao_api.contracts.history_supplement import HistorySupplementJob, OfficialTdxPackageInfo
 from qibao_api.contracts.tdx_import import TdxImportJob, TdxImportScan
 from qibao_api.dependencies import (
     get_full_market_history_service,
     get_history_sync_executor,
+    get_history_supplement_executor,
     get_market_data_service,
     get_tdx_import_executor,
     get_tdx_import_service,
+    get_history_supplement_service,
 )
 from qibao_api.main import app
 
@@ -84,6 +87,8 @@ class RecordingFullMarketHistoryService:
         self.run_calls: list[str] = []
         self.incremental_dates: list[date] = []
         self.pause_calls: list[str] = []
+        self.retry_calls: list[str] = []
+        self.restart_dates: list[date] = []
 
     def create_backfill(self) -> HistorySyncJob:
         self.current = make_history_job()
@@ -127,6 +132,16 @@ class RecordingFullMarketHistoryService:
 
     def resume(self, job_id: str) -> HistorySyncJob:
         self.current = make_history_job(state="pending")
+        return self.current
+
+    def retry_failed(self, job_id: str) -> HistorySyncJob:
+        self.retry_calls.append(job_id)
+        self.current = make_history_job(state="pending")
+        return self.current
+
+    def restart_current(self, target_date: date) -> HistorySyncJob:
+        self.restart_dates.append(target_date)
+        self.current = make_history_job(mode="incremental", target_date=target_date)
         return self.current
 
     def run(self, job_id: str) -> HistorySyncJob:
@@ -186,6 +201,34 @@ class RecordingTdxImportService:
         return self.current
 
 
+class RecordingHistorySupplementService:
+    def __init__(self) -> None:
+        self.run_calls = []
+        self.job = None
+
+    def package_info(self):
+        return OfficialTdxPackageInfo(
+            size_label="520.67MB", modified_at="2026-08-18T15:58:48+08:00",
+        )
+
+    def current_job(self):
+        return self.job
+
+    def create_job(self):
+        observed = datetime(2026, 8, 19, 2, tzinfo=timezone.utc)
+        self.job = HistorySupplementJob(
+            job_id="history-supplement-test", state="pending", stage="queued",
+            percent=0, source_url="https://data.tdx.com.cn/vipdoc/hsjday.zip",
+            downloaded_bytes=0, day_file_count=0, supported_file_count=0,
+            imported_rows=0, replaced_rows=0, skipped_rows=0, failed_files=0,
+            created_at=observed, updated_at=observed,
+        )
+        return self.job
+
+    def run(self, job_id):
+        self.run_calls.append(job_id)
+
+
 def make_tdx_import_client(service, executor):
     app.dependency_overrides[get_tdx_import_service] = lambda: service
     app.dependency_overrides[get_tdx_import_executor] = lambda: executor
@@ -200,6 +243,12 @@ def make_client() -> TestClient:
 def make_history_client(service, executor) -> TestClient:
     app.dependency_overrides[get_full_market_history_service] = lambda: service
     app.dependency_overrides[get_history_sync_executor] = lambda: executor
+    return TestClient(app)
+
+
+def make_supplement_client(service, executor) -> TestClient:
+    app.dependency_overrides[get_history_supplement_service] = lambda: service
+    app.dependency_overrides[get_history_supplement_executor] = lambda: executor
     return TestClient(app)
 
 
@@ -253,6 +302,22 @@ def test_tdx_import_current_pause_and_resume_are_exposed() -> None:
     assert paused.json()["state"] == "paused"
     assert resumed.status_code == 202
     assert executor.submissions[-1][1] == ("tdx-import-test",)
+
+
+def test_official_history_supplement_metadata_and_start_are_exposed() -> None:
+    service = RecordingHistorySupplementService()
+    executor = RecordingExecutor()
+
+    with make_supplement_client(service, executor) as client:
+        metadata = client.get("/api/v1/a-shares/history-supplement/official-info")
+        started = client.post("/api/v1/a-shares/history-supplement/official/start")
+        current = client.get("/api/v1/a-shares/history-supplement/current")
+
+    assert metadata.status_code == 200
+    assert metadata.json()["modified_at"] == "2026-08-18T15:58:48+08:00"
+    assert started.status_code == 202
+    assert current.json()["job_id"] == "history-supplement-test"
+    assert executor.submissions[0][1] == ("history-supplement-test",)
 
 
 def test_history_endpoint_returns_empty_list_before_sync() -> None:
@@ -386,4 +451,36 @@ def test_resume_history_sync_route_submits_the_paused_job() -> None:
     assert response.status_code == 202
     assert response.json()["state"] == "pending"
     assert service.run_calls == []
+    assert executor.submissions[0][1] == ("history-sync-test",)
+
+
+def test_retry_failed_history_symbols_submits_only_the_existing_job() -> None:
+    service = RecordingFullMarketHistoryService()
+    service.current = make_history_job(state="paused")
+    executor = RecordingExecutor()
+
+    with make_history_client(service, executor) as client:
+        response = client.post(
+            "/api/v1/a-shares/history-sync/history-sync-test/retry-failed"
+        )
+
+    assert response.status_code == 202
+    assert response.json()["state"] == "pending"
+    assert service.retry_calls == ["history-sync-test"]
+    assert executor.submissions[0][1] == ("history-sync-test",)
+
+
+def test_restart_current_history_replaces_a_stale_paused_task() -> None:
+    service = RecordingFullMarketHistoryService()
+    service.current = make_history_job(target_date=date(2026, 7, 29), state="paused")
+    executor = RecordingExecutor()
+
+    with make_history_client(service, executor) as client:
+        response = client.post(
+            "/api/v1/a-shares/history-sync/restart-current?target_date=2026-08-19"
+        )
+
+    assert response.status_code == 202
+    assert response.json()["target_date"] == "2026-08-19"
+    assert service.restart_dates == [date(2026, 8, 19)]
     assert executor.submissions[0][1] == ("history-sync-test",)

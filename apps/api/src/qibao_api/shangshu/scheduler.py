@@ -441,18 +441,17 @@ class DailyBriefingScheduler:
         if service is None:
             return True
         coverage = service.coverage(trading_date)
-        coverage_ready = (
-            coverage.universe_count > 0
-            and coverage.eligible_count / coverage.universe_count
-            >= MIN_ANALYSIS_COVERAGE_RATIO
-        )
         current = service.current_job()
-        if current is not None and current.state in ("pending", "running", "paused"):
+        current_matches_date = (
+            current is not None
+            and getattr(current, "target_date", trading_date) == trading_date
+        )
+        if current_matches_date and current.state in ("pending", "running", "paused"):
             job = current
-        elif coverage_ready:
-            job = service.create_incremental(trading_date)
+        elif current is not None and coverage.target_date_count > 0:
+            return True
         else:
-            job = service.create_backfill()
+            job = service.create_incremental(trading_date)
         if job.state == "pending":
             if (
                 self.history_sync_submitter is not None
@@ -466,10 +465,7 @@ class DailyBriefingScheduler:
         coverage = service.coverage(trading_date)
         if coverage.universe_count <= 0:
             return False
-        return (
-            coverage.eligible_count / coverage.universe_count
-            >= MIN_ANALYSIS_COVERAGE_RATIO
-        )
+        return coverage.target_date_count > 0
 
     def _latest_due_postclose_date(self, local_now: datetime) -> date | None:
         latest = None

@@ -14,11 +14,14 @@ from qibao_api.contracts.history_sync import (
     HistorySyncJob,
     HistoryRepairAudit,
 )
+from qibao_api.contracts.history_supplement import HistorySupplementJob, OfficialTdxPackageInfo
 from qibao_api.contracts.tdx_import import TdxImportJob, TdxImportScan
 from qibao_api.contracts.instruments import AShareCode
 from qibao_api.dependencies import (
     get_full_market_history_service,
     get_history_sync_executor,
+    get_history_supplement_executor,
+    get_history_supplement_service,
     get_market_data_service,
     get_tdx_import_executor,
     get_tdx_import_service,
@@ -33,6 +36,49 @@ router = APIRouter(prefix="/api/v1/a-shares", tags=["工部数据"])
 
 class TdxImportPaths(BaseModel):
     paths: tuple[str, ...] = ()
+
+
+@router.get(
+    "/history-supplement/official-info",
+    response_model=OfficialTdxPackageInfo,
+)
+def official_history_package_info(
+    service: Annotated[object, Depends(get_history_supplement_service)],
+) -> OfficialTdxPackageInfo:
+    try:
+        return service.package_info()
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"通达信官方日线包信息读取失败：{str(error) or type(error).__name__}",
+        ) from error
+
+
+@router.get(
+    "/history-supplement/current",
+    response_model=HistorySupplementJob | None,
+)
+def current_history_supplement(
+    service: Annotated[object, Depends(get_history_supplement_service)],
+) -> HistorySupplementJob | None:
+    return service.current_job()
+
+
+@router.post(
+    "/history-supplement/official/start",
+    response_model=HistorySupplementJob,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def start_official_history_supplement(
+    service: Annotated[object, Depends(get_history_supplement_service)],
+    executor: Annotated[Executor, Depends(get_history_supplement_executor)],
+) -> HistorySupplementJob:
+    try:
+        job = service.create_job()
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    executor.submit(service.run, job.job_id)
+    return job
 
 
 def _local_paths(service: TdxLocalImportService, paths: tuple[str, ...]) -> tuple[Path, ...]:
@@ -122,6 +168,11 @@ def _china_date(now: datetime) -> date:
     return now.astimezone(ZoneInfo("Asia/Shanghai")).date()
 
 
+def _default_history_target(service: FullMarketHistoryService, now: datetime) -> date:
+    resolver = getattr(service, "default_target_date", None)
+    return resolver() if resolver is not None else _china_date(now)
+
+
 def _submit(
     service: FullMarketHistoryService,
     executor: Executor,
@@ -169,7 +220,30 @@ def start_history_incremental(
     target_date: Annotated[date | None, Query()] = None,
 ) -> HistorySyncJob:
     _require_no_active_job(service)
-    job = service.create_incremental(target_date or _china_date(now))
+    job = service.create_incremental(target_date or _default_history_target(service, now))
+    return _submit(service, executor, job)
+
+
+@router.post(
+    "/history-sync/restart-current",
+    response_model=HistorySyncJob,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def restart_current_history_sync(
+    service: Annotated[
+        FullMarketHistoryService, Depends(get_full_market_history_service)
+    ],
+    executor: Annotated[Executor, Depends(get_history_sync_executor)],
+    now: Annotated[datetime, Depends(get_server_time)],
+    target_date: Annotated[date | None, Query()] = None,
+) -> HistorySyncJob:
+    try:
+        job = service.restart_current(target_date or _default_history_target(service, now))
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="当前日线补齐任务仍在运行，请先暂停后再重新开始",
+        ) from error
     return _submit(service, executor, job)
 
 
@@ -196,7 +270,7 @@ def history_sync_coverage(
     now: Annotated[datetime, Depends(get_server_time)],
     target_date: Annotated[date | None, Query()] = None,
 ) -> HistoryCoverageSummary:
-    return service.coverage(target_date or _china_date(now))
+    return service.coverage(target_date or _default_history_target(service, now))
 
 
 @router.get(
@@ -213,7 +287,7 @@ def history_repair_center(
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ) -> HistoryRepairCenter:
     return service.repair_center(
-        target_date or _china_date(now), offset=offset, limit=limit,
+        target_date or _default_history_target(service, now), offset=offset, limit=limit,
     )
 
 
@@ -281,6 +355,28 @@ def resume_history_sync(
             status_code=status.HTTP_409_CONFLICT,
             detail="只有已暂停的日线同步任务可以继续",
         )
+    return _submit(service, executor, job)
+
+
+@router.post(
+    "/history-sync/{job_id}/retry-failed",
+    response_model=HistorySyncJob,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def retry_failed_history_sync(
+    job_id: Annotated[str, RoutePath(min_length=1)],
+    service: Annotated[
+        FullMarketHistoryService, Depends(get_full_market_history_service)
+    ],
+    executor: Annotated[Executor, Depends(get_history_sync_executor)],
+) -> HistorySyncJob:
+    try:
+        job = service.retry_failed(job_id)
+    except KeyError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="未找到日线同步任务",
+        ) from error
     return _submit(service, executor, job)
 
 

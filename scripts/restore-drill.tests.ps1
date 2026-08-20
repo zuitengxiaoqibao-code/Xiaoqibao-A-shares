@@ -1,4 +1,14 @@
 Describe "portable restore drill" {
+    It "build script emits the migration marker required by release recovery" {
+        $buildScript = [IO.File]::ReadAllText(
+            (Join-Path $PSScriptRoot "build-portable.ps1"),
+            [Text.UTF8Encoding]::new($false)
+        )
+
+        $buildScript | Should Match "\.migration-version"
+        $buildScript | Should Match "WriteAllText"
+    }
+
     BeforeEach {
         $script:fixture = Join-Path $TestDrive "release"
         New-Item -ItemType Directory -Force -Path $script:fixture | Out-Null

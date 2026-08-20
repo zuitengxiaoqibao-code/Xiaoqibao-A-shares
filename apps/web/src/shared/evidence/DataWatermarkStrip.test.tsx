@@ -38,4 +38,18 @@ describe("DataWatermarkStrip", () => {
     expect(screen.getByText("日线历史落后请求日")).toBeInTheDocument();
     expect(screen.queryByText("stale_daily_history")).not.toBeInTheDocument();
   });
+
+  it("distinguishes a research query date from the source observation time", () => {
+    render(<DataWatermarkStrip
+      status="partial"
+      tradeDate="2026-08-19"
+      tradeDateLabel="查询日"
+      observedAt="2026-08-14T15:00:00+08:00"
+      observedLabel="数据截至"
+    />);
+
+    expect(screen.getByText("查询日")).toBeInTheDocument();
+    expect(screen.getByText("数据截至")).toBeInTheDocument();
+    expect(screen.queryByText("交易日")).not.toBeInTheDocument();
+  });
 });

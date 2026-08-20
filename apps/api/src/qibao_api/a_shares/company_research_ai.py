@@ -9,6 +9,7 @@ from typing import Protocol
 import httpx
 from pydantic import ValidationError
 
+from qibao_api.ai_status import classify_ai_exception
 from qibao_api.contracts.company_research import (
     CompanyResearchAIAnalysis,
     CompanyResearchAIRequest,
@@ -47,10 +48,18 @@ class CompanyResearchAIGateway:
     def analyze(self, request: CompanyResearchAIRequest) -> CompanyResearchAIResult:
         try:
             raw = self.provider.complete(self._payload(request))
-        except httpx.TimeoutException:
-            return self._result("timeout", request)
-        except Exception:
-            return self._result("http_error", request)
+        except httpx.TimeoutException as error:
+            status = classify_ai_exception(error)
+            return self._result(
+                "timeout", request,
+                ai_state=status.state, ai_message=status.message,
+            )
+        except Exception as error:
+            status = classify_ai_exception(error)
+            return self._result(
+                "http_error", request,
+                ai_state=status.state, ai_message=status.message,
+            )
         try:
             analysis = CompanyResearchAIAnalysis.model_validate_json(raw)
             allowed = {item.evidence_id for item in request.evidence}
@@ -104,11 +113,12 @@ class CompanyResearchAIGateway:
             ],
         }
 
-    def _result(self, status, request):
+    def _result(self, status, request, *, ai_state=None, ai_message=None):
         return CompanyResearchAIResult(
             status=status, snapshot_id=request.snapshot_id, analysis=None,
             provider=self.provider_name, model=self.model,
             prompt_version=self.prompt_version, generated_at=self.clock(),
+            ai_state=ai_state, ai_message=ai_message,
         )
 
 
@@ -153,6 +163,7 @@ class ReloadableCompanyResearchAIGateway:
             return CompanyResearchAIResult(
                 status="unconfigured", snapshot_id=request.snapshot_id, analysis=None,
                 provider="unconfigured", model="none", generated_at=request.generated_at,
+                ai_state="unconfigured", ai_message="尚未配置 AI 接口",
             )
         return CompanyResearchAIGateway(
             OpenAICompatibleCompanyResearchProvider(current, self.client),

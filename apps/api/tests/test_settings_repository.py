@@ -115,6 +115,26 @@ def test_delete_removes_saved_configuration(tmp_path: Path) -> None:
     assert isinstance(repository.load(), UnconfiguredAISettings)
 
 
+def test_repository_reuses_the_in_memory_value_until_the_file_changes(tmp_path: Path) -> None:
+    repository = AISettingsRepository(tmp_path, protector=FakeProtector())
+    repository.save(settings())
+    first = repository.load()
+
+    repository.path.unlink()
+
+    assert repository.load() is first
+
+
+def test_repository_invalidates_memory_after_delete(tmp_path: Path) -> None:
+    repository = AISettingsRepository(tmp_path, protector=FakeProtector())
+    repository.save(settings())
+    assert repository.load() == settings()
+
+    repository.delete()
+
+    assert isinstance(repository.load(), UnconfiguredAISettings)
+
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits are not enforced on Windows")
 def test_saved_configuration_is_owner_only(tmp_path: Path) -> None:
     repository = AISettingsRepository(tmp_path)

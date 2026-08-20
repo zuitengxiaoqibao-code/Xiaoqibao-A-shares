@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle, CheckCircle2, CircleDot, Database, Info, LoaderCircle,
   RefreshCw, ShieldAlert, Target,
@@ -30,6 +30,7 @@ const sourceNames: Record<string, string> = {
 
 const missingDataNames: Record<string, string> = {
   full_market_scan_required: "当前尚未完成全市场筛选，请刷新或等待盘后任务",
+  current_trading_day_scan_required: "当前交易日尚未完成扫描，页面暂显示最近一次真实扫描缓存",
 };
 
 const reasonNames: Record<string, string> = {
@@ -96,6 +97,12 @@ function sourceLabel(source: string): string {
 
 function missingDataLabel(code: string): string {
   return missingDataNames[code] ?? code;
+}
+
+function scanUpdatedLabel(value: string | null | undefined): string {
+  if (!value) return "更新时间待确认";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? "更新时间待确认" : `更新于 ${parsed.toLocaleString("zh-CN", { hour12: false })}`;
 }
 
 function friendlyCodeLabel(code: string, names: Record<string, string>, fallback: string): string {
@@ -181,11 +188,29 @@ export function FirstLimitUpView({ load, refresh }: Props) {
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+  const refreshAttempted = useRef(false);
 
   useEffect(() => {
     let active = true;
     setState("loading");
-    void load().then((value) => { if (active) { setBoard(value); setSelected(value.today[0]?.symbol ?? value.pool[0]?.symbol ?? null); setState("ready"); setError(""); } }).catch((reason) => { if (active) { setState("error"); setError(reason instanceof Error ? reason.message : "首次涨停数据暂不可用"); } });
+    void load().then((value) => {
+      if (!active) return;
+      setBoard(value);
+      setSelected(value.today[0]?.symbol ?? value.pool[0]?.symbol ?? null);
+      setState("ready");
+      setError("");
+      if (!value.refresh_required || refreshAttempted.current) return;
+      refreshAttempted.current = true;
+      setRefreshing(true);
+      void refresh().then((latest) => {
+        if (!active) return;
+        setBoard(latest);
+        setSelected((current) => current ?? latest.today[0]?.symbol ?? latest.pool[0]?.symbol ?? null);
+        setError("");
+      }).catch((reason) => {
+        if (active) setError(reason instanceof Error ? reason.message : "自动刷新失败，请稍后重试");
+      }).finally(() => { if (active) setRefreshing(false); });
+    }).catch((reason) => { if (active) { setState("error"); setError(reason instanceof Error ? reason.message : "首次涨停数据暂不可用"); } });
     return () => { active = false; };
   }, [load]);
 
@@ -224,7 +249,7 @@ export function FirstLimitUpView({ load, refresh }: Props) {
   }
 
   return <main className="terminal-page first-limit-up-page" aria-label="首次涨停研究域">
-    <header className="first-limit-up-header"><div><p className="eyebrow">A SHARE / POSTCLOSE SCREEN</p><h1>首次涨停</h1><p>收盘后筛选阶段首板，等待估值、周/月线位置和回撤结构共同确认。</p></div><div className="first-limit-up-header-meta"><span><Database size={15} />数据截至</span><b>{board?.as_of ?? "待扫描"}</b><button type="button" aria-label="刷新首次涨停" onClick={() => void refreshBoard()} disabled={refreshing}><RefreshCw size={15} className={refreshing ? "spin" : ""} /></button></div></header>
+    <header className="first-limit-up-header"><div><p className="eyebrow">A SHARE / POSTCLOSE SCREEN</p><h1>首次涨停</h1><p>收盘后筛选阶段首板，等待估值、周/月线位置和回撤结构共同确认。</p></div><div className="first-limit-up-header-meta"><span><Database size={15} />查询交易日</span><b>{board?.as_of ?? "待扫描"}</b><span>实际扫描日</span><b>{board?.scan_date ?? "尚未扫描"}</b><small>{scanUpdatedLabel(board?.scan_updated_at)}</small><button type="button" aria-label="刷新首次涨停" onClick={() => void refreshBoard()} disabled={refreshing}><RefreshCw size={15} className={refreshing ? "spin" : ""} /></button></div></header>
     {error && <div className="first-limit-up-error" role="alert"><ShieldAlert size={17} /><span>{error}</span></div>}
     {board?.missing_data.length ? <div className="first-limit-up-missing" role="status"><AlertTriangle size={16} /><span>部分数据待验证：{board.missing_data.map(missingDataLabel).join(" / ")}</span></div> : null}
     {board && !board.coverage_complete && <div className="first-limit-up-coverage-warning" role="status"><AlertTriangle size={18} /><div><b>当前仅为部分市场结果</b><p>日线仍在补全；这里只展示本次扫描实际识别结果，不使用其他批次候选补位。</p></div><strong>{board.scan_coverage_count.toLocaleString("zh-CN")} / {board.universe_count.toLocaleString("zh-CN")}</strong><small>具备 250 日历史：{board.history_eligible_count.toLocaleString("zh-CN")} 只</small></div>}

@@ -25,6 +25,9 @@ class Gateway:
             "evidence_ids": tuple(item.evidence_id for item in request.evidence),
         })()
 
+    def configuration_identity(self):
+        return ("configured", "openai-compatible", "model-a")
+
 
 def test_realtime_ai_deduplicates_unchanged_market_snapshots_and_publishes_evidence() -> None:
     bus = RealtimeSnapshotBus()
@@ -49,8 +52,67 @@ def test_realtime_ai_deduplicates_unchanged_market_snapshots_and_publishes_evide
         assert analysis is not None
         assert analysis["payload"]["input_snapshot_hash"]
         assert analysis["payload"]["fallback"] is True
+        assert analysis["payload"]["ai_state"] == "connection_failed"
+        assert analysis["payload"]["ai_message"] == "AI 接口连接失败，已保留规则分析"
         assert len(gateway.requests) == 1
         assert queue.status()["submitted"] == 1
+    finally:
+        queue.close()
+
+
+def test_realtime_ai_marks_missing_configuration_without_hiding_rule_evidence() -> None:
+    bus = RealtimeSnapshotBus()
+    gateway = Gateway()
+    gateway.configuration_identity = lambda: ("unconfigured", "missing", "decision-v1")
+    queue = RealtimeAITriggerQueue(bus, gateway, dedupe_seconds=60)
+    queue.start()
+    try:
+        bus.publish(
+            "news_events",
+            {"snapshot_id": "news-1", "events": [{"event_id": "event-1"}]},
+            observed_at=NOW,
+            source="news-cache",
+            freshness="live",
+        )
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline and bus.latest("ai_analysis") is None:
+            time.sleep(0.01)
+        payload = bus.latest("ai_analysis")["payload"]
+        assert payload["ai_state"] == "unconfigured"
+        assert payload["ai_message"] == "尚未配置 AI 接口，已保留规则分析"
+        assert payload["evidence_ids"]
+    finally:
+        queue.close()
+
+
+def test_realtime_ai_preserves_gateway_timeout_state() -> None:
+    bus = RealtimeSnapshotBus()
+
+    class TimeoutGateway(Gateway):
+        def explain(self, request):
+            self.requests.append(request)
+            return type("Result", (), {
+                "status": "unavailable", "explanation": None, "statements": (),
+                "provider": "openai-compatible", "model": "model-a",
+                "prompt_version": "decision-v1", "generated_at": NOW,
+                "evidence_ids": tuple(item.evidence_id for item in request.evidence),
+                "ai_state": "timeout", "ai_message": "AI 接口连接超时，已保留规则分析",
+            })()
+
+    queue = RealtimeAITriggerQueue(bus, TimeoutGateway(), dedupe_seconds=60)
+    queue.start()
+    try:
+        bus.publish(
+            "news_events",
+            {"snapshot_id": "news-timeout", "events": [{"event_id": "event-1"}]},
+            observed_at=NOW, source="news-cache", freshness="live",
+        )
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline and bus.latest("ai_analysis") is None:
+            time.sleep(0.01)
+        payload = bus.latest("ai_analysis")["payload"]
+        assert payload["ai_state"] == "timeout"
+        assert payload["ai_message"] == "AI 接口连接超时，已保留规则分析"
     finally:
         queue.close()
 

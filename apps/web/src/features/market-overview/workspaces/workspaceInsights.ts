@@ -147,6 +147,21 @@ function metric(key: MetricKey, data: MarketOverviewResponse, model: WorkspaceMa
   const auctionPass = model.stocks.filter((item) => known(item.gap) && known(item.change) && known(item.closePosition) && known(item.amount) && item.gap >= -1 && item.gap <= 4 && item.change >= item.gap - 1 && item.closePosition >= 50 && item.amount > 0);
   const riskStocks = model.stocks.filter((item) => item.state === "broken_limit_up" || item.state === "limit_down" || (known(item.change) && item.change <= -3));
   const coverage = review && review.universe_count > 0 ? review.history_ready_count / review.universe_count * 100 : null;
+  const sectorFlowPoints = data.sector_fund_flow ?? [];
+  const latestSectorFlowByCode = new Map<string, typeof sectorFlowPoints[number]>();
+  const sectorFlowCounts = new Map<string, number>();
+  for (const point of sectorFlowPoints) {
+    sectorFlowCounts.set(point.sector_code, (sectorFlowCounts.get(point.sector_code) ?? 0) + 1);
+    const previous = latestSectorFlowByCode.get(point.sector_code);
+    if (!previous || point.observed_at > previous.observed_at) latestSectorFlowByCode.set(point.sector_code, point);
+  }
+  const latestSectorFlow = [...latestSectorFlowByCode.values()];
+  const sectorFlowNet = latestSectorFlow.reduce((sum, point) => sum + Number(point.main_net_yi), 0);
+  const sectorFlowLeader = [...latestSectorFlow]
+    .filter((point) => Number.isFinite(Number(point.main_net_yi)))
+    .sort((left, right) => Number(right.main_net_yi) - Number(left.main_net_yi))[0];
+  const sectorFlowPersistent = [...sectorFlowCounts.values()].filter((count) => count >= 2).length;
+  const sectorFlowQuality = latestSectorFlow.length > 0 && latestSectorFlow.every((point) => point.quality === "ready") ? "positive" : "warning";
 
   if ((data.status === "unavailable" || data.market_data.quality === "unavailable") && MARKET_DEPENDENT_METRICS[key]) {
     return unavailable(key, MARKET_DEPENDENT_METRICS[key], "行情主源不可用，暂不计算该指标", "data");
@@ -236,10 +251,18 @@ function metric(key: MetricKey, data: MarketOverviewResponse, model: WorkspaceMa
     case "large-order-buy": return unavailable(key, "大单买入额", "缺少逐笔方向，不能从总成交额推算", "data");
     case "large-order-sell": return unavailable(key, "大单卖出额", "缺少逐笔方向，不能从总成交额推算", "data");
     case "large-order-net": return unavailable(key, "大单净流入", "买卖方向字段未接入，保持不可用", "data");
-    case "sector-flow": return unavailable(key, "板块净流入", "当前响应没有板块资金净流入序列", "data");
-    case "sector-flow-timeline": return unavailable(key, "资金时间序列", "未取得逐时板块净流入记录", "data");
-    case "sector-flow-direction": return unavailable(key, "主买方向", "板块成交额不能判断买卖方向", "data");
-    case "sector-flow-persistence": return unavailable(key, "资金持续性", "没有连续净流入序列，不能测算持续性", "data");
+    case "sector-flow": return latestSectorFlow.length
+      ? ready(key, "板块净流入合计", signedMoney(sectorFlowNet), `${latestSectorFlow.length} 个板块最新主力净流入`, sectorFlowNet >= 0 ? "positive" : "danger", "sector", "raw", "最新各板块主力净流入求和")
+      : unavailable(key, "板块净流入合计", "没有取得真实板块主力净流入快照", "data");
+    case "sector-flow-timeline": return sectorFlowPoints.length
+      ? ready(key, "资金时间序列", `${new Set(sectorFlowPoints.map((point) => point.observed_at)).size}次`, `${latestSectorFlow.length} 个板块 · 每个点保留自身新鲜度`, sectorFlowQuality, "sector", "raw", "按观测时间去重的真实采样次数")
+      : unavailable(key, "资金时间序列", "未取得逐时板块净流入记录", "data");
+    case "sector-flow-direction": return sectorFlowLeader
+      ? ready(key, "净流入领先板块", sectorFlowLeader.sector_name, signedMoney(Number(sectorFlowLeader.main_net_yi)), Number(sectorFlowLeader.main_net_yi) >= 0 ? "positive" : "danger", "sector", "raw", "按最新主力净流入排序")
+      : unavailable(key, "净流入领先板块", "没有可排序的板块净流入字段", "data");
+    case "sector-flow-persistence": return sectorFlowPoints.length
+      ? ready(key, "连续采样板块", `${sectorFlowPersistent}个`, "至少出现 2 次真实采样的板块数量", sectorFlowPersistent > 0 ? "positive" : "warning", "sector", "derived", "按板块代码统计采样次数 >= 2")
+      : unavailable(key, "连续采样板块", "没有连续净流入序列，不能测算持续性", "data");
     case "iwencai": return unavailable(key, "问财语义结果", "当前执行的是本地规则，不冒充问财官方结果", "data");
     case "review-date": return review?.latest_trade_date
       ? ready(key, "复盘交易日", review.latest_trade_date, "本地日线复盘日期", "neutral", "history")
@@ -254,7 +277,20 @@ export function buildWorkspaceInsights(feature: string, data: MarketOverviewResp
   const profile = WORKSPACE_INSIGHT_PROFILES[feature];
   if (!profile) throw new Error(`信息总览缺少关键指标定义：${feature}`);
   return profile.map((key) => {
-    const insight = metric(key, data, model);
+    const rawInsight = metric(key, data, model);
+    const staleReview = Boolean(
+      REVIEW_KEYS.has(key)
+      && data.review
+      && (data.review.refresh_required || data.review.quality === "partial" || data.review.quality === "stale"),
+    );
+    const insight = staleReview
+      ? {
+        ...rawInsight,
+        quality: rawInsight.quality === "unavailable" ? "unavailable" as const : "partial" as const,
+        tone: rawInsight.quality === "unavailable" ? rawInsight.tone : "warning" as const,
+        detail: `${rawInsight.detail} · 实际复盘日 ${data.review?.latest_trade_date ?? "未知"} · 数据待补齐：${data.review?.refresh_reason ?? "历史数据待补齐"}`,
+      }
+      : rawInsight;
     const drilldown = insightDrilldown(key, insight, data, model);
     const contract = workspaceMetricContract(key, insight, drilldown, data);
     return { ...insight, contract, drilldown: { ...drilldown, contract } };
@@ -288,18 +324,22 @@ function workspaceMetricContract(
   data: MarketOverviewResponse,
 ): MetricContract {
   const reviewMetric = REVIEW_KEYS.has(key);
+  const sectorFlowMetric = key.startsWith("sector-flow");
   const members = drilldown.stocks ?? [];
   const parsedTotal = COUNT_KEYS.has(key) ? integerValue(insight.value) : null;
   const totalCount = parsedTotal !== null && parsedTotal >= members.length ? parsedTotal : null;
+  const latestSectorFlowPoint = sectorFlowMetric
+    ? [...(data.sector_fund_flow ?? [])].sort((left, right) => right.observed_at.localeCompare(left.observed_at))[0]
+    : undefined;
   const observedAt = reviewMetric
     ? data.review?.observed_at ?? data.market_data.observed_at ?? data.observed_at ?? data.sentiment.observed_at
-    : data.market_data.observed_at ?? data.observed_at ?? data.sentiment.observed_at;
+    : latestSectorFlowPoint?.observed_at ?? data.market_data.observed_at ?? data.observed_at ?? data.sentiment.observed_at;
   const tradeDate = reviewMetric
     ? data.review?.latest_trade_date ?? data.as_of ?? observedAt?.slice(0, 10)
     : data.as_of ?? observedAt?.slice(0, 10);
   const source = reviewMetric
     ? data.review?.source ?? "本地日线复盘未接入"
-    : data.market_data.source || data.sources?.join(" / ") || "数据源未提供";
+    : latestSectorFlowPoint?.source ?? (data.market_data.source || data.sources?.join(" / ") || "数据源未提供");
   const sampleCount = reviewMetric
     ? data.review?.history_ready_count ?? null
     : data.market_data.quote_count || data.breadth.valid_count || null;

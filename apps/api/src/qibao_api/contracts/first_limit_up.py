@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
@@ -58,6 +58,10 @@ class FirstLimitUpBoard(BaseModel):
     asset: Literal["a_share"] = "a_share"
     status: Literal["ready", "partial", "empty"]
     as_of: date
+    scan_date: date | None = None
+    expected_scan_date: date | None = None
+    scan_updated_at: datetime | None = None
+    refresh_required: bool = False
     rule_version: Literal["first-limit-up-v1"] = FIRST_LIMIT_UP_RULE_VERSION
     universe_count: int = Field(default=0, ge=0)
     history_eligible_count: int = Field(default=0, ge=0)

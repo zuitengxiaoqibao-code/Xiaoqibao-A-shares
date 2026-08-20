@@ -6,6 +6,8 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
+from qibao_api.ai_status import AIConnectionState, classify_ai_status
+
 from qibao_api.settings_repository import (
     AISettings,
     AISettingsRepository,
@@ -37,6 +39,8 @@ router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
 
 class AISettingsView(BaseModel):
     configured: bool
+    state: AIConnectionState
+    message: str
     base_url: str | None
     model: str | None
     api_key_hint: str | None
@@ -108,6 +112,10 @@ def get_local_source_settings_repository(
 
 def get_local_terminal_discovery(request: Request) -> LocalTerminalDiscovery:
     return request.app.state.local_terminal_discovery
+
+
+def get_local_source_discovery_snapshot(request: Request) -> LocalTerminalDiscoveryResult | None:
+    return getattr(request.app.state, "local_source_discovery_result", None)
 
 
 def _local_source_view(
@@ -278,13 +286,18 @@ def _invalid_manual_paths(discovery: LocalTerminalDiscoveryResult) -> list[Path]
 
 def _view(settings: AISettings | object) -> AISettingsView:
     if not isinstance(settings, AISettings):
+        status = classify_ai_status(configured=False)
         return AISettingsView(
-            configured=False, base_url=None, model=None, api_key_hint=None
+            configured=False, state=status.state, message=status.message,
+            base_url=None, model=None, api_key_hint=None
         )
+    status = classify_ai_status(configured=True)
     visible_count = min(4, max(0, len(settings.api_key) - 1))
     suffix = settings.api_key[-visible_count:] if visible_count else ""
     return AISettingsView(
         configured=True,
+        state=status.state,
+        message=status.message,
         base_url=settings.base_url,
         model=settings.model,
         api_key_hint=f"****{suffix}",
@@ -327,6 +340,7 @@ def delete_ai_settings(
 
 @router.get("/data-sources", response_model=LocalSourceSettingsView)
 def get_data_source_settings(
+    request: Request,
     repository: Annotated[
         LocalSourceSettingsRepository,
         Depends(get_local_source_settings_repository),
@@ -337,7 +351,8 @@ def get_data_source_settings(
     ],
 ) -> LocalSourceSettingsView:
     record = repository.load()
-    return _local_source_view(record, discovery.inspect(record.settings))
+    cached = get_local_source_discovery_snapshot(request)
+    return _local_source_view(record, cached or discovery.inspect(record.settings))
 
 
 @router.post("/data-sources/detect", response_model=LocalSourceSettingsView)
@@ -359,6 +374,7 @@ def detect_data_sources(
 
 @router.put("/data-sources", response_model=LocalSourceSettingsView)
 def put_data_source_settings(
+    request: Request,
     settings: LocalSourceSettings,
     repository: Annotated[
         LocalSourceSettingsRepository,
@@ -375,5 +391,6 @@ def put_data_source_settings(
         paths = "、".join(str(path) for path in invalid)
         raise HTTPException(status_code=422, detail=f"通达信目录无效或缺少本地数据：{paths}")
     repository.save(settings)
+    request.app.state.local_source_discovery_result = inspected
     record = LocalSourceSettingsRecord(settings=settings, state="ready")
     return _local_source_view(record, inspected, restart_required=True)

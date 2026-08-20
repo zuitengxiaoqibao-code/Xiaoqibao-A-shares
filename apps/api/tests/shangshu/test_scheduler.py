@@ -101,11 +101,23 @@ class FirstLimitUpService:
 
 
 class FullMarketHistoryService:
-    def __init__(self, *, eligible=2, universe=2, timeline=None):
+    def __init__(
+        self,
+        *,
+        eligible=2,
+        universe=2,
+        target_date_count=None,
+        timeline=None,
+        stale_current_job=None,
+    ):
         self.state = "pending"
         self.eligible = eligible
         self.universe = universe
+        self.target_date_count = (
+            eligible if target_date_count is None else target_date_count
+        )
         self.timeline = timeline
+        self.stale_current_job = stale_current_job
         self.calls = []
         self.backfill_calls = 0
         self.created = False
@@ -126,7 +138,7 @@ class FullMarketHistoryService:
 
     def current_job(self):
         if not self.created:
-            return None
+            return self.stale_current_job
         return SimpleNamespace(job_id="history-sync-current", state=self.state)
 
     def coverage(self, trading_date):
@@ -134,7 +146,7 @@ class FullMarketHistoryService:
             target_date=trading_date,
             universe_count=self.universe,
             eligible_count=self.eligible,
-            target_date_count=self.eligible,
+            target_date_count=self.target_date_count,
         )
 
     def run(self, job_id):
@@ -756,6 +768,40 @@ def test_postclose_starts_history_sync_before_first_limit_up(tmp_path) -> None:
     repository.close()
 
 
+def test_postclose_daily_incremental_is_not_blocked_by_stale_paused_backfill(
+    tmp_path,
+) -> None:
+    repository = OperationsRepository(tmp_path / "operations.sqlite3")
+    stale_backfill = SimpleNamespace(
+        job_id="history-sync-old-backfill",
+        state="paused",
+        target_date=date(2026, 7, 1),
+    )
+    history = FullMarketHistoryService(
+        target_date_count=0,
+        stale_current_job=stale_backfill,
+    )
+    first_limit_up = FirstLimitUpService()
+    submissions = []
+    scheduler = DailyBriefingScheduler(
+        Workflow(),
+        Calendar(),
+        repository,
+        full_market_history_service=history,
+        history_sync_submitter=lambda function, job_id: submissions.append(
+            (function, job_id)
+        ),
+        first_limit_up_service=first_limit_up,
+    )
+
+    scheduler.tick(datetime(2026, 7, 14, 8, 0, tzinfo=UTC))
+
+    assert history.calls == [TRADE_DATE]
+    assert len(submissions) == 1
+    assert first_limit_up.calls == []
+    repository.close()
+
+
 def test_postclose_defers_first_limit_up_when_history_coverage_is_too_small(
     tmp_path,
 ) -> None:
@@ -774,9 +820,9 @@ def test_postclose_defers_first_limit_up_when_history_coverage_is_too_small(
 
     scheduler.tick(datetime(2026, 7, 14, 8, 0, tzinfo=UTC))
 
-    assert first_limit_up.calls == []
-    assert history.backfill_calls == 1
-    assert history.calls == []
+    assert first_limit_up.calls == [TRADE_DATE]
+    assert history.backfill_calls == 0
+    assert history.calls == [TRADE_DATE]
     repository.close()
 
 

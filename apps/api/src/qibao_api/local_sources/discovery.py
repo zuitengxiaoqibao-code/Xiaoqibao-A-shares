@@ -49,6 +49,24 @@ class LocalTerminalDiscoveryResult(BaseModel):
     settings: LocalSourceSettings | None = None
 
 
+class LocalTerminalDiscoveryState:
+    """Mutable reference used by long-lived services after a background rescan."""
+
+    def __init__(self, current: LocalTerminalDiscoveryResult) -> None:
+        self.current = current
+
+    @property
+    def terminals(self) -> tuple[LocalTerminalStatus, ...]:
+        return self.current.terminals
+
+    @property
+    def active_tdx_vipdoc(self) -> Path | None:
+        return self.current.active_tdx_vipdoc
+
+    def update(self, current: LocalTerminalDiscoveryResult) -> None:
+        self.current = current
+
+
 def running_tdx_process_paths() -> tuple[Path, ...]:
     """Return executable paths for currently running TDX desktop clients.
 

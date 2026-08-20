@@ -238,6 +238,28 @@ describe("CompanyResearchView", () => {
     expect(screen.getByRole("region", { name: "九维公司研究矩阵" })).toBeInTheDocument();
   });
 
+  it("keeps a more complete cached research result when refresh coverage degrades", async () => {
+    const complete = { ...research, status: "ready" as const, evidence_coverage: "0.95" };
+    const degraded = {
+      ...refreshedResearch,
+      status: "partial" as const,
+      name: "不应覆盖的部分结果",
+      evidence_coverage: "0.20",
+      reasons: ["财务与估值来源本次未返回"],
+    };
+    writeDailySnapshot("company-research", "600519", complete, new Date());
+
+    render(<CompanyResearchView
+      selectedSymbol="600519"
+      load={vi.fn(async () => degraded)}
+      search={vi.fn(async () => ({ query: "", items: [], server_time: "", source_status: "ready" as const }))}
+    />);
+
+    expect(await screen.findByRole("region", { name: "公司研究摘要" })).toHaveTextContent("贵州茅台");
+    await waitFor(() => expect(screen.getByRole("status", { name: "公司研究数据刷新状态" })).toHaveTextContent("新数据覆盖率较低"));
+    expect(screen.queryByText("不应覆盖的部分结果")).not.toBeInTheDocument();
+  });
+
   it("refreshes the active company research entry periodically while the page is visible", async () => {
     vi.useFakeTimers();
     try {

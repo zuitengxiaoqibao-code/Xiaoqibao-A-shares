@@ -2,7 +2,7 @@ import { AlertTriangle, ArchiveRestore, BarChart3, CheckCircle2, Clock3, Databas
 import { useEffect, useState, type SyntheticEvent } from "react";
 
 import type { BackupRecord, BackupVerification, CacheCleanupResult, CleanupPreview, ObservabilitySnapshot, OperationsDiagnostics, OperationsStatus, PerformanceSummary } from "./types";
-import type { HistoryRepairAudit, HistoryRepairCenter, HistorySyncController, HistorySyncStarter, TdxImportController, TdxImportJob, TdxImportScanner, TdxImportStarter, TdxImportLoader, TdxImportScan } from "../data-settings/types";
+import type { HistoryRepairAudit, HistoryRepairCenter, HistorySyncController, HistorySyncStarter, HistorySupplementJob, HistorySupplementLoader, HistorySupplementStarter, OfficialTdxInfoLoader, OfficialTdxPackageInfo, TdxImportController, TdxImportJob, TdxImportScanner, TdxImportStarter, TdxImportLoader, TdxImportScan } from "../data-settings/types";
 import { readCoalescedFetchStats } from "../../shared/coalescedFetch";
 import { blockerLabel } from "../../shared/evidence/freshnessCopy";
 import { friendlyError } from "../../shared/friendlyError";
@@ -29,6 +29,9 @@ type Props = {
   startTdxImport?: TdxImportStarter;
   pauseTdxImport?: TdxImportController;
   resumeTdxImport?: TdxImportController;
+  loadOfficialTdxInfo?: OfficialTdxInfoLoader;
+  loadHistorySupplement?: HistorySupplementLoader;
+  startOfficialTdxSupplement?: HistorySupplementStarter;
 };
 
 const phaseName = { premarket: "盘前", intraday: "盘中", postclose: "盘后" };
@@ -74,6 +77,17 @@ const operationError = (reason: unknown, fallback: string) => {
   const message = reason instanceof Error ? reason.message.trim() : "";
   return message && hasChinese(message) ? message : friendlyError(reason, fallback);
 };
+const supplementStageLabel: Record<string, string> = {
+  queued: "等待执行", checking_metadata: "核对官方包", checking_cache: "检查缓存",
+  validating_cache: "校验缓存", downloading: "下载官方包", validating: "校验下载",
+  scanning: "扫描本机日线", extracting: "解压日线文件", importing: "批量导入日线",
+  online_repair: "在线修复缺口", final_review: "最终覆盖复核", completed: "修复完成",
+  partial: "部分完成", failed: "修复失败",
+};
+const supplementSourceLabel: Record<string, string> = {
+  tdx_local: "本机通达信", tdx_official: "通达信官方包",
+  mootdx: "通达信在线", baidu: "百度历史后备",
+};
 
 type DisclosureKey = "diagnostics" | "observability" | "historyAudit" | "inventory" | "performance" | "jobs";
 
@@ -97,6 +111,10 @@ export function OperationsView(props: Props) {
   const [tdxError, setTdxError] = useState("");
   const [diagnostics, setDiagnostics] = useState<OperationsDiagnostics | null>(null);
   const [observability, setObservability] = useState<ObservabilitySnapshot | null>(null);
+  const [officialInfo, setOfficialInfo] = useState<OfficialTdxPackageInfo | null>(null);
+  const [supplement, setSupplement] = useState<HistorySupplementJob | null>(null);
+  const [supplementError, setSupplementError] = useState("");
+  const [supplementBusy, setSupplementBusy] = useState(false);
   const [openDisclosures, setOpenDisclosures] = useState<Record<DisclosureKey, boolean>>({
     diagnostics: true,
     observability: true,
@@ -160,6 +178,34 @@ export function OperationsView(props: Props) {
     if (!props.loadHistoryRepairAudits) return;
     props.loadHistoryRepairAudits().then(setHistoryAudits).catch((reason) => setHistoryAuditError(operationError(reason, "日线修复审计")));
   }, [props.loadHistoryRepairAudits]);
+  useEffect(() => {
+    if (!props.loadOfficialTdxInfo && !props.loadHistorySupplement) return;
+    let active = true;
+    const refresh = async () => {
+      try {
+        const [info, job] = await Promise.all([
+          props.loadOfficialTdxInfo?.() ?? Promise.resolve(null),
+          props.loadHistorySupplement?.() ?? Promise.resolve(null),
+        ]);
+        if (active) {
+          setOfficialInfo(info);
+          setSupplement(job);
+          setSupplementError("");
+        }
+      } catch (reason) {
+        if (active) setSupplementError(operationError(reason, "数据补齐状态"));
+      }
+    };
+    void refresh();
+    return () => { active = false; };
+  }, [props.loadOfficialTdxInfo, props.loadHistorySupplement]);
+  useEffect(() => {
+    if (!props.loadHistorySupplement || !supplement || !["pending", "running"].includes(supplement.state)) return;
+    const timer = window.setInterval(() => {
+      props.loadHistorySupplement!().then(setSupplement).catch((reason) => setSupplementError(operationError(reason, "数据补齐进度")));
+    }, 1200);
+    return () => window.clearInterval(timer);
+  }, [props.loadHistorySupplement, supplement?.job_id, supplement?.state]);
   async function toggleScheduler() { if (!status) return; const paused = !status.scheduler.paused; setActing("scheduler"); setError(""); try { const scheduler = await props.setSchedulerPaused(paused); setStatus({ ...status, scheduler }); setNotice(paused ? "调度已暂停" : "调度已恢复"); } catch (reason) { setError(operationError(reason, "调度操作")); } finally { setActing(""); } }
   async function backup() { if (!status) return; setActing("backup"); setError(""); try { const created = await props.createBackup(); setStatus({ ...status, backups: [created, ...status.backups] }); setNotice(`备份已创建 ${created.backup_id}`); } catch (reason) { setError(operationError(reason, "备份创建")); } finally { setActing(""); } }
   async function verify(backupId: string) { setActing(`verify:${backupId}`); setError(""); try { setVerification(await props.verifyBackup(backupId)); } catch (reason) { setError(operationError(reason, "备份验证")); } finally { setActing(""); } }
@@ -180,6 +226,13 @@ export function OperationsView(props: Props) {
   async function scanTdx() { if (!props.scanTdxImport) return; setTdxBusy(true); setTdxError(""); try { setTdxScan(await props.scanTdxImport()); } catch (reason) { setTdxError(operationError(reason, "本地通达信扫描")); } finally { setTdxBusy(false); } }
   async function startTdx() { if (!props.startTdxImport) return; setTdxBusy(true); setTdxError(""); try { setTdxImport(await props.startTdxImport()); } catch (reason) { setTdxError(operationError(reason, "本地通达信导入")); } finally { setTdxBusy(false); } }
   async function controlTdx(action: "pause" | "resume") { if (!tdxImport) return; const handler = action === "pause" ? props.pauseTdxImport : props.resumeTdxImport; if (!handler) return; setTdxBusy(true); setTdxError(""); try { setTdxImport(await handler(tdxImport.job_id)); } catch (reason) { setTdxError(operationError(reason, "本地通达信导入任务")); } finally { setTdxBusy(false); } }
+  async function startFullRepair() {
+    if (!props.startOfficialTdxSupplement) return;
+    setSupplementBusy(true); setSupplementError("");
+    try { setSupplement(await props.startOfficialTdxSupplement()); }
+    catch (reason) { setSupplementError(operationError(reason, "一键全面修复")); }
+    finally { setSupplementBusy(false); }
+  }
   function exportDiagnostics() {
     if (!diagnostics) return;
     const payload = JSON.stringify({
@@ -201,6 +254,21 @@ export function OperationsView(props: Props) {
     <header className="operations-header"><div><p className="eyebrow">工部 / DATA OPERATIONS</p><h1>数据与运维中心</h1><p>本地任务调度、故障补跑、一致性备份与恢复验证</p></div><div className={`scheduler-switch ${status?.scheduler.paused ? "paused" : "running"}`}><span>{status?.scheduler.paused ? "已暂停" : "运行中"}</span><button onClick={() => void toggleScheduler()} disabled={acting !== ""}>{status?.scheduler.paused ? <Play size={15}/> : <Pause size={15}/>} {status?.scheduler.paused ? "恢复调度" : "暂停调度"}</button></div></header>
     {error && <div className="operations-error" role="alert"><AlertTriangle size={17}/>{error}<button onClick={() => void reload()}>重试</button></div>}
     {notice && <div className="operations-notice" role="status"><CheckCircle2 size={16}/>{notice}</div>}
+    {(props.loadHistorySupplement || props.startOfficialTdxSupplement || props.loadHistoryRepairCenter) && <section className={`data-integrity-center ${history?.coverage.quality === "ready" ? "ready" : "warning"}`}>
+      <header><div><h2><DatabaseBackup size={19}/>数据完整性与补齐中心</h2><small>统一执行本机导入、官方包下载、校验、解压、在线补缺和最终覆盖复核</small></div><button className="data-repair-primary" onClick={() => void startFullRepair()} disabled={supplementBusy || !props.startOfficialTdxSupplement || supplement?.state === "pending" || supplement?.state === "running"}><Download size={15}/>{supplementBusy ? "正在启动" : "一键全面修复"}</button></header>
+      {history && <div className={`data-freshness-gate ${history.coverage.quality === "ready" ? "ready" : "blocked"}`}><div>{history.coverage.quality === "ready" ? <CheckCircle2 size={20}/> : <AlertTriangle size={20}/>}<span><strong>{history.coverage.quality === "ready" ? "数据完整，分析可正常使用" : "数据不完整，相关分析已降级"}</strong><small>预期交易日 {history.coverage.target_date} · 主导交易日 {history.coverage.dominant_trade_date ?? "无数据"}{history.coverage.lag_trading_days ? ` · 落后 ${history.coverage.lag_trading_days} 个交易日` : " · 日期一致"}</small></span></div><div><b>{history.coverage.dominant_date_coverage_percent ?? "--"}%</b><small>主导日覆盖</small></div><div><b>{history.coverage.coverage_percent ?? "--"}%</b><small>历史充足覆盖</small></div><div><b>{history.total_gap_count}</b><small>待修复股票</small></div></div>}
+      <div className="data-repair-metrics">
+        <article><span>官方数据包</span><strong>{officialInfo?.modified_at.slice(0, 10) ?? supplement?.package_modified_at?.slice(0, 10) ?? "--"}</strong><small>{officialInfo?.size_label ?? supplement?.package_size_label ?? "等待元数据"}</small></article>
+        <article><span>下载与校验</span><strong>{bytes(supplement?.validated_bytes ?? 0)}</strong><small>下载 {bytes(supplement?.downloaded_bytes ?? 0)} · 校验 {supplement?.total_validation_bytes ? `${Math.round((supplement.validated_bytes / supplement.total_validation_bytes) * 100)}%` : "未开始"}</small></article>
+        <article><span>解压文件</span><strong>{supplement?.extracted_files ?? 0} / {supplement?.total_extract_files ?? 0}</strong><small>有效 A 股文件 {supplement?.supported_file_count ?? 0}</small></article>
+        <article><span>导入股票</span><strong>{supplement?.processed_files ?? 0} / {supplement?.total_import_files ?? 0}</strong><small>新增 {supplement?.imported_rows ?? 0} · 替换 {supplement?.replaced_rows ?? 0} · 失败 {supplement?.failed_files ?? 0}</small></article>
+        <article><span>在线补缺</span><strong>{supplement?.online_ready ?? 0} / {supplement?.online_total ?? 0}</strong><small>失败 {supplement?.online_failed ?? 0} · 待处理 {supplement?.online_pending ?? 0}</small></article>
+      </div>
+      {supplement && <div className="data-repair-progress" role="status" aria-live="polite"><div><b>{supplementStageLabel[supplement.stage] ?? "正在处理"} · {supplement.percent.toFixed(2)}%</b><small>{supplement.result_detail ?? `任务更新时间 ${new Date(supplement.updated_at).toLocaleString("zh-CN")}`}</small></div><progress max={100} value={supplement.percent}/></div>}
+      {supplement?.source_attempts?.length ? <div className="data-source-ladder">{supplement.source_attempts.map((item) => <article key={item.source} className={item.state}><span>{item.state === "completed" ? <CheckCircle2 size={15}/> : item.state === "failed" ? <AlertTriangle size={15}/> : <Clock3 size={15}/>}<b>{supplementSourceLabel[item.source] ?? item.source}</b></span><small>{item.detail}</small></article>)}</div> : null}
+      {supplementError && <p className="history-repair-error" role="alert"><AlertTriangle size={15}/>{supplementError}</p>}
+      {supplement?.error_detail && <p className="history-repair-error" role="alert"><AlertTriangle size={15}/>失败阶段：{supplementStageLabel[supplement.error_stage ?? "failed"] ?? supplement.error_stage} · {supplement.error_detail}</p>}
+    </section>}
     {status?.tdx_auto_import && <section className={`tdx-auto-import-status ${status.tdx_auto_import.state}`} aria-label="通达信自动导入状态">
       <div><Database size={16}/><strong>通达信日线自动监测</strong><span>{autoImportStateLabel[status.tdx_auto_import.state] ?? localizedState(status.tdx_auto_import.state)}</span></div>
       <small>{status.tdx_auto_import.file_count} 个受监测文件{status.tdx_auto_import.last_poll_at ? ` · 最近扫描 ${new Date(status.tdx_auto_import.last_poll_at).toLocaleTimeString("zh-CN")}` : ""}</small>

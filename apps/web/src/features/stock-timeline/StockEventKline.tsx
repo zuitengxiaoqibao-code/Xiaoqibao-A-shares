@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { QuantChart } from "../quant-analysis/QuantChart";
 import { chartTheme } from "../../shared/visualization/chartTheme";
+import { friendlyError } from "../../shared/friendlyError";
 import { loadStockTimeline } from "./api";
 import type {
   StockTimelineEvent,
@@ -395,7 +396,7 @@ export function StockEventKline({
       })
       .catch((caught) => {
         if (controller.signal.aborted) return;
-        setError(caught instanceof Error ? caught.message : "事件 K 线暂不可用");
+        setError(friendlyError(caught, "事件 K 线"));
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
@@ -420,7 +421,7 @@ export function StockEventKline({
         setError("");
       })
       .catch((caught) => {
-        if (!controller.signal.aborted) setError(caught instanceof Error ? caught.message : "事件 K 线实时更新暂不可用");
+        if (!controller.signal.aborted) setError(friendlyError(caught, "事件 K 线实时更新"));
       })
       .finally(() => {
         if (liveControllerRef.current === controller) {
@@ -603,7 +604,7 @@ export function StockEventKline({
       </aside>
       </div>
     </>}
-    {error && data && <div className="stock-timeline-stale"><AlertTriangle size={14} />更新失败，当前保留上次的本地快照</div>}
+    {error && data && <div className="stock-timeline-stale"><AlertTriangle size={14} />更新失败：{error}当前保留上次的本地快照</div>}
     <footer className="stock-event-kline-footer"><span>日线：本地历史库</span><span>事件：已核验个股新闻原始发布时间</span><span>批量热点采集时间不落图</span></footer>
   </section>;
 }

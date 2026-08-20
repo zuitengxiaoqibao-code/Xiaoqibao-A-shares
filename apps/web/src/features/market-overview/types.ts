@@ -140,6 +140,7 @@ export type DragonTigerStock = {
 
 export type MarketReviewSnapshot = {
   as_of: string;
+  expected_trade_date?: string | null;
   observed_at: string;
   latest_trade_date: string | null;
   latest_available_trade_date?: string | null;
@@ -147,6 +148,8 @@ export type MarketReviewSnapshot = {
   latest_trade_date_coverage_percent?: string | null;
   source: string;
   quality: OverviewQuality;
+  refresh_required?: boolean;
+  refresh_reason?: string | null;
   universe_count: number;
   history_ready_count: number;
   watermark?: MarketDataWatermark;

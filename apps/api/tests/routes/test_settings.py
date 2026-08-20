@@ -51,6 +51,8 @@ def test_ai_settings_never_return_secret(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     assert body["configured"] is True
+    assert body["state"] == "configured_unverified"
+    assert body["message"] == "AI 接口已配置，等待首次连接验证"
     assert body["api_key_hint"].endswith("alue")
     assert "secret-value" not in str(response.json())
     assert "secret-value" not in str(body)
@@ -60,6 +62,8 @@ def test_unconfigured_and_deleted_settings_have_no_hint(tmp_path: Path) -> None:
     subject = client(tmp_path)
     assert subject.get("/api/v1/settings/ai").json() == {
         "configured": False,
+        "state": "unconfigured",
+        "message": "尚未配置 AI 接口",
         "base_url": None,
         "model": None,
         "api_key_hint": None,
@@ -92,6 +96,8 @@ def test_get_reports_environment_fallback_when_local_is_missing(tmp_path: Path) 
 
     assert response.json() == {
         "configured": True,
+        "state": "configured_unverified",
+        "message": "AI 接口已配置，等待首次连接验证",
         "base_url": "http://localhost:11434/v1",
         "model": "environment-model",
         "api_key_hint": "****cret",
@@ -173,6 +179,28 @@ def test_data_source_settings_default_to_discovery_without_rpc(tmp_path: Path) -
     assert body["restart_required"] is False
     assert body["tdx_rpc"]["status"] == "disabled"
     assert body["tdx_rpc"]["capabilities"]
+
+
+def test_data_source_settings_reuse_startup_discovery_snapshot(tmp_path: Path) -> None:
+    application = FastAPI()
+    repository = LocalSourceSettingsRepository(tmp_path / "config" / "data-sources.json")
+    discovery = LocalTerminalDiscovery(system_candidates=lambda: ())
+    record = repository.load()
+    cached = discovery.inspect(record.settings)
+    application.state.ai_settings_repository = AISettingsRepository(tmp_path)
+    application.state.effective_ai_settings = EffectiveAISettingsResolver(
+        application.state.ai_settings_repository
+    )
+    application.state.local_source_settings_repository = repository
+    application.state.local_terminal_discovery = discovery
+    application.state.local_source_discovery_result = cached
+    application.include_router(router)
+    discovery.inspect = lambda _settings: (_ for _ in ()).throw(AssertionError("不应重复扫描"))
+
+    response = TestClient(application).get("/api/v1/settings/data-sources")
+
+    assert response.status_code == 200
+    assert response.json()["scanned_at"] == cached.scanned_at.isoformat()
 
 
 def test_detect_validates_draft_without_persisting_it(tmp_path: Path) -> None:

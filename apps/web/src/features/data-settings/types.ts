@@ -9,6 +9,8 @@ export type {
 
 export type AISettingsView = {
   configured: boolean;
+  state?: "unconfigured" | "configured_unverified" | "connected" | "connection_failed" | "timeout" | "rate_limited" | "model_not_found";
+  message?: string;
   base_url: string | null;
   model: string | null;
   api_key_hint: string | null;
@@ -73,6 +75,8 @@ export type HistoryCoverageSummary = {
   missing_history_count: number;
   quality: "ready" | "partial" | "stale" | "unavailable" | "error";
   blockers: string[];
+  lag_trading_days?: number;
+  is_fresh?: boolean;
 };
 export type HistoryCoverageGap = {
   symbol: string;
@@ -112,6 +116,28 @@ export type HistoryRepairCenterLoader = () => Promise<HistoryRepairCenter>;
 export type HistoryRepairAuditLoader = () => Promise<HistoryRepairAudit[]>;
 export type HistorySyncStarter = () => Promise<HistorySyncJob>;
 export type HistorySyncController = (jobId: string) => Promise<HistorySyncJob>;
+export type OfficialTdxPackageInfo = { size_label: string; modified_at: string };
+export type HistorySupplementJob = {
+  job_id: string; state: "pending" | "running" | "completed" | "partial" | "failed";
+  stage: "queued" | "checking_metadata" | "checking_cache" | "validating_cache" | "downloading" | "validating" | "extracting" | "scanning" | "importing" | "online_repair" | "final_review" | "completed" | "partial" | "failed";
+  percent: number; source_url: string; package_modified_at?: string | null;
+  package_size_label?: string | null; downloaded_bytes: number; total_bytes?: number | null;
+  package_sha256?: string | null; package_path?: string | null;
+  day_file_count: number; supported_file_count: number; latest_trade_date?: string | null;
+  imported_rows: number; replaced_rows: number; skipped_rows: number; failed_files: number;
+  validated_bytes: number; total_validation_bytes: number; extracted_files: number; total_extract_files: number;
+  processed_files: number; total_import_files: number; online_total: number; online_ready: number;
+  online_failed: number; online_pending: number; final_target_date?: string | null;
+  final_dominant_trade_date?: string | null; final_dominant_coverage_percent?: number | null;
+  final_history_coverage_percent?: number | null; remaining_gap_count: number; final_quality?: string | null;
+  final_blockers: string[]; result_detail?: string | null;
+  source_attempts: Array<{ source: string; state: string; detail: string; observed_at: string }>;
+  error_stage?: string | null; error_detail?: string | null;
+  created_at: string; updated_at: string; finished_at?: string | null;
+};
+export type OfficialTdxInfoLoader = () => Promise<OfficialTdxPackageInfo>;
+export type HistorySupplementLoader = () => Promise<HistorySupplementJob | null>;
+export type HistorySupplementStarter = () => Promise<HistorySupplementJob>;
 export type TdxImportError = { path: string; code: string; detail: string };
 export type TdxImportJob = {
   job_id: string; state: "pending" | "running" | "paused" | "completed" | "failed";

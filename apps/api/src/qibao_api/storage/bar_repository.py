@@ -38,9 +38,18 @@ class BarCoverageAggregate:
 
 
 class BarRepository:
-    def __init__(self, database_path: Path, parquet_dir: Path) -> None:
+    def __init__(
+        self,
+        database_path: Path,
+        parquet_dir: Path,
+        *,
+        read_only: bool = False,
+        ensure_schema: bool = True,
+    ) -> None:
         self.database_path = database_path
         self.parquet_dir = parquet_dir
+        self.read_only = read_only
+        self.ensure_schema = ensure_schema
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self.parquet_dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
@@ -49,13 +58,15 @@ class BarRepository:
     def _raw_connect(self):
         import duckdb
 
-        return duckdb.connect(str(self.database_path))
+        return duckdb.connect(str(self.database_path), read_only=self.read_only)
 
     def _connect(self):
         self._ensure_schema()
         return self._raw_connect()
 
     def _ensure_schema(self) -> None:
+        if self.read_only or not self.ensure_schema:
+            return
         if self._schema_ready:
             return
         with self._lock:
@@ -191,6 +202,83 @@ class BarRepository:
                 )
         return imported, replaced, skipped
 
+    def append_preferred_batch(
+        self,
+        bars: list[DailyBar],
+        preferred_sources: tuple[str, ...],
+    ) -> tuple[int, int, int]:
+        """Append a de-duplicated batch without issuing one query per daily bar."""
+        if not bars:
+            return 0, 0, 0
+        grouped = {
+            (validate_a_share_code(bar.symbol), bar.trade_date): bar
+            for bar in bars
+        }
+        rows = [
+            (
+                symbol, trade_date, bar.open, bar.high, bar.low, bar.close,
+                bar.volume, bar.amount, bar.source,
+            )
+            for (symbol, trade_date), bar in grouped.items()
+        ]
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """CREATE TEMP TABLE incoming_daily_bars (
+                    symbol VARCHAR, trade_date DATE, open DECIMAL(18, 4),
+                    high DECIMAL(18, 4), low DECIMAL(18, 4), close DECIMAL(18, 4),
+                    volume BIGINT, amount DECIMAL(24, 4), source VARCHAR
+                )"""
+            )
+            connection.executemany(
+                "INSERT INTO incoming_daily_bars VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rows,
+            )
+            preferred = list(preferred_sources)
+            placeholders = ", ".join("?" for _ in preferred)
+            summary = connection.execute(
+                f"""
+                WITH existing AS (
+                    SELECT i.symbol, i.trade_date,
+                           arg_max(b.source, b.ingested_at) AS source
+                    FROM incoming_daily_bars i
+                    LEFT JOIN daily_bars b
+                      ON b.symbol = i.symbol AND b.trade_date = i.trade_date
+                    GROUP BY i.symbol, i.trade_date
+                )
+                SELECT
+                    count(*) FILTER (WHERE source IS NULL),
+                    count(*) FILTER (
+                        WHERE source IS NOT NULL AND source NOT IN ({placeholders})
+                    ),
+                    count(*) FILTER (WHERE source IN ({placeholders}))
+                FROM existing
+                """,
+                [*preferred, *preferred],
+            ).fetchone()
+            imported, replaced, skipped = (int(value or 0) for value in summary)
+            connection.execute(
+                f"""
+                INSERT INTO daily_bars
+                    (symbol, trade_date, open, high, low, close, volume, amount, source)
+                SELECT i.symbol, i.trade_date, i.open, i.high, i.low, i.close,
+                       i.volume, i.amount, i.source
+                FROM incoming_daily_bars i
+                LEFT JOIN (
+                    SELECT symbol, trade_date, arg_max(source, ingested_at) AS source
+                    FROM daily_bars
+                    WHERE (symbol, trade_date) IN (
+                        SELECT symbol, trade_date FROM incoming_daily_bars
+                    )
+                    GROUP BY symbol, trade_date
+                ) existing
+                  ON existing.symbol = i.symbol AND existing.trade_date = i.trade_date
+                WHERE existing.source IS NULL
+                   OR existing.source NOT IN ({placeholders})
+                """,
+                preferred,
+            )
+        return imported, replaced, skipped
+
     def coverage(
         self, symbols: Sequence[str], target_date: date
     ) -> dict[str, BarCoverage]:
@@ -218,6 +306,30 @@ class BarRepository:
             )
             for row in rows
         })
+        return result
+
+    def latest_dates(
+        self,
+        symbols: Sequence[str],
+        target_date: date,
+    ) -> dict[str, date | None]:
+        """Return only the latest watermark needed by incremental imports."""
+        validated = list(dict.fromkeys(
+            validate_a_share_code(symbol) for symbol in symbols
+        ))
+        result: dict[str, date | None] = {symbol: None for symbol in validated}
+        if not validated:
+            return result
+        placeholders = ", ".join("?" for _ in validated)
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                f"""SELECT symbol, max(trade_date)
+                    FROM daily_bars
+                    WHERE symbol IN ({placeholders}) AND trade_date <= ?
+                    GROUP BY symbol""",
+                [*validated, target_date],
+            ).fetchall()
+        result.update({row[0]: row[1] for row in rows})
         return result
 
     def coverage_aggregate(

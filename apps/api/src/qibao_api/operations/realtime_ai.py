@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any
 
+from qibao_api.ai_status import classify_ai_status
 from qibao_api.zhongshu.decision_ai import DecisionAIEvidence, DecisionAIRequest
 
 
@@ -136,6 +137,27 @@ class RealtimeAITriggerQueue:
                 result = None
             else:
                 result = self.ai_gateway.explain(request)
+            identity = (
+                tuple(self.ai_gateway.configuration_identity())
+                if self.ai_gateway is not None
+                and hasattr(self.ai_gateway, "configuration_identity")
+                else ("unconfigured",)
+            )
+            configured = bool(identity and identity[0] == "configured")
+            ai_status = classify_ai_status(
+                configured=configured,
+                verified=bool(result is not None and result.status == "ready"),
+                error=(OSError("AI request unavailable") if configured and result is None else None),
+            )
+            if configured and result is not None and result.status != "ready":
+                result_state = getattr(result, "ai_state", None)
+                result_message = getattr(result, "ai_message", None)
+                if result_state and result_message:
+                    ai_status = type(ai_status)(result_state, result_message)
+                else:
+                    ai_status = classify_ai_status(
+                        configured=True, error=OSError("AI request unavailable"),
+                    )
             payload = {
                 **trigger,
                 "status": result.status if result is not None else "unavailable",
@@ -147,6 +169,12 @@ class RealtimeAITriggerQueue:
                 "generated_at": result.generated_at.isoformat() if result is not None else datetime.now(timezone.utc).isoformat(),
                 "evidence_ids": list(result.evidence_ids) if result is not None else [item["evidence_id"] for item in trigger["evidence"]],
                 "fallback": result is None or result.status != "ready",
+                "ai_state": ai_status.state,
+                "ai_message": (
+                    "尚未配置 AI 接口，已保留规则分析"
+                    if ai_status.state == "unconfigured"
+                    else ai_status.message
+                ),
             }
             self.bus.publish(
                 "ai_analysis",

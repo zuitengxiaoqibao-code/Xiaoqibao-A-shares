@@ -36,6 +36,17 @@ class ActiveDirectory:
         return self.symbols
 
 
+class TradingCalendar:
+    def __init__(self, trading_days: tuple[date, ...]) -> None:
+        self.trading_days = trading_days
+
+    def is_trading_day(self, value: date) -> bool:
+        return value in self.trading_days
+
+    def previous_trading_day(self, value: date) -> date:
+        return max(item for item in self.trading_days if item < value)
+
+
 class FakeQuotes:
     def __init__(self, snapshots: dict[str, TencentMarketSnapshot], *, fail=False):
         self.snapshots = snapshots
@@ -402,3 +413,28 @@ def test_current_ignores_legacy_scan_candidates_without_provenance(tmp_path) -> 
     assert board.qualified_count == 0
     assert board.no_buy_count == 0
     assert "full_market_scan_required" in board.missing_data
+
+
+@pytest.mark.asyncio
+async def test_current_discloses_stale_scan_date_instead_of_masquerading_as_requested_day(
+    tmp_path,
+) -> None:
+    repository = FirstLimitUpRepository(tmp_path / "first-limit-up.sqlite3")
+    history = _first_board_history()
+    service = FirstLimitUpService(
+        bar_repository=FakeBars({"600001": history}),
+        quote_source=FakeQuotes({"600001": quote("600001", "历史扫描样本", "22")}),
+        repository=repository,
+        universe_provider=ActiveDirectory(("600001",)),
+    )
+    await service.refresh(AS_OF)
+
+    board = service.current(date(2026, 7, 31))
+
+    assert board.as_of == date(2026, 7, 31)
+    assert board.scan_date == AS_OF
+    assert board.expected_scan_date == date(2026, 7, 31)
+    assert board.scan_updated_at is not None
+    assert board.refresh_required is True
+    assert board.status == "partial"
+    assert "current_trading_day_scan_required" in board.missing_data

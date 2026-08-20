@@ -244,6 +244,43 @@ def test_review_uses_dominant_trade_date_instead_of_sparse_latest_outlier() -> N
     assert "history_latest_outlier" in result.warnings
 
 
+def test_review_exposes_query_date_and_requires_refresh_when_history_lags_query() -> None:
+    result = build_market_review(
+        {
+            "600014": bars("600014", ["10.00", "10.10"]),
+            "600015": bars("600015", ["10.00", "10.20"]),
+        },
+        as_of=date(2026, 8, 19),
+        observed_at=NOW,
+        name_resolver=lambda symbol: symbol,
+    )
+
+    assert result.expected_trade_date == date(2026, 8, 19)
+    assert result.latest_trade_date == date(2026, 1, 2)
+    assert result.refresh_required is True
+    assert result.refresh_reason == "历史日线主导日期落后查询日期"
+    assert result.quality == "stale"
+
+
+def test_review_marks_fragmented_history_partial_but_still_requires_refresh() -> None:
+    histories = {
+        "600016": bars("600016", ["10.00", "10.10"]),
+        "600017": bars("600017", ["10.00", "10.20"]),
+        "600018": bars("600018", ["10.00", "10.30", "10.40"]),
+    }
+
+    result = build_market_review(
+        histories,
+        as_of=date(2026, 1, 3),
+        observed_at=NOW,
+        name_resolver=lambda symbol: symbol,
+    )
+
+    assert result.refresh_required is True
+    assert result.refresh_reason == "历史日线覆盖日期分散，不能代表查询日期全市场"
+    assert result.quality == "partial"
+
+
 def test_review_does_not_mark_large_fragmented_watermark_ready() -> None:
     histories = {
         f"6{index:05d}": bars(f"6{index:05d}", ["10.00", "10.10"])

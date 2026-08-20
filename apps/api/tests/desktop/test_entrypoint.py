@@ -1,4 +1,6 @@
 from pathlib import Path
+import logging
+from types import SimpleNamespace
 
 from qibao_desktop import entrypoint
 from qibao_desktop.instance import AlreadyRunningError
@@ -223,3 +225,108 @@ def test_entrypoint_accepts_an_explicit_instance_name_for_isolated_smoke(
         "--instance-name", "xiaoqibao-smoke-test",
     ]) == 0
     assert names == ["xiaoqibao-smoke-test"]
+
+
+def test_update_helper_waits_for_residual_release_processes_before_replacing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest = tmp_path / "pending-update.json"
+    manifest.write_text("{}", encoding="utf-8")
+    target_root = tmp_path / "XiaoQiBao-Portable"
+    target_root.mkdir()
+    applied = []
+
+    class FakeUpdate:
+        def __init__(self) -> None:
+            self.target_root = target_root
+
+        def apply(self) -> int:
+            applied.append(True)
+            return 1
+
+    process_states = iter([{17144}, set()])
+    monkeypatch.setattr(entrypoint, "load_pending_update", lambda *_args, **_kwargs: FakeUpdate())
+    monkeypatch.setattr(entrypoint, "_process_exists", lambda _pid: False)
+    monkeypatch.setattr(
+        entrypoint,
+        "_release_process_ids",
+        lambda _root, _excluded: next(process_states),
+    )
+    monkeypatch.setattr(entrypoint.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(entrypoint.time, "monotonic", iter([0.0, 0.1, 0.2]).__next__)
+    monkeypatch.setattr(entrypoint.subprocess, "Popen", lambda *_args, **_kwargs: None)
+
+    assert entrypoint._run_update_helper(manifest, parent_pid=42) == 0
+    assert applied == [True]
+
+
+def test_update_helper_keeps_manifest_and_logs_chinese_error_on_failure(
+    tmp_path: Path, monkeypatch, caplog
+) -> None:
+    manifest = tmp_path / "pending-update.json"
+    manifest.write_text("{}", encoding="utf-8")
+    target_root = tmp_path / "XiaoQiBao-Portable"
+    target_root.mkdir()
+
+    class FakeUpdate:
+        def __init__(self) -> None:
+            self.target_root = target_root
+
+        def apply(self) -> int:
+            raise OSError("locked")
+
+    monkeypatch.setattr(entrypoint, "load_pending_update", lambda *_args, **_kwargs: FakeUpdate())
+    monkeypatch.setattr(entrypoint, "_process_exists", lambda _pid: False)
+    monkeypatch.setattr(entrypoint, "_release_process_ids", lambda _root, _excluded: set())
+    monkeypatch.setattr(entrypoint.time, "monotonic", lambda: 0.0)
+    monkeypatch.setattr(entrypoint.subprocess, "Popen", lambda *_args, **_kwargs: None)
+
+    with caplog.at_level(logging.ERROR, logger="qibao_desktop.entrypoint"):
+        result = entrypoint._run_update_helper(manifest, parent_pid=None)
+
+    assert result == 4
+    assert manifest.exists()
+    assert "便携版更新失败" in caplog.text
+
+
+def test_handoff_keeps_current_startup_when_pending_manifest_is_invalid(
+    tmp_path: Path, monkeypatch, caplog
+) -> None:
+    manifest = tmp_path / "pending-update.json"
+    manifest.write_text("not-json", encoding="utf-8")
+    monkeypatch.setattr(entrypoint, "desktop_layout", lambda _root: type(
+        "Layout", (), {"root": tmp_path}
+    )())
+    monkeypatch.setattr(
+        entrypoint,
+        "load_pending_update",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("清单格式错误")),
+    )
+
+    with caplog.at_level(logging.ERROR, logger="qibao_desktop.entrypoint"):
+        assert entrypoint._handoff_pending_update(tmp_path) is False
+
+    assert manifest.exists()
+    assert "待更新清单无效" in caplog.text
+
+
+def test_release_process_scan_decodes_utf8_windows_paths(
+    tmp_path: Path, monkeypatch
+) -> None:
+    target_root = tmp_path / "一树-A股观测台"
+    executable = target_root / "xiaoqibao.exe"
+    seen = {}
+
+    def fake_run(*_args, **kwargs):
+        seen.update(kwargs)
+        return SimpleNamespace(
+            stdout='[{"ProcessId": 17144, "ExecutablePath": "'
+            + str(executable).replace("\\", "\\\\")
+            + '"}]'
+        )
+
+    monkeypatch.setattr(entrypoint.subprocess, "run", fake_run)
+
+    assert entrypoint._release_process_ids(target_root, set()) == {17144}
+    assert seen["encoding"] == "utf-8"
+    assert seen["errors"] == "replace"

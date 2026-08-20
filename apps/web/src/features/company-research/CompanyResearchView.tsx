@@ -9,6 +9,7 @@ import { DataWatermarkStrip } from "../../shared/evidence/DataWatermarkStrip";
 import { RealtimeAIInsight, type RealtimeAIInsightPayload } from "../../shared/RealtimeAIInsight";
 import { consumeRealtimeStream, type RealtimeStreamState } from "../../shared/realtimeStream";
 import { readDailySnapshot, writeDailySnapshot } from "../../shared/dailySnapshotCache";
+import { resolveSnapshotState, type RuntimeSnapshot } from "../../shared/snapshotState";
 import type { LoadProgress, LoadProgressCallback } from "../../shared/fetchJsonWithProgress";
 import type { InstrumentSearchResponse } from "../stock-cockpit/types";
 import type { CompanyResearchAIResult, CompanyResearchResponse, FinancialPeriod } from "./types";
@@ -58,6 +59,24 @@ function numeric(value: string | null | undefined): number | null {
   if (value === null || value === undefined || value === "") return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function researchSnapshot(value: CompanyResearchResponse): RuntimeSnapshot<CompanyResearchResponse> {
+  const coverage = numeric(value.evidence_coverage);
+  return {
+    data: value,
+    status: value.status === "unavailable" ? "unavailable" : value.status,
+    freshness: "current",
+    observedAt: value.generated_at,
+    generatedAt: value.generated_at,
+    tradeDate: value.as_of,
+    source: value.sources.map((item) => item.source).filter(Boolean).join(",") || "company-research",
+    coverage: coverage === null ? null : coverage * 100,
+    cache: { state: "live", cachedAt: null },
+    progress: null,
+    error: null,
+    traceId: value.research_version?.snapshot_id ?? `${value.symbol}:${value.generated_at}`,
+  };
 }
 
 function pct(value: string | null | undefined, scale = 1): string {
@@ -153,7 +172,9 @@ function ResearchDashboard({ value, peers, comparison, onOpenAShare, onAddPeer }
     <DataWatermarkStrip
       status={value.status}
       tradeDate={value.as_of}
+      tradeDateLabel="查询日"
       observedAt={value.valuation.observed_at ?? value.financial_history.observed_at}
+      observedLabel="数据截至"
       generatedAt={value.generated_at}
       sourceCount={value.sources.filter((item) => item.status !== "unavailable").length}
       sampleCount={value.financial_history.periods.length}
@@ -273,16 +294,30 @@ export function CompanyResearchView({ load, search, selectedSymbol, onSelectSymb
         setEntries((current) => current.map((item) => item.symbol === normalized ? { ...item, refreshing: true, progress, refreshError: undefined } : item));
       });
       if (controllers.current.get(normalized) !== controller) return;
-      const stored = writeDailySnapshot("company-research", normalized, value);
+      const currentEntry = entriesRef.current.find((item) => item.symbol === normalized);
+      const resolved = resolveSnapshotState(
+        currentEntry?.value ? researchSnapshot(currentEntry.value) : null,
+        researchSnapshot(value),
+        (candidate) => candidate.dimensions.length === 0,
+      );
+      const accepted = resolved.snapshot.data ?? value;
+      const stored = writeDailySnapshot(
+        "company-research",
+        normalized,
+        accepted,
+        new Date(),
+        { completeness: accepted.status === "ready" ? "complete" : "partial" },
+      );
       setEntries((current) => current.map((item) => item.symbol === normalized ? {
         symbol: normalized,
-        name: value.name,
+        name: accepted.name,
         state: "ready",
-        value,
+        value: accepted,
         cachedAt: stored.cachedAt,
         updatedAt: stored.cachedAt,
         refreshing: false,
         progress: { percent: 100, stage: "complete", detail: "最新公司研究数据已载入" },
+        refreshError: resolved.refreshError ?? undefined,
       } : item));
     } catch (error) {
       if (controller.signal.aborted) return;

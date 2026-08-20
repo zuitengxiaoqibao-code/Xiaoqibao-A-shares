@@ -673,6 +673,33 @@ def test_service_can_defer_first_candidate_scan_without_blocking_request() -> No
     service.close()
 
 
+def test_deferred_candidate_scan_avoids_windows_process_pool_for_non_ascii_database_path(
+    tmp_path,
+) -> None:
+    from pathlib import Path
+
+    database = Path(tmp_path) / "金融财经" / "market.duckdb"
+    candidate_service = SimpleNamespace(
+        candidates=lambda as_of, limit: board(),
+        bar_repository=SimpleNamespace(
+            database_path=database,
+            parquet_dir=database.parent / "parquet",
+        ),
+    )
+    service = QuantStrategyService(
+        SimpleNamespace(current=lambda now: overview()),
+        candidate_service,
+        SimpleNamespace(resolve=lambda symbol: None),
+        defer_initial_scan=True,
+    )
+
+    assert service._candidate_process_executor is not None
+    assert all(
+        str(path).isascii() for path in service._candidate_process_paths
+    )
+    service.close()
+
+
 def test_disk_snapshot_keeps_candidates_during_deferred_candidate_refresh(tmp_path) -> None:
     import threading
 

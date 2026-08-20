@@ -263,6 +263,25 @@ class HistorySyncRepository:
             )
         return self.get(job_id)
 
+    def retry_failed(self, job_id: str) -> HistorySyncJob:
+        self.get(job_id)
+        now = self._now()
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """UPDATE history_sync_items
+                   SET state = 'pending', source = NULL, written_rows = 0,
+                       error_code = NULL, updated_at = ?
+                   WHERE job_id = ? AND state IN ('failed', 'pending', 'running')""",
+                (now, job_id),
+            )
+            connection.execute(
+                """UPDATE history_sync_jobs
+                   SET pause_requested = 0, state = 'pending', updated_at = ?
+                   WHERE job_id = ?""",
+                (now, job_id),
+            )
+        return self.get(job_id)
+
     def is_pause_requested(self, job_id: str) -> bool:
         return self.get(job_id).pause_requested
 

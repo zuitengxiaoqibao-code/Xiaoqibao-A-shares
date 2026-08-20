@@ -6,6 +6,8 @@ import type {
   HistoryRepairCenter,
   HistoryRepairAudit,
   HistorySyncJob,
+  HistorySupplementJob,
+  OfficialTdxPackageInfo,
   LocalSourceSettings,
   LocalSourceSettingsView,
   SourceHealthResponse,
@@ -109,6 +111,33 @@ export const pauseHistorySync = (jobId: string) => historySyncRequest(
 export const resumeHistorySync = (jobId: string) => historySyncRequest(
   `/api/v1/a-shares/history-sync/${encodeURIComponent(jobId)}/resume`,
   { method: "POST" },
+);
+export const retryFailedHistory = (jobId: string) => historySyncRequest(
+  `/api/v1/a-shares/history-sync/${encodeURIComponent(jobId)}/retry-failed`,
+  { method: "POST" },
+);
+export const restartCurrentHistory = () => historySyncRequest(
+  "/api/v1/a-shares/history-sync/restart-current",
+  { method: "POST" },
+);
+
+async function historySupplementRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(path, init);
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null) as { detail?: string } | null;
+    throw new Error(payload?.detail ?? `官方日线补齐请求失败 (${response.status})`);
+  }
+  return response.json() as Promise<T>;
+}
+
+export const loadOfficialTdxInfo = () => historySupplementRequest<OfficialTdxPackageInfo>(
+  "/api/v1/a-shares/history-supplement/official-info",
+);
+export const loadHistorySupplement = () => historySupplementRequest<HistorySupplementJob | null>(
+  "/api/v1/a-shares/history-supplement/current",
+);
+export const startOfficialTdxSupplement = () => historySupplementRequest<HistorySupplementJob>(
+  "/api/v1/a-shares/history-supplement/official/start", { method: "POST" },
 );
 
 async function tdxImportRequest<T>(path: string, init?: RequestInit): Promise<T> {

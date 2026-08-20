@@ -215,6 +215,8 @@ export type CompanyResearchVersion = {
 
 export type CompanyResearchAIResult = {
   status: "ready" | "unconfigured" | "timeout" | "http_error" | "invalid";
+  ai_state?: "unconfigured" | "configured_unverified" | "connected" | "connection_failed" | "timeout" | "rate_limited" | "model_not_found";
+  ai_message?: string | null;
   snapshot_id: string;
   analysis: null | {
     executive_summary: string;

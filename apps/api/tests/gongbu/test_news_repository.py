@@ -210,6 +210,39 @@ def test_events_for_symbol_is_verified_linked_and_cutoff_bounded(tmp_path) -> No
     repository.close()
 
 
+def test_events_for_symbol_excludes_archived_events(tmp_path) -> None:
+    repository = NewsRepository(tmp_path / "news.sqlite3")
+    item = article()
+    repository.append_articles((item,))
+    event = DeterministicNewsLinker(
+        instrument_aliases={}, industry_keywords={}, theme_keywords={}
+    ).link(item).model_copy(update={
+        "event_id": "archived-600519",
+        "affected_instruments": ((AssetKind.A_SHARE, "600519"),),
+        "association_kind": "direct",
+        "association_reasons": ("company_code:600519",),
+        "association_confidence": Decimal("1"),
+        "review_state": "verified",
+    })
+    repository.append_event(NormalizedNewsEvent.model_validate(event))
+
+    assert repository.events_for_symbol("600519") == [event]
+
+    repository.connection.execute(
+        "INSERT INTO news_event_archives(event_id, archived_at, expiry_at, reason) VALUES(?,?,?,?)",
+        (
+            event.event_id,
+            (NOW + timedelta(days=4)).isoformat(),
+            (NOW + timedelta(days=3)).isoformat(),
+            "retention_expired",
+        ),
+    )
+    repository.connection.commit()
+
+    assert repository.events_for_symbol("600519") == []
+    repository.close()
+
+
 def test_reconcile_event_appends_one_system_correction_and_projects_effective_state(
     tmp_path,
 ) -> None:

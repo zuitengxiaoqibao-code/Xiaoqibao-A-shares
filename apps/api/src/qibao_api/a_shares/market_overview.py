@@ -676,8 +676,17 @@ class MarketOverviewService:
         ):
             try:
                 if self.market_review_source.cache_is_stale():
+                    stale_review = response.review.model_copy(update={
+                        "quality": "stale",
+                        "refresh_required": True,
+                        "refresh_reason": "历史复盘缓存需要后台刷新",
+                        "warnings": tuple(dict.fromkeys((
+                            *response.review.warnings,
+                            "market_review_cache_stale",
+                        ))),
+                    }) if response.review is not None else None
                     response = response.model_copy(update={
-                        "review": None,
+                        "review": stale_review,
                         "warnings": tuple(dict.fromkeys((
                             *response.warnings,
                             "market_review_cache_stale",
@@ -962,15 +971,23 @@ class MarketOverviewService:
             except (OSError, RuntimeError, ValueError):
                 warnings.append("market_review_unavailable")
 
+        expected_review_date = (
+            as_of
+            if market_data.phase == "postclose"
+            else self._previous_trading_day(as_of)
+        )
         if (
             review is not None
             and review.latest_trade_date is not None
-            and review.latest_trade_date < as_of
+            and review.latest_trade_date < expected_review_date
             and review.quality != "unavailable"
             and market_data.freshness in {"live", "final"}
         ):
             review = review.model_copy(update={
                 "quality": "stale",
+                "expected_trade_date": expected_review_date,
+                "refresh_required": True,
+                "refresh_reason": review.refresh_reason or "历史日线主导日期落后查询日期",
                 "warnings": tuple(dict.fromkeys((*review.warnings, "market_review_stale"))),
             })
             warnings.append("market_review_stale")
@@ -1256,14 +1273,14 @@ class MarketOverviewService:
             reverse=True,
         )[:12])
         tracked_codes = {item.sector_code for item in tracked}
-        snapshot_quality = (
-            "stale"
-            if cutoff.astimezone(timezone.utc)
-            - latest.observed_at.astimezone(timezone.utc) > LIVE_MAX_AGE
-            else "ready"
-        )
         points_by_code: dict[str, list[OverviewSectorFundFlowPoint]] = defaultdict(list)
         for snapshot in snapshots:
+            point_quality = (
+                "stale"
+                if cutoff.astimezone(timezone.utc)
+                - snapshot.observed_at.astimezone(timezone.utc) > LIVE_MAX_AGE
+                else "ready"
+            )
             for item in snapshot.items:
                 if item.sector_code not in tracked_codes:
                     continue
@@ -1275,7 +1292,7 @@ class MarketOverviewService:
                     large_net_yi=item.large_net_yi,
                     super_net_yi=item.super_net_yi,
                     source=snapshot.source,
-                    quality=snapshot_quality,
+                    quality=point_quality,
                 ))
         points = tuple(
             point

@@ -33,6 +33,7 @@ const BLOCKERS: Record<string, string> = {
   dominant_date_coverage_below_98_percent: "主导交易日覆盖率低于 98%",
   history_not_ready_for_all_symbols: "仍有股票未达到完整历史要求",
   history_coverage_below_98_percent: "历史覆盖率低于 98% 就绪门槛",
+  dominant_trade_date_behind_target: "主导交易日落后于预期交易日",
   no_dominant_trade_date: "无法确认主导交易日",
   incomplete_daily_history: "历史覆盖不完整",
   stale_daily_history: "日线历史落后请求日",

@@ -106,6 +106,18 @@ def test_invalid_json_and_provider_error_have_distinct_counters() -> None:
     assert result.invalid_output_count == 0
 
 
+def test_provider_failure_keeps_precise_ai_connection_state() -> None:
+    http_request = httpx.Request("POST", "https://provider.example/v1/chat/completions")
+    timeout_gateway, _ = gateway(httpx.ReadTimeout("slow", request=http_request))
+    limited_gateway, _ = gateway(httpx.HTTPStatusError(
+        "limited", request=http_request,
+        response=httpx.Response(429, request=http_request),
+    ))
+
+    assert timeout_gateway.explain(request()).ai_state == "timeout"
+    assert limited_gateway.explain(request()).ai_state == "rate_limited"
+
+
 def test_rejects_number_even_when_same_token_exists_in_evidence() -> None:
     subject, _ = gateway(json.dumps({
         "summary": "已核验数值为 10",

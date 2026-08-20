@@ -41,6 +41,7 @@ from qibao_api.libu_compliance.guard import (
 )
 from qibao_api.libu_compliance.repository import ComplianceRepository
 from qibao_api.local_sources.models import LocalSourceSettings
+from qibao_api.local_sources.discovery import LocalTerminalDiscoveryResult
 from qibao_api.local_sources.repository import LocalSourceSettingsRepository
 from qibao_api.shangshu.decision_repository import DecisionRepository
 from qibao_api.shangshu.decision_runtime import (
@@ -116,6 +117,67 @@ def test_initial_market_sentiment_refresh_skips_expected_premarket_phase_without
 
     record = next(item for item in caplog.records if item.message == "initial market sentiment refresh skipped outside session")
     assert record.exc_info is None
+
+
+@pytest.mark.asyncio
+async def test_lifespan_uses_cached_local_discovery_without_waiting_for_rescan(
+    tmp_path, monkeypatch
+) -> None:
+    scan_started = threading.Event()
+    release_scan = threading.Event()
+    cached = LocalTerminalDiscoveryResult(
+        scanned_at=datetime(2026, 8, 19, tzinfo=timezone.utc),
+        terminals=(),
+        active_tdx_vipdoc=None,
+        settings=LocalSourceSettings(auto_discovery=True),
+    )
+
+    class SlowDiscovery:
+        def inspect(self, settings):
+            scan_started.set()
+            release_scan.wait(timeout=5)
+            return LocalTerminalDiscoveryResult(
+                scanned_at=datetime(2026, 8, 20, tzinfo=timezone.utc),
+                terminals=(),
+                active_tdx_vipdoc=None,
+                settings=settings,
+            )
+
+    class SnapshotRepository:
+        def __init__(self, _path) -> None:
+            pass
+
+        def load(self, settings):
+            assert settings == cached.settings
+            return cached
+
+        def save(self, _snapshot) -> None:
+            pass
+
+    monkeypatch.setattr(main_module, "Settings", lambda: FakeSettings(tmp_path))
+    monkeypatch.setattr(main_module, "LocalTerminalDiscovery", SlowDiscovery)
+    monkeypatch.setattr(
+        main_module,
+        "LocalTerminalDiscoverySnapshotRepository",
+        SnapshotRepository,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "create_tdx_client",
+        lambda: (_ for _ in ()).throw(RuntimeError("offline")),
+    )
+    application = FastAPI()
+    manager = main_module.lifespan(application)
+    entering = asyncio.create_task(manager.__aenter__())
+    await asyncio.wait_for(asyncio.to_thread(scan_started.wait, 1), timeout=2)
+
+    try:
+        await asyncio.wait_for(asyncio.shield(entering), timeout=2)
+        assert application.state.local_source_discovery_result == cached
+    finally:
+        release_scan.set()
+        await entering
+        await manager.__aexit__(None, None, None)
 
 
 @pytest.mark.asyncio
@@ -652,6 +714,30 @@ async def test_lifespan_recovers_and_stops_full_market_history_worker(
         def request_shutdown(self) -> None:
             calls.append(("request-shutdown",))
 
+    class TdxRepository:
+        def __init__(self, path) -> None:
+            calls.append(("tdx-repository", path))
+
+        def recover_interrupted(self) -> None:
+            calls.append(("tdx-recover",))
+
+        def current(self):
+            return SimpleNamespace(job_id="tdx-import-resume", state="paused")
+
+        def close(self) -> None:
+            calls.append(("tdx-repository-close",))
+
+    class TdxService:
+        def __init__(self, _bar_repository, **kwargs) -> None:
+            self.jobs = kwargs["job_repository"]
+            self.after_import = None
+
+        def current_job(self):
+            return self.jobs.current()
+
+        def run(self, job_id):
+            calls.append(("tdx-run", job_id))
+
     class Executor:
         def __init__(self, **kwargs) -> None:
             calls.append(("executor", kwargs))
@@ -665,6 +751,8 @@ async def test_lifespan_recovers_and_stops_full_market_history_worker(
     monkeypatch.setattr(main_module, "Settings", lambda: FakeSettings(tmp_path))
     monkeypatch.setattr(main_module, "HistorySyncRepository", Repository)
     monkeypatch.setattr(main_module, "FullMarketHistoryService", Service)
+    monkeypatch.setattr(main_module, "TdxImportRepository", TdxRepository)
+    monkeypatch.setattr(main_module, "TdxLocalImportService", TdxService)
     monkeypatch.setattr(main_module, "ThreadPoolExecutor", Executor)
     monkeypatch.setattr(
         main_module, "create_tdx_client", lambda: (_ for _ in ()).throw(RuntimeError("offline"))
@@ -678,8 +766,43 @@ async def test_lifespan_recovers_and_stops_full_market_history_worker(
         assert application.state.history_sync_executor is not None
 
     names = [call[0] for call in calls]
-    assert names.index("recover") < names.index("submit")
-    assert ("submit", application.state.full_market_history_service.run, ("history-sync-resume",)) in calls
+    resume_submit = (
+        "submit",
+        application.state.full_market_history_service.run,
+        ("history-sync-resume",),
+    )
+    assert names.index("recover") < calls.index(resume_submit)
+    assert resume_submit in calls
+    assert ("submit", application.state.tdx_import_service.run, ("tdx-import-resume",)) not in calls
+    assert len([call for call in calls if call[0] == "executor"]) == 3
+    assert application.state.history_sync_executor is not application.state.tdx_import_executor
+    assert application.state.history_sync_executor is not application.state.history_supplement_executor
+    assert application.state.tdx_import_executor is not application.state.history_supplement_executor
     assert names.index("request-shutdown") < names.index("executor-shutdown")
-    assert ("executor-shutdown", True, True) in calls
+    assert calls.count(("executor-shutdown", True, True)) == 3
     assert names.index("executor-shutdown") < names.index("repository-close")
+
+
+def test_history_supplement_reconciliation_does_not_block_startup() -> None:
+    calls: list[str] = []
+
+    class Service:
+        def reconcile_current_job(self) -> None:
+            calls.append("reconcile")
+            raise UnicodeDecodeError("utf-8", b"\xc1", 0, 1, "invalid start byte")
+
+    main_module._reconcile_history_supplement(Service())
+
+    assert calls == ["reconcile"]
+
+
+def test_history_supplement_reconciliation_still_runs_when_available() -> None:
+    calls: list[str] = []
+
+    class Service:
+        def reconcile_current_job(self) -> None:
+            calls.append("reconcile")
+
+    main_module._reconcile_history_supplement(Service())
+
+    assert calls == ["reconcile"]

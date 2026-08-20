@@ -59,6 +59,7 @@ from qibao_api.gongbu.history_sync_repository import HistorySyncRepository
 from qibao_api.gongbu.tdx_import_repository import TdxImportRepository
 from qibao_api.gongbu.tdx_local_import import TdxLocalImportService
 from qibao_api.gongbu.tdx_auto_import import TdxAutoImportMonitor
+from qibao_api.gongbu.tdx_official_package import OfficialTdxPackageService
 from qibao_api.gongbu.tdx_client import create_tdx_client
 from qibao_api.gongbu.tdx_history import TdxHistorySource
 from qibao_api.gongbu.tdx_local_overview import (
@@ -81,8 +82,15 @@ from qibao_api.gongbu.tdx_local_daily import (
 )
 from qibao_api.gongbu.local_market_review import LocalMarketReviewSource
 from qibao_api.gongbu.eastmoney_market_review import EastmoneyDragonTigerSource
-from qibao_api.local_sources.discovery import LocalTerminalDiscovery
-from qibao_api.local_sources.repository import LocalSourceSettingsRepository
+from qibao_api.local_sources.discovery import (
+    LocalTerminalDiscovery,
+    LocalTerminalDiscoveryResult,
+    LocalTerminalDiscoveryState,
+)
+from qibao_api.local_sources.repository import (
+    LocalSourceSettingsRepository,
+    LocalTerminalDiscoverySnapshotRepository,
+)
 from qibao_api.gongbu.tencent_quotes import TencentQuoteSource, market_prefix
 from qibao_api.gongbu.tencent_overview import TencentOverviewSource
 from qibao_api.convertible_bonds.adapters import (
@@ -357,6 +365,17 @@ def _reconcile_history_symbols(bar_repository, instrument_directory, as_of) -> N
         logger.warning("background history symbol reconciliation failed", exc_info=True)
 
 
+def _reconcile_history_supplement(service) -> None:
+    """Refresh persisted repair evidence without making desktop boot depend on DuckDB."""
+    try:
+        service.reconcile_current_job()
+    except Exception:
+        logger.warning(
+            "background history supplement reconciliation failed; keeping persisted status",
+            exc_info=True,
+        )
+
+
 async def _schedule_history_symbol_reconciliation(
     executor,
     function,
@@ -437,6 +456,24 @@ async def _refresh_bond_universe(service) -> None:
         logger.warning("convertible-bond universe sync unavailable", exc_info=True)
 
 
+async def _refresh_local_source_discovery(
+    application: FastAPI,
+    discovery: LocalTerminalDiscovery,
+    settings,
+    repository: LocalTerminalDiscoverySnapshotRepository,
+    state: LocalTerminalDiscoveryState,
+) -> None:
+    try:
+        result = await asyncio.to_thread(discovery.inspect, settings)
+        await asyncio.to_thread(repository.save, result)
+        state.update(result)
+        application.state.local_source_discovery_result = result
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.warning("local source discovery refresh unavailable", exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     startup_started = time.monotonic()
@@ -497,23 +534,39 @@ async def lifespan(application: FastAPI):
         local_source_settings_repository
     )
     application.state.local_terminal_discovery = local_terminal_discovery
-    # Disk discovery and SQLite schema creation are independent.  Start both
-    # together so a slow Windows antivirus scan of installed data terminals
-    # does not serialize with the database bootstrap.
+    local_discovery_snapshot_repository = (
+        LocalTerminalDiscoverySnapshotRepository(
+            portable_root / "cache" / "local-source-discovery.json"
+        )
+    )
+    cached_local_discovery = local_discovery_snapshot_repository.load(
+        local_source_settings_record.settings
+    )
+    initial_local_discovery = cached_local_discovery or LocalTerminalDiscoveryResult(
+        scanned_at=datetime.now(timezone.utc),
+        terminals=(),
+        active_tdx_vipdoc=None,
+        settings=local_source_settings_record.settings,
+    )
+    local_source_discovery_state = LocalTerminalDiscoveryState(
+        initial_local_discovery
+    )
+    application.state.local_source_discovery_result = initial_local_discovery
+    application.state.local_source_discovery_state = local_source_discovery_state
+    # The previous verified result is sufficient to construct local services.
+    # A full Windows terminal scan is refresh work and must not gate API ready.
     local_source_discovery_task = asyncio.create_task(
-        asyncio.to_thread(
-            local_terminal_discovery.inspect,
+        _refresh_local_source_discovery(
+            application,
+            local_terminal_discovery,
             local_source_settings_record.settings,
+            local_discovery_snapshot_repository,
+            local_source_discovery_state,
         ),
         name="local-source-discovery",
     )
-    engine_task = asyncio.create_task(
-        asyncio.to_thread(_create_database_engine, settings.database_url),
-        name="database-bootstrap",
-    )
-    local_source_discovery_result, engine = await asyncio.gather(
-        local_source_discovery_task,
-        engine_task,
+    engine = await asyncio.to_thread(
+        _create_database_engine, settings.database_url
     )
     # These repositories build SQLAlchemy table metadata only when the
     # lifespan has completed its parallel bootstrap.  Keeping them out of the
@@ -522,8 +575,7 @@ async def lifespan(application: FastAPI):
     from qibao_api.convertible_bonds.repository import BondClauseRepository
     from qibao_api.storage.quote_repository import QuoteRepository
 
-    application.state.local_source_discovery_result = local_source_discovery_result
-    log_startup_stage("local-sources-ready")
+    log_startup_stage("local-sources-cache-ready")
     application.state.edge_tts_service = EdgeTTSService(portable_root / "cache" / "tts")
     compliance = ComplianceRepository(settings.data_dir / "compliance.sqlite3")
     audit_repository = AuditFindingRepository(settings.data_dir / "audit.sqlite3")
@@ -666,6 +718,11 @@ async def lifespan(application: FastAPI):
                 settings.data_dir / "first-limit-up.sqlite3"
             )
             application.state.first_limit_up_repository = first_limit_up_repository
+            trading_calendar = StoredTradingCalendar(
+                bar_repository,
+                live_signal=TencentIndexTradingDaySignal(history_client),
+                schedule=ExchangeCalendarsTradingDaySchedule(),
+            )
             application.state.first_limit_up_service = FirstLimitUpService(
                 bar_repository=bar_repository,
                 quote_source=SynchronousTencentQuoteSource(history_client, compliance),
@@ -673,11 +730,7 @@ async def lifespan(application: FastAPI):
                 universe_provider=lambda: (
                     application.state.a_share_instrument_directory.active_symbols()
                 ),
-            )
-            trading_calendar = StoredTradingCalendar(
-                bar_repository,
-                live_signal=TencentIndexTradingDaySignal(history_client),
-                schedule=ExchangeCalendarsTradingDaySchedule(),
+                trading_calendar=trading_calendar,
             )
             kronos_model = getattr(settings, "kronos_model", "NeoQuasar/Kronos-mini")
             application.state.kronos_forecast_service = KronosForecastService(
@@ -996,6 +1049,14 @@ async def lifespan(application: FastAPI):
                 max_workers=1,
                 thread_name_prefix="history-sync",
             )
+            tdx_import_executor = ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix="tdx-import",
+            )
+            history_supplement_executor = ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix="history-supplement",
+            )
             history_symbol_reconciliation_task = None
             application.state.history_sync_repository = history_sync_repository
             application.state.tdx_import_repository = tdx_import_repository
@@ -1005,17 +1066,25 @@ async def lifespan(application: FastAPI):
                 executor=history_sync_executor,
                 performance_store=application.state.performance_store,
             )
-            application.state.tdx_import_executor = history_sync_executor
+            application.state.tdx_import_executor = tdx_import_executor
+            application.state.history_supplement_executor = history_supplement_executor
             application.state.tdx_import_service = TdxLocalImportService(
                 bar_repository,
                 job_repository=tdx_import_repository,
                 clock=lambda: datetime.now(timezone.utc),
-                discovery=local_source_discovery_result,
+                discovery=local_source_discovery_state,
                 archive_paths=local_source_settings_record.settings.tdx_archive_paths,
             )
+            application.state.history_supplement_service = OfficialTdxPackageService(
+                cache_dir=portable_root / "cache" / "tdx-official",
+                state_path=settings.data_dir / "history-supplement.json",
+                tdx_import_service=application.state.tdx_import_service,
+                clock=lambda: datetime.now(timezone.utc),
+            )
+            application.state.history_supplement_service.recover_interrupted()
             def _tdx_auto_import_paths():
                 paths = []
-                active = getattr(local_source_discovery_result, "active_tdx_vipdoc", None)
+                active = local_source_discovery_state.active_tdx_vipdoc
                 if active is not None:
                     paths.append(active)
                     if active.name.casefold() == "vipdoc":
@@ -1028,7 +1097,7 @@ async def lifespan(application: FastAPI):
             tdx_auto_import_monitor = TdxAutoImportMonitor(
                 _tdx_auto_import_paths,
                 service=application.state.tdx_import_service,
-                executor=history_sync_executor,
+                executor=tdx_import_executor,
             )
             application.state.tdx_auto_import_monitor = tdx_auto_import_monitor
             full_market_history_service = None
@@ -1072,9 +1141,17 @@ async def lifespan(application: FastAPI):
                     baidu_source=history_sources[1],
                     job_repository=history_sync_repository,
                     clock=lambda: datetime.now(timezone.utc),
+                    trading_calendar=trading_calendar,
                 )
                 application.state.full_market_history_service = (
                     full_market_history_service
+                )
+                application.state.history_supplement_service.history_service = (
+                    full_market_history_service
+                )
+                history_supplement_executor.submit(
+                    _reconcile_history_supplement,
+                    application.state.history_supplement_service,
                 )
                 application.state.scheduler.full_market_history_service = (
                     full_market_history_service
@@ -1099,7 +1176,7 @@ async def lifespan(application: FastAPI):
                     market_sentiment_repository
                 )
                 log_startup_stage("market-sentiment-repository-ready")
-                vipdoc_root = local_source_discovery_result.active_tdx_vipdoc
+                vipdoc_root = local_source_discovery_state.active_tdx_vipdoc
                 local_source_settings = local_source_settings_record.settings
                 tdx_rpc = (
                     TdxJsonRpcClient(endpoint=local_source_settings.tdx_rpc_url)
@@ -1117,7 +1194,7 @@ async def lifespan(application: FastAPI):
                 application.state.tdx_formula_source = TdxLocalFormulaSource(tdx_rpc_factory)
                 direct_tdx_roots = tuple(
                     terminal.install_path
-                    for terminal in local_source_discovery_result.terminals
+                    for terminal in local_source_discovery_state.terminals
                     if (
                         terminal.vendor == "tdx"
                         and terminal.status == "ready"
@@ -1156,6 +1233,7 @@ async def lifespan(application: FastAPI):
                     symbol_provider=lambda: tuple(
                         application.state.a_share_instrument_directory.active_symbols()
                     ),
+                    trading_calendar=trading_calendar,
                     name_resolver=lambda symbol: (
                         instrument.name
                         if (instrument := a_share_instrument_directory.resolve(symbol))
@@ -1363,6 +1441,10 @@ async def lifespan(application: FastAPI):
                 log_startup_stage("lifespan-ready")
                 yield
             finally:
+                if local_source_discovery_task is not None:
+                    local_source_discovery_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await local_source_discovery_task
                 if universe_refresh_task is not None:
                     universe_refresh_task.cancel()
                     with suppress(asyncio.CancelledError):
@@ -1427,7 +1509,10 @@ async def lifespan(application: FastAPI):
                     history_symbol_reconciliation_task.cancel()
                     with suppress(asyncio.CancelledError):
                         await history_symbol_reconciliation_task
+                history_supplement_executor.shutdown(wait=True, cancel_futures=True)
+                tdx_import_executor.shutdown(wait=True, cancel_futures=True)
                 history_sync_executor.shutdown(wait=True, cancel_futures=True)
+                application.state.history_supplement_service.close()
                 history_sync_repository.close()
                 tdx_import_repository.close()
                 bond_repository.close()

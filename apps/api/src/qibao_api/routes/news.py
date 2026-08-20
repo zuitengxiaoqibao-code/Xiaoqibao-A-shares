@@ -157,9 +157,10 @@ def news_events(
     repository: Annotated[object, Depends(get_news_repository)],
     registry: Annotated[object, Depends(get_shared_snapshot_registry)],
     bus: Annotated[object | None, Depends(get_realtime_snapshot_bus)],
+    now: Annotated[datetime, Depends(get_server_time)],
 ):
     try:
-        events = repository.events()
+        events = repository.effective_events(cutoff=now)
         encoded = b"[" + b",".join(
             item.model_dump_json().encode("utf-8") for item in events
         ) + b"]"

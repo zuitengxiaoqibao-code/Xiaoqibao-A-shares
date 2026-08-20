@@ -675,6 +675,24 @@ def test_overview_exposes_real_sector_net_flow_time_series_with_sample_scope() -
     assert result.data_scope.sector_fund_flow_snapshot_count == 2
 
 
+def test_overview_marks_each_sector_flow_point_by_its_own_freshness() -> None:
+    class HistoricalSectorFundFlowRepository(SectorFundFlowRepository):
+        def history(self, *, limit=60):
+            values = list(super().history(limit=limit))
+            values[0].observed_at = NOW - timedelta(minutes=5)
+            return tuple(values)
+
+    result = service(
+        Source(),
+        local_market_source=LocalMarketSource(),
+        sector_fund_flow_repository=HistoricalSectorFundFlowRepository(),
+    ).current(NOW)
+
+    points_by_time = {item.observed_at: item for item in result.sector_fund_flow if item.sector_code == "BK1036"}
+    assert points_by_time[NOW - timedelta(minutes=5)].quality == "stale"
+    assert points_by_time[NOW].quality == "ready"
+
+
 def test_overview_separates_official_calendar_dates_from_news_timestamps() -> None:
     result = service(
         Source(),
@@ -691,8 +709,42 @@ def test_overview_separates_official_calendar_dates_from_news_timestamps() -> No
 
 
 def test_overview_marks_lagging_review_stale_without_dropping_real_rows() -> None:
+    postclose = datetime(2026, 7, 29, 8, 30, tzinfo=timezone.utc)
     review = MarketReviewSnapshot(
         as_of=date(2026, 7, 28),
+        observed_at=NOW,
+        latest_trade_date=date(2026, 7, 28),
+        source="market-db",
+        quality="ready",
+        universe_count=5300,
+        history_ready_count=5200,
+    )
+
+    class ReviewSource:
+        def current(self):
+            return review
+
+    result = service(
+        Source(),
+        clock=lambda: postclose,
+        local_market_source=LocalMarketSource(),
+        market_review_source=ReviewSource(),
+    ).current(postclose)
+
+    assert result.review is not None
+    assert result.review.quality == "stale"
+    assert result.review.latest_trade_date == date(2026, 7, 28)
+    assert result.review.expected_trade_date == date(2026, 7, 29)
+    assert result.review.refresh_required is True
+    assert result.review.refresh_reason == "历史日线主导日期落后查询日期"
+    assert result.review.history_ready_count == 5200
+    assert "market_review_stale" in result.warnings
+
+
+def test_overview_accepts_previous_session_review_during_intraday() -> None:
+    review = MarketReviewSnapshot(
+        as_of=date(2026, 7, 29),
+        expected_trade_date=date(2026, 7, 28),
         observed_at=NOW,
         latest_trade_date=date(2026, 7, 28),
         source="market-db",
@@ -712,10 +764,9 @@ def test_overview_marks_lagging_review_stale_without_dropping_real_rows() -> Non
     ).current(NOW)
 
     assert result.review is not None
-    assert result.review.quality == "stale"
-    assert result.review.latest_trade_date == date(2026, 7, 28)
-    assert result.review.history_ready_count == 5200
-    assert "market_review_stale" in result.warnings
+    assert result.review.quality == "ready"
+    assert result.review.refresh_required is False
+    assert "market_review_stale" not in result.warnings
 
 
 def test_overview_reuses_persisted_snapshot_while_latest_refresh_runs_in_background(
@@ -968,7 +1019,7 @@ def test_overview_gives_cached_response_a_grace_period_before_background_refresh
     cached.close()
 
 
-def test_overview_does_not_expose_review_from_stale_disk_cache(tmp_path: Path) -> None:
+def test_overview_retains_stale_review_from_disk_cache_with_explicit_refresh_state(tmp_path: Path) -> None:
     cache_path = tmp_path / "market-overview.json"
     base = service(Source()).current(NOW)
     stale_review = MarketReviewSnapshot(
@@ -999,6 +1050,9 @@ def test_overview_does_not_expose_review_from_stale_disk_cache(tmp_path: Path) -
 
     result = overview.current(NOW + timedelta(seconds=20))
 
-    assert result.review is None
+    assert result.review is not None
+    assert result.review.quality == "stale"
+    assert result.review.refresh_required is True
+    assert result.review.refresh_reason == "历史复盘缓存需要后台刷新"
     assert "market_review_cache_stale" in result.warnings
     overview.close()

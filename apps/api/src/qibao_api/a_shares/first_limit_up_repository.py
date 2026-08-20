@@ -10,6 +10,7 @@ from qibao_api.contracts.first_limit_up import FirstLimitUpCandidate
 @dataclass(frozen=True)
 class FirstLimitUpScan:
     scan_date: date
+    updated_at: datetime
     candidates: tuple[FirstLimitUpCandidate, ...]
     universe_count: int
     history_eligible_count: int
@@ -138,7 +139,7 @@ class FirstLimitUpRepository:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT scan_date, payload
+                SELECT scan_date, payload, updated_at
                 FROM first_limit_up_scans
                 WHERE scan_date <= ?
                 ORDER BY scan_date DESC
@@ -163,6 +164,7 @@ class FirstLimitUpRepository:
                 )
                 return FirstLimitUpScan(
                     scan_date=date.fromisoformat(row["scan_date"]),
+                    updated_at=datetime.fromisoformat(row["updated_at"]),
                     candidates=candidates,
                     universe_count=int(payload["universe_count"]),
                     history_eligible_count=int(payload["history_eligible_count"]),

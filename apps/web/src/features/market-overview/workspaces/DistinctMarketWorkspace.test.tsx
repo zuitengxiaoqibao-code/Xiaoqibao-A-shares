@@ -435,7 +435,7 @@ describe("DistinctMarketWorkspace", () => {
 
     expect(screen.getByText("历史日线最新交易日")).toBeInTheDocument();
     expect(screen.getByText("2026-07-17")).toBeInTheDocument();
-    expect(screen.getByText(/历史日线待补齐/)).toBeInTheDocument();
+    expect(screen.getAllByText(/历史日线待补齐/).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText(/实时行情 2026-08-07/)).toBeInTheDocument();
   });
 
@@ -471,6 +471,9 @@ describe("DistinctMarketWorkspace", () => {
         latest_available_trade_date: "2026-08-07",
         latest_available_trade_date_count: 5,
         latest_trade_date_coverage_percent: "98.1",
+        expected_trade_date: "2026-08-07",
+        refresh_required: true,
+        refresh_reason: "历史日线覆盖日期分散，不能代表查询日期全市场",
         warnings: ["history_dates_fragmented", "history_latest_outlier"],
       },
     } as unknown as MarketOverviewResponse;
@@ -482,6 +485,10 @@ describe("DistinctMarketWorkspace", () => {
     expect(screen.getByText(/最新零散记录 2026-08-07/)).toBeInTheDocument();
     expect(screen.getByText(/仅 5 只/)).toBeInTheDocument();
     expect(screen.getByText(/覆盖率 98.1%/)).toBeInTheDocument();
+    expect(screen.getByText("查询日期")).toBeInTheDocument();
+    expect(screen.getByText("2026-08-07")).toBeInTheDocument();
+    expect(screen.getByText("快照生成时间")).toBeInTheDocument();
+    expect(screen.getByText(/历史日线覆盖日期分散/)).toBeInTheDocument();
   });
 
   it("uses a full row for the sector flow audit and keeps stock dossier evidence compact", () => {

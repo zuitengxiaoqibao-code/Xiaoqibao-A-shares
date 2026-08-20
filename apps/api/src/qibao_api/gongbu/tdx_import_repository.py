@@ -98,7 +98,12 @@ class TdxImportRepository:
 
     def recover_interrupted(self) -> None:
         with self._lock, self._connect() as connection:
-            connection.execute("UPDATE tdx_import_jobs SET state='paused', stage='paused', updated_at=? WHERE state='running'", (self._now(),))
+            connection.execute(
+                """UPDATE tdx_import_jobs
+                   SET state='paused', stage='restart_paused', updated_at=?, finished_at=?
+                   WHERE state IN ('pending', 'running')""",
+                (self._now(), self._now()),
+            )
 
     def update_existing(self, job_id: str, **changes) -> TdxImportJob:
         return self.update(job_id, **changes)

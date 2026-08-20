@@ -97,3 +97,32 @@ def test_repository_appends_and_reads_history_repair_audit(tmp_path) -> None:
     )
     repository.append_repair_audit(audit)
     assert repository.repair_audits(limit=10) == (audit,)
+
+
+def test_retry_failed_items_preserves_ready_work_and_requeues_failures(tmp_path) -> None:
+    repository = HistorySyncRepository(tmp_path / "history-sync.sqlite3")
+    job = repository.create_job("backfill", TARGET, ("000001", "600000", "688001"))
+    repository.mark_running(job.job_id, "000001")
+    repository.complete_item(
+        job.job_id, "000001", state="ready", source="mootdx", written_rows=300,
+    )
+    repository.mark_running(job.job_id, "600000")
+    repository.complete_item(
+        job.job_id, "600000", state="failed", source=None, written_rows=0,
+        error_code="DataSourceUnavailable",
+    )
+    repository.request_pause(job.job_id)
+
+    retried = repository.retry_failed(job.job_id)
+    items = {item.symbol: item for item in repository.items(job.job_id)}
+
+    assert retried.state == "pending"
+    assert retried.pause_requested is False
+    assert retried.ready_count == 1
+    assert retried.failed_count == 0
+    assert retried.pending_count == 2
+    assert items["000001"].state == "ready"
+    assert items["000001"].attempts == 1
+    assert items["600000"].state == "pending"
+    assert items["600000"].attempts == 1
+    assert items["600000"].error_code is None

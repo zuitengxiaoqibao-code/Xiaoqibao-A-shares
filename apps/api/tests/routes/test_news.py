@@ -190,6 +190,24 @@ def test_news_event_read_registers_repository_snapshot_reuse() -> None:
     assert len(calls[0][1]["content_hash"]) == 64
 
 
+def test_news_event_read_uses_effective_events_without_archived_records() -> None:
+    class ActiveOnlyRepository(Repository):
+        def events(self):
+            raise AssertionError("raw archived events must not be exposed")
+
+        def effective_events(self, *, cutoff=None):
+            return super().events()
+
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_news_repository] = lambda: ActiveOnlyRepository()
+    with TestClient(app) as test_client:
+        response = test_client.get("/api/v1/news/events")
+
+    assert response.status_code == 200
+    assert response.json()[0]["event_id"] == "event-news-1"
+
+
 def test_news_event_read_publishes_only_changed_verified_snapshot() -> None:
     calls = []
 

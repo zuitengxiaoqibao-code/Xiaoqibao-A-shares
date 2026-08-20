@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from qibao_api.contracts.evidence_ledger import EvidenceLedgerEntry
 from qibao_api.contracts.field_evidence import FieldEvidence
+from qibao_api.ai_status import AIConnectionState
 
 
 ResearchStatus = Literal["ready", "partial", "unavailable"]
@@ -431,6 +432,8 @@ class CompanyResearchAIResult(BaseModel):
     model: str
     prompt_version: str = "company-research-ai-v1"
     generated_at: datetime
+    ai_state: AIConnectionState | None = None
+    ai_message: str | None = None
 
 
 class CompanyResearchResponse(BaseModel):
