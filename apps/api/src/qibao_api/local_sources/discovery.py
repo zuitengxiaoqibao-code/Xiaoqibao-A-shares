@@ -138,6 +138,17 @@ class LocalTerminalDiscovery:
             settings=settings,
         )
 
+    def inspect_configured(self, settings: LocalSourceSettings) -> LocalTerminalDiscoveryResult:
+        """Inspect only explicitly configured paths without system discovery.
+
+        Startup can use this bounded check to expose a known local data source
+        immediately.  Automatic process/registry/common-directory discovery
+        remains on the background refresh path.
+        """
+        if settings.auto_discovery:
+            raise ValueError("configured inspection requires auto_discovery=False")
+        return self.inspect(settings)
+
 
 def _inspect_tdx(path: Path, origin: Origin) -> LocalTerminalStatus:
     resolved = path.resolve(strict=False)

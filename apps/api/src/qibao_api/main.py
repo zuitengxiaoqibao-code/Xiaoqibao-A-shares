@@ -542,7 +542,22 @@ async def lifespan(application: FastAPI):
     cached_local_discovery = local_discovery_snapshot_repository.load(
         local_source_settings_record.settings
     )
-    initial_local_discovery = cached_local_discovery or LocalTerminalDiscoveryResult(
+    initial_local_discovery = cached_local_discovery
+    if (
+        initial_local_discovery is None
+        and not local_source_settings_record.settings.auto_discovery
+        and (
+            local_source_settings_record.settings.tdx_install_paths
+            or local_source_settings_record.settings.ths_install_paths
+        )
+    ):
+        try:
+            initial_local_discovery = local_terminal_discovery.inspect_configured(
+                local_source_settings_record.settings
+            )
+        except Exception:
+            logger.warning("configured local source discovery unavailable", exc_info=True)
+    initial_local_discovery = initial_local_discovery or LocalTerminalDiscoveryResult(
         scanned_at=datetime.now(timezone.utc),
         terminals=(),
         active_tdx_vipdoc=None,

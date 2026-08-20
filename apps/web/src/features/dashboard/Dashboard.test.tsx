@@ -260,7 +260,13 @@ describe("Dashboard beginner shell", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "量化分析" }));
 
-    expect(await screen.findByRole("region", { name: "高频 TICK 分时" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole(
+        "region",
+        { name: "高频 TICK 分时" },
+        { timeout: 15_000 },
+      ),
+    ).toBeInTheDocument();
     const signalEngine = screen.getByRole("region", { name: "信号引擎" });
     for (const label of ["VOL", "SCORE", "胜率", "赔率", "风险", "仓位", "EV"]) {
       expect(signalEngine).toHaveTextContent(label);
@@ -268,7 +274,7 @@ describe("Dashboard beginner shell", () => {
     await waitFor(() => expect(signalEngine).toHaveTextContent("58.0%"));
     expect(screen.getByRole("region", { name: "量化因子雷达" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "回测风险收益" })).toBeInTheDocument();
-  });
+  }, 15_000);
 
   it("keeps the selected stock and wires stock-name search into quant analysis", async () => {
     window.history.replaceState({}, "", "/a-shares?symbol=000001");

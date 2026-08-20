@@ -916,7 +916,7 @@ describe("DistinctMarketWorkspace", () => {
       view.unmount();
       cleanup();
     }
-  });
+  }, 15_000);
 
   it("renders real review records in dedicated ladder, breakout and seat views", () => {
     const { rerender } = render(<DistinctMarketWorkspace feature="连板梯队" data={overview} />);

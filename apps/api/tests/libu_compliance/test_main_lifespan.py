@@ -181,6 +181,63 @@ async def test_lifespan_uses_cached_local_discovery_without_waiting_for_rescan(
 
 
 @pytest.mark.asyncio
+async def test_lifespan_exposes_explicit_local_source_before_background_discovery(
+    tmp_path, monkeypatch
+) -> None:
+    tdx_home = tmp_path / "preferred-tdx"
+    vipdoc = tdx_home / "vipdoc"
+    configured = LocalSourceSettings(
+        auto_discovery=False,
+        tdx_install_paths=(tdx_home,),
+    )
+    expected = LocalTerminalDiscoveryResult(
+        scanned_at=datetime(2026, 8, 20, tzinfo=timezone.utc),
+        terminals=(),
+        active_tdx_vipdoc=vipdoc,
+        settings=configured,
+    )
+    calls: list[LocalSourceSettings] = []
+
+    class Discovery:
+        def inspect_configured(self, settings):
+            calls.append(settings)
+            return expected
+
+        def inspect(self, settings):
+            return expected
+
+    class SnapshotRepository:
+        def __init__(self, _path) -> None:
+            pass
+
+        def load(self, settings):
+            return None
+
+        def save(self, _snapshot) -> None:
+            pass
+
+    monkeypatch.setattr(main_module, "Settings", lambda: FakeSettings(tmp_path))
+    monkeypatch.setenv("QIBAO_PORTABLE_ROOT", str(tmp_path))
+    LocalSourceSettingsRepository(tmp_path / "config" / "data-sources.json").save(configured)
+    monkeypatch.setattr(main_module, "LocalTerminalDiscovery", Discovery)
+    monkeypatch.setattr(
+        main_module,
+        "LocalTerminalDiscoverySnapshotRepository",
+        SnapshotRepository,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "create_tdx_client",
+        lambda: (_ for _ in ()).throw(RuntimeError("offline")),
+    )
+    application = FastAPI()
+
+    async with main_module.lifespan(application):
+        assert calls == [configured]
+        assert application.state.local_source_discovery_result == expected
+
+
+@pytest.mark.asyncio
 async def test_history_symbol_reconciliation_can_be_deferred_and_cancelled() -> None:
     started = threading.Event()
     executor = ThreadPoolExecutor(max_workers=1)
