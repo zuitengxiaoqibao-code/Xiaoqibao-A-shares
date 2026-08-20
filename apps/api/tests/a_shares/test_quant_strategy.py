@@ -673,6 +673,45 @@ def test_service_can_defer_first_candidate_scan_without_blocking_request() -> No
     service.close()
 
 
+def test_deferred_candidate_scan_coalesces_small_limits_for_the_same_day() -> None:
+    import threading
+
+    started = threading.Event()
+    release = threading.Event()
+    requested_limits = []
+
+    def load_board(_as_of, limit):
+        requested_limits.append(limit)
+        started.set()
+        release.wait(timeout=2)
+        return board()
+
+    service = QuantStrategyService(
+        SimpleNamespace(current=lambda now: overview()),
+        SimpleNamespace(candidates=load_board),
+        SimpleNamespace(resolve=lambda symbol: None),
+        defer_initial_scan=True,
+    )
+
+    first = service.current(NOW, limit=1)
+    assert started.wait(timeout=1)
+    second = service.current(NOW, limit=12)
+
+    assert first.candidate_scan_state == "pending"
+    assert second.candidate_scan_state == "pending"
+    assert requested_limits == [12]
+    assert service.candidate_scan_ready(NOW, limit=1) is False
+    assert service.candidate_scan_ready(NOW, limit=12) is False
+
+    release.set()
+    for _ in range(20):
+        if service.candidate_scan_ready(NOW, limit=1):
+            break
+        __import__("time").sleep(0.01)
+    assert service.candidate_scan_ready(NOW, limit=12) is True
+    service.close()
+
+
 def test_deferred_candidate_scan_avoids_windows_process_pool_for_non_ascii_database_path(
     tmp_path,
 ) -> None:

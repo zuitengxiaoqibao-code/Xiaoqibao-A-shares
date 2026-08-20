@@ -52,6 +52,7 @@ TWO_PLACES = Decimal("0.01")
 CHINA_TZ = ZoneInfo("Asia/Shanghai")
 SAFE_CANDIDATE_SCAN_ERROR = "本地候选扫描失败，请检查日线覆盖和数据源状态"
 SAFE_MARKET_OVERVIEW_ERROR = "市场总览加载失败，请检查本地行情和新闻数据源"
+MINIMUM_SHARED_CANDIDATE_LIMIT = 12
 LOGGER = logging.getLogger(__name__)
 
 STRATEGY_MODEL_REGIMES = {
@@ -1075,10 +1076,16 @@ class QuantStrategyService:
         self, now: datetime, *, as_of: date | None = None, limit: int = 12
     ) -> bool:
         """检查后台候选扫描是否结束，不在调用线程执行扫描。"""
-        key = (as_of or now.astimezone(CHINA_TZ).date(), limit)
+        key = self._candidate_cache_key(
+            as_of or now.astimezone(CHINA_TZ).date(), limit
+        )
         with self._candidate_cache_lock:
             job = self._candidate_scan_jobs.get(key)
         return job is not None and job.done()
+
+    @staticmethod
+    def _candidate_cache_key(selected_date: date, limit: int) -> tuple[date, int]:
+        return selected_date, max(MINIMUM_SHARED_CANDIDATE_LIMIT, limit)
 
     def _record_candidate_progress(
         self,
@@ -1189,7 +1196,9 @@ class QuantStrategyService:
     def trigger_evidence_ready(
         self, now: datetime, *, as_of: date | None = None, limit: int = 12
     ) -> bool:
-        key = (as_of or now.astimezone(CHINA_TZ).date(), limit)
+        key = self._candidate_cache_key(
+            as_of or now.astimezone(CHINA_TZ).date(), limit
+        )
         with self._candidate_cache_lock:
             job = self._evidence_jobs.get(key)
         return job is not None and job.done()
@@ -1304,7 +1313,8 @@ class QuantStrategyService:
                 "snapshot_source": "disk",
                 "missing_data": pending_missing,
             }))
-        cache_key = (selected_date, limit)
+        cache_key = self._candidate_cache_key(selected_date, limit)
+        scan_limit = cache_key[1]
         cached = None
         stale_cached = None
         candidate_scan_cached = False
@@ -1337,7 +1347,9 @@ class QuantStrategyService:
             }))
         if cached is None:
             if self.defer_initial_scan:
-                self._start_deferred_scan(cache_key, selected_date, limit, now)
+                self._start_deferred_scan(
+                    cache_key, selected_date, scan_limit, now
+                )
                 (
                     board, names, candidate_scan_state,
                     candidate_scan_started_at, candidate_scan_error,
@@ -1433,7 +1445,9 @@ class QuantStrategyService:
                         )
                     return finish(failed_snapshot)
             else:
-                board, names = self._scan_candidates(cache_key, selected_date, limit)
+                board, names = self._scan_candidates(
+                    cache_key, selected_date, scan_limit
+                )
                 mark("candidate_scan")
                 if self.cache_ttl > timedelta(0):
                     with self._candidate_cache_lock:
