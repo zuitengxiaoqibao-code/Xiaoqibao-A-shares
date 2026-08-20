@@ -208,6 +208,52 @@ async def test_company_research_freezes_a_version_after_deterministic_analysis()
 
 
 @pytest.mark.asyncio
+async def test_company_research_returns_same_day_cache_before_slow_core_refresh() -> None:
+    cached = await CompanyResearchService(
+        DiagnosisService(diagnosis()), FinancialSource(financial_history()),
+        ProfileSource(), clock=lambda: NOW,
+    ).get("600519", date(2026, 8, 3))
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class BlockingDiagnosis:
+        calls = 0
+
+        async def diagnose(self, _symbol: str, _as_of: date) -> AShareDiagnosis:
+            self.calls += 1
+            started.set()
+            await release.wait()
+            return diagnosis()
+
+    diagnosis_source = BlockingDiagnosis()
+
+    class Versions:
+        def latest(self, symbol: str):
+            assert symbol == "600519"
+            return cached
+
+        def append(self, value):
+            return value
+
+    service = CompanyResearchService(
+        diagnosis_source, FinancialSource(financial_history()), ProfileSource(),
+        version_repository=Versions(), clock=lambda: NOW,
+    )
+    try:
+        result = await asyncio.wait_for(service.get("600519", date(2026, 8, 3)), timeout=0.1)
+        assert result.research_version == cached.research_version
+        await asyncio.wait_for(started.wait(), timeout=1)
+        assert diagnosis_source.calls == 1
+        second = await service.get("600519", date(2026, 8, 3))
+        assert second.research_version == cached.research_version
+        assert diagnosis_source.calls == 1
+    finally:
+        release.set()
+        await asyncio.sleep(0)
+        service.close()
+
+
+@pytest.mark.asyncio
 async def test_company_research_keeps_latest_frozen_version_when_core_refresh_fails() -> None:
     cached = await CompanyResearchService(
         DiagnosisService(diagnosis()), FinancialSource(financial_history()),

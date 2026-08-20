@@ -429,16 +429,34 @@ class CompanyResearchService:
         self.version_repository = version_repository
         self.clock = clock
         self._enrichment_tasks: dict[str, asyncio.Task] = {}
+        self._core_refresh_tasks: dict[tuple[str, date], asyncio.Task] = {}
 
     async def get(
         self,
         symbol: str,
         as_of: date | None = None,
         progress_callback: Callable[[str, str], None] | None = None,
+        cache_first: bool = True,
     ) -> CompanyResearchResponse:
         selected_date = as_of or self.clock().date()
         if progress_callback is not None:
             progress_callback("identity", f"已锁定 {symbol} · {selected_date.isoformat()}")
+        if cache_first and self.version_repository is not None:
+            try:
+                latest = await asyncio.to_thread(self.version_repository.latest, symbol)
+            except Exception:
+                latest = None
+            if latest is not None and latest.as_of == selected_date:
+                self._schedule_core_refresh(symbol, selected_date)
+                cached_reason = (
+                    f"已展示本地研究缓存（生成于 {latest.generated_at.astimezone().strftime('%Y-%m-%d %H:%M:%S')}），"
+                    "后台正在刷新最新真实数据。"
+                )
+                if progress_callback is not None:
+                    progress_callback("cache", cached_reason)
+                return latest.model_copy(update={
+                    "reasons": tuple(dict.fromkeys((*latest.reasons, cached_reason))),
+                })
         diagnosis_task = asyncio.create_task(self.diagnosis_service.diagnose(symbol, selected_date))
         financial_task = asyncio.create_task(asyncio.to_thread(self.financial_source.fetch, symbol))
         profile_task = asyncio.create_task(asyncio.to_thread(self.profile_source.fetch, symbol))
@@ -652,6 +670,25 @@ class CompanyResearchService:
             progress_callback("analysis", "评分、反方审查和证据账本已合成")
         return self.version_repository.append(response) if self.version_repository is not None else response
 
+    def _schedule_core_refresh(self, symbol: str, selected_date: date) -> None:
+        key = (symbol, selected_date)
+        current = self._core_refresh_tasks.get(key)
+        if current is not None and not current.done():
+            return
+        task = asyncio.create_task(self._refresh_core(symbol, selected_date))
+        self._core_refresh_tasks[key] = task
+
+    async def _refresh_core(self, symbol: str, selected_date: date) -> None:
+        key = (symbol, selected_date)
+        try:
+            await self.get(symbol, selected_date, cache_first=False)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return
+        finally:
+            self._core_refresh_tasks.pop(key, None)
+
     @staticmethod
     def _field_evidence(
         *, selected_date, generated_at, coverage, base_score, risk_penalty,
@@ -796,6 +833,9 @@ class CompanyResearchService:
         for task in self._enrichment_tasks.values():
             task.cancel()
         self._enrichment_tasks.clear()
+        for task in self._core_refresh_tasks.values():
+            task.cancel()
+        self._core_refresh_tasks.clear()
 
     def _dimensions(
         self,
