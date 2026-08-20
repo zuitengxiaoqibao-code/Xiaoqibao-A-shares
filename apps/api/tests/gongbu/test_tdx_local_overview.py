@@ -279,6 +279,40 @@ def test_local_overview_keeps_fallback_quotes_for_downstream_screeners(tmp_path)
     assert source.current_quotes() == (fallback_quote,)
 
 
+def test_local_overview_restores_full_fallback_quotes_after_restart(tmp_path) -> None:
+    fallback_quote = quote(
+        "600000", "浦发银行", previous_close="9.19", price="9.28",
+        high="9.35", amount_wan="102935.42",
+    )
+    expected = build_market_statistics(
+        (fallback_quote,), observed_at=NOW, source="tencent-realtime+tdx-catalog"
+    )
+
+    class Fallback:
+        last_quotes = (fallback_quote,)
+
+        def fetch(self):
+            return expected
+
+    first = LocalTdxOverviewSource(
+        cache_path=tmp_path / "tdx-market-overview.json",
+        rpc=None,
+        fallback=Fallback(),
+        clock=lambda: NOW,
+    )
+    first.refresh()
+
+    restarted = LocalTdxOverviewSource(
+        cache_path=tmp_path / "tdx-market-overview.json",
+        rpc=None,
+        fallback=None,
+        clock=lambda: NOW,
+    )
+
+    assert restarted.current() is not None
+    assert restarted.current_quotes() == (fallback_quote,)
+
+
 def test_local_overview_can_refresh_fast_from_fallback_without_scanning_rpc_catalog(tmp_path) -> None:
     fallback_quote = quote(
         "600000", "浦发银行", previous_close="9.19", price="9.28",

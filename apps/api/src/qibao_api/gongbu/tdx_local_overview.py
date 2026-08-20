@@ -1,4 +1,5 @@
 import itertools
+import json
 import logging
 import socket
 import threading
@@ -626,7 +627,7 @@ class LocalTdxOverviewSource:
         self._lock = threading.RLock()
         self._fallback_refresh_lock = threading.Lock()
         self._snapshot = self._load_cache()
-        self._quotes: tuple[TdxRealtimeQuote, ...] = ()
+        self._quotes: tuple[TdxRealtimeQuote, ...] = self._load_quotes_cache()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._refresh_failure_count = 0
@@ -866,6 +867,51 @@ class LocalTdxOverviewSource:
             logger.warning("local TDX overview cache is invalid", exc_info=True)
             return None
 
+    def _load_quotes_cache(self) -> tuple[TdxRealtimeQuote, ...]:
+        """Restore the last verified quote set before any network refresh.
+
+        Older releases only persisted representative stocks in the overview
+        snapshot. They are still valid for a bounded, explicitly partial
+        screener response and avoid blocking the first request on a full-market
+        network scan. Newer releases persist the complete quote set separately.
+        """
+        path = self.cache_path.with_name("tdx-market-quotes.json")
+        rows: object = None
+        if path.exists():
+            try:
+                rows = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                logger.warning("local TDX quote cache is invalid", exc_info=True)
+        if not isinstance(rows, list) and self._snapshot is not None:
+            rows = [item.model_dump(mode="json") for item in self._snapshot.market_stocks]
+        if not isinstance(rows, list):
+            return ()
+        restored: list[TdxRealtimeQuote] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            try:
+                observed_at = row.get("observed_at")
+                restored.append(TdxRealtimeQuote(
+                    symbol=str(row["symbol"]),
+                    exchange_code=f"{row['symbol']}.{'SH' if str(row['symbol']).startswith('6') else 'SZ'}",
+                    name=str(row["name"]),
+                    previous_close=Decimal(str(row["previous_close"])),
+                    price=Decimal(str(row["price"])),
+                    high=Decimal(str(row["high"])),
+                    low=Decimal(str(row["low"])),
+                    open=Decimal(str(row["open"])),
+                    volume=Decimal(str(row["volume"])),
+                    amount_wan=(Decimal(str(row["amount_yi"])) * Decimal("10000")),
+                    observed_at=(
+                        datetime.fromisoformat(str(observed_at))
+                        if observed_at else None
+                    ),
+                ))
+            except (KeyError, TypeError, ValueError, InvalidOperation):
+                continue
+        return tuple(restored)
+
     def _save_cache(self, snapshot: OverviewMarketSnapshot) -> None:
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.cache_path.with_suffix(self.cache_path.suffix + ".tmp")
@@ -874,3 +920,26 @@ class LocalTdxOverviewSource:
             temporary.replace(self.cache_path)
         except OSError:
             logger.warning("local TDX overview cache write failed", exc_info=True)
+        if self._quotes:
+            quotes_path = self.cache_path.with_name("tdx-market-quotes.json")
+            quotes_tmp = quotes_path.with_suffix(quotes_path.suffix + ".tmp")
+            try:
+                payload = [
+                    {
+                        "symbol": item.symbol,
+                        "name": item.name,
+                        "previous_close": str(item.previous_close),
+                        "price": str(item.price),
+                        "high": str(item.high),
+                        "low": str(item.low),
+                        "open": str(item.open),
+                        "volume": str(item.volume),
+                        "amount_yi": str(item.amount_wan / Decimal("10000")),
+                        "observed_at": item.observed_at.isoformat() if item.observed_at else None,
+                    }
+                    for item in self._quotes
+                ]
+                quotes_tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+                quotes_tmp.replace(quotes_path)
+            except OSError:
+                logger.warning("local TDX quote cache write failed", exc_info=True)
