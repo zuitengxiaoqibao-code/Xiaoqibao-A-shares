@@ -4,12 +4,10 @@ import tempfile
 import json
 from pathlib import Path
 from uuid import uuid4
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
-
-from qibao_api.data_sources.file_adapter import FileImportService
-
 
 router = APIRouter(prefix="/api", tags=["data-import"])
 
@@ -18,7 +16,9 @@ class IngestRequest(BaseModel):
     mapping: dict[str, str] = Field(default_factory=dict)
 
 
-def _service(request: Request) -> FileImportService:
+def _service(request: Request):
+    from qibao_api.data_sources.file_adapter import FileImportService
+
     root = Path(getattr(request.app.state, "data_dir", Path("data"))) / "imports"
     return FileImportService(root)
 
@@ -90,3 +90,15 @@ def data_import_task(task_id: str, request: Request) -> dict:
     if task is None:
         raise HTTPException(status_code=404, detail="导入任务不存在")
     return task
+
+
+@router.get("/data-sources/health")
+def data_source_health(request: Request) -> dict:
+    repository = getattr(request.app.state, "operations_repository", None)
+    if repository is None:
+        return {"generated_at": datetime.now(timezone.utc), "status": "unavailable", "sources": [], "reason": "数据源健康仓储尚未就绪"}
+    snapshot = repository.source_health_snapshot() if hasattr(repository, "source_health_snapshot") else None
+    if snapshot is not None:
+        return {**snapshot, "status": "ready" if snapshot.get("sources") else "unavailable"}
+    sources = repository.source_health(20)
+    return {"generated_at": datetime.now(timezone.utc), "status": "ready" if sources else "unavailable", "sources": sources}
