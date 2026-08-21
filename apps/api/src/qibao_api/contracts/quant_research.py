@@ -181,6 +181,98 @@ class OpportunityDefinition(BaseModel):
     )
 
 
+class ShadowCohortEvidence(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    opportunity_type: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
+    decision_source: Literal[
+        "quant_strategy", "opportunity_scan", "ai_hypothesis", "manual_watch"
+    ]
+    horizon: Literal[1, 3, 5, 10, 20, 60]
+    status: ResearchStatus
+    sample_count: int = Field(ge=0)
+    hit_rate_percent: Decimal | None = Field(default=None, ge=0, le=100)
+    average_return_percent: Decimal | None = None
+    generated_at: AwareDatetime
+    limitations: tuple[str, ...] = ()
+
+
+class OpportunityPitch(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    symbol: str = Field(pattern=r"^\d{6}$")
+    name: str = Field(min_length=1)
+    opportunity_type: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
+    opportunity_name: str = Field(min_length=1)
+    market_regime: str | None = None
+    status: Literal["triggered", "watch", "excluded", "insufficient"]
+    strategy_score: Decimal = Field(ge=0, le=100)
+    trigger_confirmed: bool
+    reference_price: Decimal | None = Field(default=None, gt=0)
+    core_evidence: tuple[str, ...] = Field(max_length=3)
+    trigger_rules: tuple[str, ...] = Field(min_length=1)
+    invalidation_rules: tuple[str, ...] = Field(min_length=1)
+    risk_gate: QuantRiskGateSummary
+    shadow_sample_count: int = Field(default=0, ge=0)
+    calibrated_hit_rate_percent: Decimal | None = Field(default=None, ge=0, le=100)
+    average_return_percent: Decimal | None = None
+    sources: tuple[str, ...] = ()
+    source_snapshot_ids: tuple[str, ...] = ()
+    limitations: tuple[str, ...] = ()
+
+
+class ETFExposure(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    etf_symbol: str = Field(pattern=r"^\d{6}$")
+    etf_name: str = Field(min_length=1)
+    mapping_basis: Literal["industry", "theme", "correlation"]
+    exposure_weight_percent: Decimal = Field(ge=0, le=100)
+    common_sample_count: int = Field(ge=0)
+    correlation: Decimal | None = Field(default=None, ge=-1, le=1)
+    average_amount_20d: Decimal | None = Field(default=None, ge=0)
+    status: ResearchStatus
+    source_snapshot_ids: tuple[str, ...] = ()
+    limitations: tuple[str, ...] = ()
+
+
+class FactorHypothesisRecord(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    hypothesis_id: str = Field(min_length=1)
+    statement: str = Field(min_length=1)
+    expected_direction: FactorDirection
+    status: Literal[
+        "draft", "validating", "accepted", "rejected", "insufficient", "error"
+    ]
+    generated_at: AwareDatetime
+    input_evidence_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    limitations: tuple[str, ...] = ()
+
+
+class QuantResearchSnapshot(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    status: ResearchStatus
+    as_of: date
+    observed_at: AwareDatetime
+    generated_at: AwareDatetime
+    snapshot_source: Literal["computed", "cache", "empty"]
+    refresh_state: Literal["ready", "pending", "failed"]
+    factor_registry: FactorRegistrySnapshot
+    factor_health: tuple[FactorHealth, ...] = ()
+    risk_summaries: tuple[QuantRiskGateSummary, ...] = ()
+    opportunities: tuple[OpportunityPitch, ...] = ()
+    shadow_cohorts: tuple[ShadowCohortEvidence, ...] = ()
+    etf_exposures: tuple[ETFExposure, ...] = ()
+    hypotheses: tuple[FactorHypothesisRecord, ...] = ()
+    formula_version: Literal["quant-research-intelligence-v1"] = (
+        "quant-research-intelligence-v1"
+    )
+    source_snapshot_ids: tuple[str, ...] = ()
+    limitations: tuple[str, ...] = ()
+
+
 def utc_now() -> datetime:
     """Clock seam for registry construction; callers should inject their own time in tests."""
     from datetime import timezone
