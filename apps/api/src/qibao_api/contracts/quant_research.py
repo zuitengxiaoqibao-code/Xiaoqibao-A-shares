@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
@@ -73,6 +74,46 @@ class FactorLifecycleEvent(BaseModel):
     reason: str = Field(min_length=1)
     occurred_at: AwareDatetime
     source_snapshot_ids: tuple[str, ...] = ()
+
+
+class FactorObservation(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    factor_id: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
+    trade_date: date
+    symbol: str = Field(pattern=r"^\d{6}$")
+    value: Decimal | None
+    forward_return: Decimal | None
+    source_snapshot_ids: tuple[str, ...] = ()
+
+
+class FactorHealth(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    factor_id: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
+    name: str = Field(min_length=1)
+    family: FactorFamily
+    status: Literal["healthy", "watch", "insufficient", "stale", "error"]
+    sample_count: int = Field(ge=0)
+    valid_day_count: int = Field(ge=0)
+    coverage_percent: Decimal = Field(ge=0, le=100)
+    missing_rate_percent: Decimal = Field(ge=0, le=100)
+    rank_ic_20: Decimal | None = Field(default=None, ge=-1, le=1)
+    rank_ic_60: Decimal | None = Field(default=None, ge=-1, le=1)
+    rank_ic_120: Decimal | None = Field(default=None, ge=-1, le=1)
+    ic_mean: Decimal | None = Field(default=None, ge=-1, le=1)
+    ic_std: Decimal | None = Field(default=None, ge=0)
+    icir: Decimal | None = None
+    direction_accuracy_percent: Decimal | None = Field(default=None, ge=0, le=100)
+    latest_valid_date: date | None = None
+    max_family_correlation: Decimal | None = Field(default=None, ge=0, le=1)
+    correlated_factor_id: str | None = Field(
+        default=None, pattern=r"^[a-z][a-z0-9_]*$"
+    )
+    generated_at: AwareDatetime
+    formula_version: Literal["quant-factor-health-v1"] = "quant-factor-health-v1"
+    source_snapshot_ids: tuple[str, ...] = ()
+    limitations: tuple[str, ...] = ()
 
 
 def utc_now() -> datetime:
