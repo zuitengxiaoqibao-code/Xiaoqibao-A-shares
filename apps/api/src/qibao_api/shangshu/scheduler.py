@@ -32,6 +32,7 @@ class DailyBriefingScheduler:
         first_limit_up_service=None,
         full_market_history_service=None,
         history_sync_submitter=None,
+        postclose_report_service=None,
     ) -> None:
         self.workflow = workflow
         self.calendar = calendar
@@ -45,6 +46,7 @@ class DailyBriefingScheduler:
         self.first_limit_up_service = first_limit_up_service
         self.full_market_history_service = full_market_history_service
         self.history_sync_submitter = history_sync_submitter
+        self.postclose_report_service = postclose_report_service
         self._submitted_history_jobs: set[str] = set()
         self._run_lock = threading.RLock()
 
@@ -90,6 +92,10 @@ class DailyBriefingScheduler:
                             and self.first_limit_up_service is not None
                         ):
                             self._run_first_limit_up(
+                                trading_date, slot, occurred_at=now, trigger="scheduled"
+                            )
+                        if phase == "postclose" and history_ready:
+                            self._run_postclose_report(
                                 trading_date, slot, occurred_at=now, trigger="scheduled"
                             )
                         self._run(
@@ -434,6 +440,33 @@ class DailyBriefingScheduler:
             return
         self.repository.append_attempt(
             **values, status="completed", report_id=getattr(result, "rule_version", None)
+        )
+
+    def _run_postclose_report(
+        self, trading_date: date, slot: str, *, occurred_at: datetime, trigger: str
+    ) -> None:
+        if self.postclose_report_service is None:
+            return
+        job_key = f"{trading_date.isoformat()}:postclose:{slot}:postclose-review"
+        events = self.repository.attempts_for(job_key)
+        if any(item["status"] == "completed" for item in events):
+            return
+        attempt = max((item["attempt"] for item in events), default=0) + 1
+        values = dict(
+            job_key=job_key, phase="postclose_review", trading_date=trading_date,
+            slot=f"{slot}:postclose-review", trigger=trigger, attempt=attempt,
+            occurred_at=occurred_at,
+        )
+        self.repository.append_attempt(**values, status="started")
+        try:
+            result = self.postclose_report_service.run(trading_date, occurred_at)
+        except Exception as error:
+            self.repository.append_attempt(
+                **values, status="failed", error_code=_error_code(error)
+            )
+            return
+        self.repository.append_attempt(
+            **values, status="completed", report_id=getattr(result, "report_id", None)
         )
 
     def _postclose_history_ready(self, trading_date: date) -> bool:

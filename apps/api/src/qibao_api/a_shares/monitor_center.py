@@ -8,6 +8,27 @@ from pathlib import Path
 from typing import Any
 
 
+class AlertDeliveryQueue:
+    """Run each delivery independently so one channel cannot hide an alert."""
+
+    def __init__(self, *, tts=None, feishu=None) -> None:
+        self.tts = tts
+        self.feishu = feishu
+
+    def dispatch(self, alert: dict[str, Any]) -> dict[str, str]:
+        states = {"in_app": "sent", "tts": "未配置", "feishu": "未配置"}
+        for name, delivery in (("tts", self.tts), ("feishu", self.feishu)):
+            if delivery is None:
+                continue
+            try:
+                delivery(alert)
+            except Exception:  # delivery failures are persisted per channel
+                states[name] = "failed"
+            else:
+                states[name] = "sent"
+        return states
+
+
 class MonitorCenterService:
     def __init__(self, path: Path) -> None:
         self.path = Path(path)

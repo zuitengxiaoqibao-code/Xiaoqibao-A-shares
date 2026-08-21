@@ -174,6 +174,7 @@ from qibao_api.routes.tdx_local import router as tdx_local_router
 from qibao_api.routes.speech import router as speech_router
 from qibao_api.routes.data_import import router as data_import_router
 from qibao_api.routes.monitor_center import router as monitor_center_router
+from qibao_api.a_shares.postclose_report import PostCloseReportRepository, PostCloseReportService
 from qibao_api.settings import Settings
 from qibao_api.static_frontend import install_static_frontend
 from qibao_api.settings_repository import AISettingsRepository, EffectiveAISettingsResolver
@@ -1285,6 +1286,17 @@ async def lifespan(application: FastAPI):
                 application.state.local_market_review_source = (
                     local_market_review_source
                 )
+                postclose_report_service = PostCloseReportService(
+                    PostCloseReportRepository(settings.data_dir / "postclose-reports"),
+                    lambda trading_date: (
+                        local_market_review_source.current()
+                        if local_market_review_source.current() is not None
+                        and local_market_review_source.current().as_of == trading_date
+                        else local_market_review_source.refresh(as_of=trading_date)
+                    ),
+                )
+                application.state.postclose_report_service = postclose_report_service
+                application.state.scheduler.postclose_report_service = postclose_report_service
                 application.state.tdx_import_service.after_import = (
                     lambda latest: _refresh_after_tdx_import(application, latest)
                 )

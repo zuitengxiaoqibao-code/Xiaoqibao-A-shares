@@ -7,6 +7,7 @@ from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
+from pathlib import Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,3 +34,89 @@ class PostCloseReportBuilder:
 
     def explain(self, report: FrozenMarketReport, *, ai_explanation: str | None) -> FrozenMarketReport:
         return FrozenMarketReport(report.report_id, report.trading_date, report.observed_at, report.facts, report.quality, report.coverage, "ready" if ai_explanation else "unavailable", ai_explanation)
+
+
+class PostCloseReportRepository:
+    def __init__(self, root: Path) -> None:
+        self.root = Path(root)
+        self.root.mkdir(parents=True, exist_ok=True)
+
+    def append(self, report: FrozenMarketReport) -> None:
+        target = self.root / f"{report.report_id}.json"
+        if target.exists():
+            raise ValueError("盘后报告不可覆盖")
+        target.write_text(json.dumps({
+            "report_id": report.report_id,
+            "trading_date": report.trading_date.isoformat(),
+            "observed_at": report.observed_at.isoformat(),
+            "facts": report.facts,
+            "quality": report.quality,
+            "coverage": str(report.coverage),
+            "ai_status": report.ai_status,
+            "explanation": report.explanation,
+        }, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+
+    def latest(self, trading_date: date) -> FrozenMarketReport | None:
+        candidates = []
+        for path in self.root.glob(f"postclose-{trading_date.isoformat()}-*.json"):
+            if path.name.endswith(".delivery.json"):
+                continue
+            value = json.loads(path.read_text(encoding="utf-8"))
+            candidates.append(FrozenMarketReport(
+                value["report_id"], date.fromisoformat(value["trading_date"]),
+                datetime.fromisoformat(value["observed_at"]), value["facts"],
+                value["quality"], Decimal(value["coverage"]), value["ai_status"],
+                value["explanation"],
+            ))
+        return max(candidates, key=lambda item: item.observed_at) if candidates else None
+
+    def record_delivery(self, report_id: str, channel: str, status: str, reason: str | None = None) -> None:
+        target = self.root / f"{report_id}.delivery.json"
+        state = json.loads(target.read_text(encoding="utf-8")) if target.exists() else {}
+        state[channel] = {"status": status, "reason": reason}
+        target.write_text(json.dumps(state, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+
+    def delivery(self, report_id: str) -> dict[str, Any]:
+        target = self.root / f"{report_id}.delivery.json"
+        return json.loads(target.read_text(encoding="utf-8")) if target.exists() else {}
+
+
+class PostCloseReportService:
+    def __init__(self, repository: PostCloseReportRepository, fact_source, *, ai_provider=None, delivery=None) -> None:
+        self.repository = repository
+        self.fact_source = fact_source
+        self.ai_provider = ai_provider
+        self.delivery = delivery
+        self.builder = PostCloseReportBuilder()
+
+    def run(self, trading_date: date, observed_at: datetime) -> FrozenMarketReport:
+        existing = self.repository.latest(trading_date)
+        if existing is not None:
+            return existing
+        snapshot = self.fact_source(trading_date)
+        if snapshot is None:
+            facts = {"reason_code": "market_review_unavailable"}
+            coverage = Decimal("0")
+        else:
+            facts = snapshot.model_dump(mode="json") if hasattr(snapshot, "model_dump") else dict(snapshot)
+            watermark = getattr(snapshot, "watermark", None)
+            coverage = getattr(watermark, "coverage_percent", None) or Decimal("0")
+        frozen = self.builder.freeze(trading_date, observed_at, facts, coverage=coverage)
+        explanation = None
+        if self.ai_provider is not None:
+            try:
+                explanation = self.ai_provider(frozen)
+            except Exception:
+                explanation = None
+        report = self.builder.explain(frozen, ai_explanation=explanation)
+        self.repository.append(report)
+        if self.delivery is not None:
+            try:
+                self.delivery(report)
+            except Exception as error:
+                self.repository.record_delivery(report.report_id, "feishu", "failed", str(error))
+            else:
+                self.repository.record_delivery(report.report_id, "feishu", "sent")
+        else:
+            self.repository.record_delivery(report.report_id, "feishu", "未配置")
+        return report
