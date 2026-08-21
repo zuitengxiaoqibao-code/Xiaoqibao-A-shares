@@ -23,7 +23,7 @@ from qibao_api.contracts.quant_shadow import (
 from qibao_api.contracts.quant_strategy import QuantStrategyDashboard
 
 
-HORIZONS = (1, 3, 5, 10, 20)
+HORIZONS = (1, 3, 5, 10, 20, 60)
 FORMULA_VERSION = "a-share-short-strategy-v2.0"
 CALIBRATION_BUCKETS = (
     ("0-69", 0, 69),
@@ -113,11 +113,36 @@ class QuantShadowLedgerStore:
                 connection.execute(
                     "ALTER TABLE quant_shadow_decisions ADD COLUMN market_regime TEXT"
                 )
+            if "decision_source" not in columns:
+                connection.execute(
+                    "ALTER TABLE quant_shadow_decisions ADD COLUMN decision_source "
+                    "TEXT NOT NULL DEFAULT 'quant_strategy'"
+                )
+            if "opportunity_type" not in columns:
+                connection.execute(
+                    "ALTER TABLE quant_shadow_decisions ADD COLUMN opportunity_type TEXT"
+                )
+            connection.execute(
+                """INSERT OR IGNORE INTO quant_shadow_outcomes
+                (decision_id, horizon, status, invalidation_state)
+                SELECT decision_id, 60, 'pending', 'unavailable'
+                FROM quant_shadow_decisions"""
+            )
 
-    def freeze(self, dashboard: QuantStrategyDashboard) -> int:
+    def freeze(
+        self,
+        dashboard: QuantStrategyDashboard,
+        *,
+        decision_source: str = "quant_strategy",
+        opportunity_type: str | None = None,
+    ) -> int:
         """Append candidates once; never update an existing decision row."""
         if dashboard.status == "unavailable":
             return 0
+        if decision_source not in {
+            "quant_strategy", "opportunity_scan", "ai_hypothesis", "manual_watch",
+        }:
+            raise ValueError("unsupported shadow decision source")
         frozen_at = dashboard.generated_at.astimezone(timezone.utc).isoformat()
         inserted = 0
         with self._connect() as connection:
@@ -134,8 +159,9 @@ class QuantShadowLedgerStore:
                     """
                     INSERT OR IGNORE INTO quant_shadow_decisions
                     (decision_id, as_of, symbol, formula_version, candidate_status,
-                     strategy_score, reference_price, candidate_json, frozen_at, market_regime)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     strategy_score, reference_price, candidate_json, frozen_at, market_regime,
+                     decision_source, opportunity_type)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         decision_id,
@@ -148,6 +174,8 @@ class QuantShadowLedgerStore:
                         payload,
                         frozen_at,
                         dashboard.regime.regime,
+                        decision_source,
+                        opportunity_type,
                     ),
                 )
                 if cursor.rowcount:
@@ -225,6 +253,8 @@ class QuantShadowLedgerStore:
             formula_version=row["formula_version"],
             candidate_status=row["candidate_status"],
             market_regime=row["market_regime"],
+            decision_source=row["decision_source"],
+            opportunity_type=row["opportunity_type"],
             strategy_score=Decimal(row["strategy_score"]),
             reference_price=Decimal(row["reference_price"]) if row["reference_price"] else None,
             frozen_at=datetime.fromisoformat(row["frozen_at"]),
@@ -325,24 +355,53 @@ class QuantShadowLedgerStore:
                 outcomes.append(outcome)
         return tuple(outcomes)
 
-    def analytics(self, *, horizon: int = 5) -> QuantShadowAnalytics:
+    def analytics(
+        self,
+        *,
+        horizon: int = 5,
+        decision_source: str | None = None,
+        opportunity_type: str | None = None,
+    ) -> QuantShadowAnalytics:
         if horizon not in HORIZONS:
             raise ValueError(f"horizon must be one of {HORIZONS}")
+        if decision_source is not None and decision_source not in {
+            "quant_strategy", "opportunity_scan", "ai_hypothesis", "manual_watch",
+        }:
+            raise ValueError("unsupported shadow decision source")
+        conditions = [
+            "o.horizon = ?", "o.status = 'ready'", "o.return_percent IS NOT NULL",
+        ]
+        parameters: list[object] = [horizon]
+        if decision_source is not None:
+            conditions.append("d.decision_source = ?")
+            parameters.append(decision_source)
+        if opportunity_type is not None:
+            conditions.append("d.opportunity_type = ?")
+            parameters.append(opportunity_type)
+        where_clause = " AND ".join(conditions)
         with self._connect() as connection:
             rows = connection.execute(
-                """SELECT d.as_of, d.symbol, d.strategy_score, d.market_regime,
+                f"""SELECT d.as_of, d.symbol, d.strategy_score, d.market_regime,
                           o.return_percent, o.mfe_percent, o.mae_percent
                    FROM quant_shadow_decisions AS d
                    JOIN quant_shadow_outcomes AS o ON o.decision_id = d.decision_id
-                   WHERE o.horizon = ? AND o.status = 'ready'
-                     AND o.return_percent IS NOT NULL
+                   WHERE {where_clause}
                    ORDER BY d.as_of ASC, d.symbol ASC""",
-                (horizon,),
+                tuple(parameters),
             ).fetchall()
+            pending_conditions = ["o.horizon = ?", "o.status = 'pending'"]
+            pending_parameters: list[object] = [horizon]
+            if decision_source is not None:
+                pending_conditions.append("d.decision_source = ?")
+                pending_parameters.append(decision_source)
+            if opportunity_type is not None:
+                pending_conditions.append("d.opportunity_type = ?")
+                pending_parameters.append(opportunity_type)
             pending_sample_count = int(connection.execute(
-                """SELECT COUNT(*) FROM quant_shadow_outcomes
-                   WHERE horizon = ? AND status = 'pending'""",
-                (horizon,),
+                f"""SELECT COUNT(*) FROM quant_shadow_outcomes AS o
+                   JOIN quant_shadow_decisions AS d ON d.decision_id = o.decision_id
+                   WHERE {' AND '.join(pending_conditions)}""",
+                tuple(pending_parameters),
             ).fetchone()[0])
 
         samples = tuple(_analytics_sample(row) for row in rows)
@@ -375,6 +434,8 @@ class QuantShadowLedgerStore:
         return QuantShadowAnalytics(
             status=status,
             horizon=horizon,
+            decision_source=decision_source,
+            opportunity_type=opportunity_type,
             mature_sample_count=mature_sample_count,
             pending_sample_count=pending_sample_count,
             hit_rate_percent=_hit_rate(samples),

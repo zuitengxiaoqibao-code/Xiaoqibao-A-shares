@@ -35,6 +35,12 @@ class ShadowDecisionRecord(BaseModel):
     formula_version: str
     candidate_status: str
     market_regime: str | None = None
+    decision_source: Literal[
+        "quant_strategy", "opportunity_scan", "ai_hypothesis", "manual_watch"
+    ] = "quant_strategy"
+    opportunity_type: str | None = Field(
+        default=None, pattern=r"^[a-z][a-z0-9_]*$"
+    )
     strategy_score: Decimal
     reference_price: Decimal | None = None
     frozen_at: AwareDatetime
@@ -90,7 +96,13 @@ class QuantShadowAnalytics(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     status: AnalyticsStatus
-    horizon: Literal[1, 3, 5, 10, 20]
+    horizon: Literal[1, 3, 5, 10, 20, 60]
+    decision_source: Literal[
+        "quant_strategy", "opportunity_scan", "ai_hypothesis", "manual_watch"
+    ] | None = None
+    opportunity_type: str | None = Field(
+        default=None, pattern=r"^[a-z][a-z0-9_]*$"
+    )
     mature_sample_count: int = Field(ge=0)
     pending_sample_count: int = Field(ge=0)
     hit_rate_percent: Decimal | None = None

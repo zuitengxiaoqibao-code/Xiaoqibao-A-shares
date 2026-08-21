@@ -139,8 +139,10 @@ def test_quant_shadow_analytics_route_returns_calibration_and_drift() -> None:
     )
 
     class Ledger:
-        def analytics(self, *, horizon):
+        def analytics(self, *, horizon, decision_source=None, opportunity_type=None):
             assert horizon == 5
+            assert decision_source is None
+            assert opportunity_type is None
             return analytics
 
     response = TestClient(application(Service(), Ledger())).get(
@@ -151,6 +153,39 @@ def test_quant_shadow_analytics_route_returns_calibration_and_drift() -> None:
     assert response.json()["status"] == "insufficient"
     assert response.json()["mature_sample_count"] == 7
     assert response.json()["drift"]["status"] == "insufficient"
+
+
+def test_quant_shadow_analytics_route_accepts_sixty_day_cohort_filters() -> None:
+    analytics = QuantShadowAnalytics(
+        status="insufficient",
+        horizon=60,
+        decision_source="opportunity_scan",
+        opportunity_type="trend_continuation",
+        mature_sample_count=0,
+        pending_sample_count=4,
+        drift=StrategyDriftAssessment(
+            status="insufficient",
+            recent_sample_count=0,
+            baseline_sample_count=0,
+        ),
+        generated_at=NOW,
+    )
+
+    class Ledger:
+        def analytics(self, *, horizon, decision_source=None, opportunity_type=None):
+            assert horizon == 60
+            assert decision_source == "opportunity_scan"
+            assert opportunity_type == "trend_continuation"
+            return analytics
+
+    response = TestClient(application(Service(), Ledger())).get(
+        "/api/v1/a-shares/quant-strategy/shadow/analytics"
+        "?horizon=60&decision_source=opportunity_scan&opportunity_type=trend_continuation"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["horizon"] == 60
+    assert response.json()["decision_source"] == "opportunity_scan"
 
 
 def test_decision_journal_routes_append_and_list_manual_records() -> None:

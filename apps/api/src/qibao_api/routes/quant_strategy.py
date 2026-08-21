@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
@@ -48,10 +48,23 @@ def recent_shadow_decisions(
 def shadow_analytics(
     ledger: Annotated[object, Depends(get_quant_shadow_ledger)],
     horizon: Annotated[int, Query()] = 5,
+    decision_source: Literal[
+        "quant_strategy", "opportunity_scan", "ai_hypothesis", "manual_watch"
+    ] | None = None,
+    opportunity_type: Annotated[
+        str | None, Query(pattern=r"^[a-z][a-z0-9_]*$")
+    ] = None,
 ) -> QuantShadowAnalytics:
-    if horizon not in (1, 3, 5, 10, 20):
-        raise HTTPException(status_code=422, detail="评估周期只支持 1、3、5、10、20 个交易日")
-    return ledger.analytics(horizon=horizon)
+    if horizon not in (1, 3, 5, 10, 20, 60):
+        raise HTTPException(
+            status_code=422,
+            detail="评估周期只支持 1、3、5、10、20、60 个交易日",
+        )
+    return ledger.analytics(
+        horizon=horizon,
+        decision_source=decision_source,
+        opportunity_type=opportunity_type,
+    )
 
 
 @router.get("/shadow/calibration", response_model=QuantCalibrationReport)
@@ -60,8 +73,11 @@ def shadow_calibration(
     now: Annotated[datetime, Depends(get_server_time)],
     horizon: Annotated[int, Query()] = 5,
 ) -> QuantCalibrationReport:
-    if horizon not in (1, 3, 5, 10, 20):
-        raise HTTPException(status_code=422, detail="校准周期只支持 1、3、5、10、20 个交易日")
+    if horizon not in (1, 3, 5, 10, 20, 60):
+        raise HTTPException(
+            status_code=422,
+            detail="校准周期只支持 1、3、5、10、20、60 个交易日",
+        )
     return build_calibration_report(ledger, horizon=horizon, generated_at=now)
 
 

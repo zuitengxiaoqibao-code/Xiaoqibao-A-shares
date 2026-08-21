@@ -74,6 +74,45 @@ def test_freeze_is_immutable_and_evaluates_only_mature_real_windows(tmp_path) ->
     assert store.get(decision_id).market_regime == "轮动震荡"
 
 
+def test_shadow_ledger_tracks_sixty_days_and_decision_cohort(tmp_path) -> None:
+    store = QuantShadowLedgerStore(tmp_path / "shadow.sqlite3", clock=lambda: NOW)
+
+    assert store.freeze(
+        _dashboard(),
+        decision_source="opportunity_scan",
+        opportunity_type="trend_continuation",
+    ) == 1
+    record = store.recent(limit=1)[0]
+
+    assert record.decision_source == "opportunity_scan"
+    assert record.opportunity_type == "trend_continuation"
+    assert tuple(item.horizon for item in record.outcomes) == (1, 3, 5, 10, 20, 60)
+    assert record.outcomes[-1].status == "pending"
+
+
+def test_shadow_analytics_filters_by_decision_source_without_mixing_cohorts(tmp_path) -> None:
+    store = QuantShadowLedgerStore(tmp_path / "shadow.sqlite3", clock=lambda: NOW)
+    _seed_analytics_rows(
+        store.database_path,
+        [(82, "3", "5", "-1", "2026-07-01"), (82, "-2", "1", "-4", "2026-07-02")],
+    )
+    with sqlite3.connect(store.database_path) as connection:
+        connection.execute(
+            "UPDATE quant_shadow_decisions SET decision_source='opportunity_scan', "
+            "opportunity_type='trend_continuation' WHERE decision_id='analytics-000'"
+        )
+
+    analytics = store.analytics(
+        horizon=5,
+        decision_source="opportunity_scan",
+        opportunity_type="trend_continuation",
+    )
+
+    assert analytics.mature_sample_count == 1
+    assert analytics.decision_source == "opportunity_scan"
+    assert analytics.opportunity_type == "trend_continuation"
+
+
 def test_candidate_lifecycle_is_append_only_and_rejects_invalid_transitions(tmp_path) -> None:
     store = QuantShadowLedgerStore(tmp_path / "shadow.sqlite3", clock=lambda: NOW)
     store.freeze(_dashboard())
