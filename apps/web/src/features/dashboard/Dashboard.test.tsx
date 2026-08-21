@@ -200,7 +200,7 @@ describe("Dashboard beginner shell", () => {
   it("shows one complete menu without navigation modes", () => {
     render(<Dashboard loadSnapshot={() => Promise.resolve(card)} />);
     const navigation = screen.getByRole("navigation", { name: "主要功能" });
-    expect(navigation.querySelectorAll("button")).toHaveLength(12);
+    expect(navigation.querySelectorAll("button")).toHaveLength(13);
     expect(screen.queryByRole("button", { name: "新手模式" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "专家模式" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "信息总览" })).toBeInTheDocument();
