@@ -3,7 +3,7 @@ import {
   ShieldAlert, Sparkles,
 } from "lucide-react";
 
-export type BeginnerView = "market_overview" | "dashboard" | "a_shares" | "company_research" | "first_limit_up" | "late_session_selection" | "quant_analysis" | "news" | "risk" | "history" | "settings" | "operations" | "bonds";
+export type BeginnerView = "market_overview" | "dashboard" | "a_shares" | "company_research" | "first_limit_up" | "late_session_selection" | "quant_analysis" | "monitor_center" | "news" | "risk" | "history" | "settings" | "operations" | "bonds";
 
 const entries = [
   ["market_overview", "信息总览", LayoutDashboard],
@@ -13,6 +13,7 @@ const entries = [
   ["first_limit_up", "首次涨停", CircleDot],
   ["late_session_selection", "尾盘选股", Activity],
   ["quant_analysis", "量化分析", BarChart3],
+  ["monitor_center", "监控中心", BellRing],
   ["news", "新闻热点", Newspaper],
   ["risk", "风险提醒", ShieldAlert],
   ["history", "历史复盘", History],

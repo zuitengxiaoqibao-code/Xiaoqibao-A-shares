@@ -173,6 +173,7 @@ from qibao_api.routes.first_limit_up import router as first_limit_up_router
 from qibao_api.routes.tdx_local import router as tdx_local_router
 from qibao_api.routes.speech import router as speech_router
 from qibao_api.routes.data_import import router as data_import_router
+from qibao_api.routes.monitor_center import router as monitor_center_router
 from qibao_api.settings import Settings
 from qibao_api.static_frontend import install_static_frontend
 from qibao_api.settings_repository import AISettingsRepository, EffectiveAISettingsResolver
@@ -1648,4 +1649,5 @@ app.include_router(first_limit_up_router)
 app.include_router(tdx_local_router)
 app.include_router(speech_router)
 app.include_router(data_import_router)
+app.include_router(monitor_center_router)
 install_static_frontend(app, Settings().web_dir)

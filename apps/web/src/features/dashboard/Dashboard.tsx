@@ -70,6 +70,7 @@ const loadTodayDecisionModule = () => import("../decision-workbench/TodayDecisio
 const loadFirstLimitUpModule = () => import("../first-limit-up/FirstLimitUpView");
 const loadLateSessionSelectionModule = () => import("../late-session-selection/LateSessionSelectionView");
 const loadQuantAnalysisModule = () => import("../quant-analysis/QuantAnalysisDashboard");
+const loadMonitorCenterModule = () => import("../monitor-center/MonitorCenterView");
 const loadCompanyResearchModule = () => import("../company-research/CompanyResearchView");
 const loadBeginnerRiskModule = () => import("../beginner-shell/BeginnerRiskView");
 const loadHistoryReviewModule = () => import("../beginner-shell/HistoryReview");
@@ -87,6 +88,7 @@ const BeginnerRiskView = lazy(() => loadBeginnerRiskModule().then(({ BeginnerRis
 const HistoryReview = lazy(() => loadHistoryReviewModule().then(({ HistoryReview: view }) => ({ default: view })));
 const DataSettingsView = lazy(() => loadDataSettingsModule().then(({ DataSettingsView: view }) => ({ default: view })));
 const OperationsView = lazy(() => loadOperationsModule().then(({ OperationsView: view }) => ({ default: view })));
+const MonitorCenterView = lazy(() => loadMonitorCenterModule().then(({ MonitorCenterView: view }) => ({ default: view })));
 
 const primaryRoutePreloaders = [
   loadTodayDecisionModule,
@@ -227,6 +229,7 @@ function viewFromPath(path: string): ActiveView {
   if (path === "/late-session-selection") return "late_session_selection";
   if (path === "/convertible-bonds") return "bonds";
   if (path === "/news-intelligence") return "news";
+  if (path === "/monitor-center") return "monitor_center";
   if (path === "/risk") return "risk";
   if (path === "/history") return "history";
   if (path === "/settings") return "settings";
@@ -239,7 +242,7 @@ const pathsForView: Record<ActiveView, string> = {
   company_research: "/company-research", first_limit_up: "/first-limit-up",
   late_session_selection: "/late-session-selection",
   quant_analysis: "/first-limit-up/quant-analysis", risk: "/risk", history: "/history",
-  settings: "/settings", operations: "/operations", bonds: "/convertible-bonds", news: "/news-intelligence",
+  settings: "/settings", operations: "/operations", bonds: "/convertible-bonds", news: "/news-intelligence", monitor_center: "/monitor-center",
 };
 
 const sourceNames: Record<string, string> = { tencent: "腾讯行情" };
@@ -446,6 +449,8 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, an
 
       {activeView === "quant_analysis" && loadFirstLimitUp && loadQuantTicks && runBacktest && <Suspense fallback={<RouteLoadingFallback />}><QuantAnalysisDashboard loadBoard={loadFirstLimitUp} refreshBoard={refreshFirstLimitUp} loadTicks={loadQuantTicks} runBacktest={runBacktest} loadKronosForecast={loadKronosForecast} loadWalkForward={loadWalkForward} loadQuantStrategy={loadQuantStrategy} loadQuantResearch={loadQuantResearch} loadQuantShadowDecisions={loadQuantShadowDecisions} loadQuantShadowAnalytics={loadQuantShadowAnalytics} loadQuantCalibration={loadQuantCalibration} loadDecisionJournal={loadDecisionJournal} createDecisionJournal={createDecisionJournal} loadTdxFormula={loadTdxFormula} loadTimeline={loadStockTimeline} selectedSymbol={selectedSymbol} searchInstruments={searchAShareInstruments} onSelectSymbol={(nextSymbol) => selectedInstrument?.select(nextSymbol, "search")} /></Suspense>}
       {activeView === "quant_analysis" && (!loadFirstLimitUp || !loadQuantTicks || !runBacktest) && <main className="quant-analysis-page"><header><p className="eyebrow">FIRST LIMIT-UP / QUANT LAB</p><h1>量化分析仪表盘</h1><p>量化证据链暂不完整，请检查首次涨停、盘中 TICK 与回测服务。</p></header></main>}
+
+      {activeView === "monitor_center" && <Suspense fallback={<RouteLoadingFallback />}><MonitorCenterView /></Suspense>}
 
       {activeView === "bonds" && loadBondDashboard && loadBondDiagnosis && loadBondCandidates && <Suspense fallback={<RouteLoadingFallback />}><ConvertibleBondView loadDashboard={loadBondDashboard} loadDiagnosis={loadBondDiagnosis} loadCachedDiagnosis={loadCachedBondDiagnosis} loadCandidates={loadBondCandidates} diagnoseDiscovered={diagnoseBondBatch} openBondCompliance={() => navigate("settings")} /></Suspense>}
 
