@@ -10,7 +10,7 @@ NOW = datetime(2026, 8, 14, 8, 0, tzinfo=UTC)
 
 class Ledger:
     def recent(self, *, limit):
-        assert limit == 5000
+        assert limit == 500
         return tuple(
             SimpleNamespace(
                 as_of=date(2026, 7, index + 1),
@@ -32,4 +32,3 @@ def test_quant_calibration_is_partial_without_reliable_sample_size() -> None:
     assert report.splits[2].sample_count == 2
     assert report.fee_bps is None
     assert "成本与滑点尚未" in report.limitations[0]
-

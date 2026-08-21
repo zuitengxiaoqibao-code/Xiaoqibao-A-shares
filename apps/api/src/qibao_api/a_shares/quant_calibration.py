@@ -27,7 +27,7 @@ def _avg(values: list[Decimal]) -> Decimal | None:
 
 
 def build_calibration_report(ledger, *, horizon: int, generated_at: datetime) -> QuantCalibrationReport:
-    records = sorted(ledger.recent(limit=5000), key=lambda item: (item.as_of, item.symbol))
+    records = sorted(ledger.recent(limit=500), key=lambda item: (item.as_of, item.symbol))
     rows = []
     for record in records:
         outcome = next((item for item in record.outcomes if item.horizon == horizon and item.status == "ready"), None)
