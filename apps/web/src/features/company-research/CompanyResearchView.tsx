@@ -49,6 +49,34 @@ type ResearchEntry = {
   refreshError?: string;
 };
 
+function isCompanyResearchSnapshot(value: unknown): value is CompanyResearchResponse {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Partial<CompanyResearchResponse>;
+  return (
+    typeof candidate.symbol === "string"
+    && /^\d{6}$/.test(candidate.symbol)
+    && typeof candidate.name === "string"
+    && candidate.name.trim().length > 0
+    && ["ready", "partial", "unavailable"].includes(candidate.status ?? "")
+    && typeof candidate.as_of === "string"
+    && typeof candidate.generated_at === "string"
+    && Array.isArray(candidate.dimensions)
+    && candidate.dimensions.length > 0
+    && typeof candidate.financial_history === "object"
+    && candidate.financial_history !== null
+    && typeof candidate.valuation === "object"
+    && candidate.valuation !== null
+    && Array.isArray(candidate.counter_case)
+    && Array.isArray(candidate.sources)
+    && Array.isArray(candidate.reasons)
+  );
+}
+
+const companyResearchSnapshotOptions = {
+  allowPartial: true,
+  validate: isCompanyResearchSnapshot,
+} as const;
+
 const metricLabels: Record<string, string> = {
   revenue_cagr_3y: "营收3年CAGR", net_profit_cagr_3y: "净利润3年CAGR",
   latest_revenue_yoy: "最新营收同比", latest_net_profit_yoy: "最新净利润同比",
@@ -352,7 +380,13 @@ export function CompanyResearchView({ load, search, selectedSymbol, onSelectSymb
         if (controllers.current.has(incoming.symbol)) return;
         const current = entriesRef.current.find((item) => item.symbol === incoming.symbol);
         if (current?.value && Date.parse(incoming.generated_at) <= Date.parse(current.value.generated_at)) return;
-        const stored = writeDailySnapshot("company-research", incoming.symbol, incoming);
+        const stored = writeDailySnapshot(
+          "company-research",
+          incoming.symbol,
+          incoming,
+          new Date(),
+          { completeness: incoming.status === "ready" ? "complete" : "partial" },
+        );
         setEntries((items) => items.map((item) => item.symbol === incoming.symbol ? {
           ...item,
           name: incoming.name,
@@ -393,7 +427,12 @@ export function CompanyResearchView({ load, search, selectedSymbol, onSelectSymb
     if (!/^\d{6}$/.test(normalized)) return;
     const existing = entries.some((item) => item.symbol === normalized);
     if (!existing && entries.length >= 4) return;
-    const cached = readDailySnapshot<CompanyResearchResponse>("company-research", normalized);
+    const cached = readDailySnapshot<CompanyResearchResponse>(
+      "company-research",
+      normalized,
+      new Date(),
+      companyResearchSnapshotOptions,
+    );
     setSuggestions([]); setQuery(""); setActiveSymbol(normalized);
     setEntries((current) => {
       const existing = current.find((item) => item.symbol === normalized);
@@ -477,6 +516,7 @@ export function CompanyResearchView({ load, search, selectedSymbol, onSelectSymb
       activeSymbol={active?.symbol}
       getName={(value) => value.name}
       onSelect={(item) => void addCompany(item.symbol, item.value.name)}
+      snapshotOptions={companyResearchSnapshotOptions}
     />
     {entries.length > 0 && <div className="research-compare" aria-label="同行比较池">{entries.map((entry) => <span className={`research-chip ${active?.symbol === entry.symbol ? "active" : ""}`} key={entry.symbol} role="button" tabIndex={0} onClick={() => setActiveSymbol(entry.symbol)} onKeyDown={(event) => { if (event.key === "Enter") setActiveSymbol(entry.symbol); }}>
       <Building2 size={14} /><span>{entry.name} {entry.symbol}</span><button className="research-chip-remove" type="button" aria-label={`移除 ${entry.symbol}`} onClick={(event) => { event.stopPropagation(); remove(entry.symbol); }}><X size={13} /></button>

@@ -20,6 +20,11 @@ type SnapshotWriteOptions = {
   completeness?: "complete" | "partial";
 };
 
+export type SnapshotReadOptions<T> = {
+  allowPartial?: boolean;
+  validate?: (value: unknown) => value is T;
+};
+
 export type DailySnapshotHit<T> = {
   value: T;
   cachedAt: string;
@@ -45,18 +50,38 @@ function cacheKey(scope: string, day: string, symbol: string): string {
   return `${scopePrefix(scope)}${day}.${symbol}`;
 }
 
-function readEnvelope<T>(scope: string, symbol: string, now: Date): CacheEnvelope<T> | null {
+function isUsableEnvelope<T>(
+  parsed: CacheEnvelope<T> | null,
+  symbol: string,
+  day: string,
+  options: SnapshotReadOptions<T>,
+): parsed is CacheEnvelope<T> {
+  const valueSymbol = (parsed?.value as { symbol?: unknown } | null)?.symbol;
+  if (
+    parsed?.symbol !== symbol
+    || parsed.day !== day
+    || typeof parsed.cachedAt !== "string"
+    || valueSymbol !== symbol
+  ) return false;
+  if (parsed.completeness === "partial") {
+    return options.allowPartial === true && Boolean(options.validate?.(parsed.value));
+  }
+  return options.validate ? options.validate(parsed.value) : true;
+}
+
+function readEnvelope<T>(
+  scope: string,
+  symbol: string,
+  now: Date,
+  options: SnapshotReadOptions<T> = {},
+): CacheEnvelope<T> | null {
   const day = shanghaiDay(now);
   try {
     removeOtherDays(scope, day);
     const raw = localStorage.getItem(cacheKey(scope, day, symbol));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as CacheEnvelope<T>;
-    const valueSymbol = (parsed?.value as { symbol?: unknown } | null)?.symbol;
-    if (
-      parsed?.symbol !== symbol || parsed.day !== day || typeof parsed.cachedAt !== "string" ||
-      parsed.completeness === "partial" || valueSymbol !== symbol
-    ) return null;
+    if (!isUsableEnvelope(parsed, symbol, day, options)) return null;
     return parsed;
   } catch {
     return null;
@@ -99,6 +124,7 @@ export function readDailySnapshot<T>(
   scope: string,
   symbol: string,
   now = new Date(),
+  options: SnapshotReadOptions<T> = {},
 ): DailySnapshotHit<T> | null {
   const day = shanghaiDay(now);
   try {
@@ -110,14 +136,7 @@ export function readDailySnapshot<T>(
       return null;
     }
     const parsed = JSON.parse(raw) as CacheEnvelope<T>;
-    const valueSymbol = (parsed?.value as { symbol?: unknown } | null)?.symbol;
-    if (
-      parsed?.symbol !== symbol
-      || parsed.day !== day
-      || typeof parsed.cachedAt !== "string"
-      || parsed.completeness === "partial"
-      || valueSymbol !== symbol
-    ) {
+    if (!isUsableEnvelope(parsed, symbol, day, options)) {
       localStorage.removeItem(key);
       return null;
     }
@@ -134,8 +153,9 @@ export function readDailySnapshotMetadata(
   scope: string,
   symbol: string,
   now = new Date(),
+  options: SnapshotReadOptions<unknown> = {},
 ): DailySnapshotMetadata | null {
-  const envelope = readEnvelope<unknown>(scope, symbol, now);
+  const envelope = readEnvelope<unknown>(scope, symbol, now, options);
   if (!envelope) return null;
   return {
     sourceCutoff: envelope.sourceCutoff ?? null,
@@ -147,6 +167,7 @@ export function readDailySnapshotMetadata(
 export function listDailySnapshots<T>(
   scope: string,
   now = new Date(),
+  options: SnapshotReadOptions<T> = {},
 ): DailySnapshotListItem<T>[] {
   const day = shanghaiDay(now);
   removeOtherDays(scope, day);
@@ -155,14 +176,9 @@ export function listDailySnapshots<T>(
     try {
       const raw = localStorage.getItem(key);
       const parsed = JSON.parse(raw ?? "null") as CacheEnvelope<T> | null;
-      const valueSymbol = (parsed?.value as { symbol?: unknown } | null)?.symbol;
       if (
         !parsed
-        || parsed.day !== day
-        || typeof parsed.symbol !== "string"
-        || typeof parsed.cachedAt !== "string"
-        || parsed.completeness === "partial"
-        || valueSymbol !== parsed.symbol
+        || !isUsableEnvelope(parsed, parsed.symbol, day, options)
         || !Number.isFinite(Date.parse(parsed.cachedAt))
       ) {
         localStorage.removeItem(key);

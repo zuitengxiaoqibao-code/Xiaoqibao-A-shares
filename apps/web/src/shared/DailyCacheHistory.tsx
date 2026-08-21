@@ -5,6 +5,7 @@ import {
   DAILY_SNAPSHOT_UPDATED_EVENT,
   listDailySnapshots,
   type DailySnapshotListItem,
+  type SnapshotReadOptions,
 } from "./dailySnapshotCache";
 import "./dailyCacheHistory.css";
 
@@ -14,6 +15,7 @@ type Props<T> = {
   activeSymbol?: string | null;
   getName: (value: T) => string | null | undefined;
   onSelect: (item: DailySnapshotListItem<T>) => void;
+  snapshotOptions?: SnapshotReadOptions<T>;
 };
 
 function cacheTime(value: string): string {
@@ -23,8 +25,8 @@ function cacheTime(value: string): string {
     : parsed.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 }
 
-export function DailyCacheHistory<T>({ scope, ariaLabel, activeSymbol, getName, onSelect }: Props<T>) {
-  const read = useCallback(() => listDailySnapshots<T>(scope), [scope]);
+export function DailyCacheHistory<T>({ scope, ariaLabel, activeSymbol, getName, onSelect, snapshotOptions }: Props<T>) {
+  const read = useCallback(() => listDailySnapshots<T>(scope, new Date(), snapshotOptions), [scope, snapshotOptions]);
   const [items, setItems] = useState(read);
 
   useEffect(() => {

@@ -193,6 +193,53 @@ describe("dailySnapshotCache", () => {
     expect(readDailySnapshot<Snapshot>("company-research", "600519", now)?.value.value).toBe(80);
   });
 
+  it("reads and lists a partial snapshot only when the caller explicitly validates it", () => {
+    const now = new Date("2026-08-03T10:00:00+08:00");
+    writeDailySnapshot(
+      "company-research",
+      "600519",
+      { symbol: "600519", value: 65 },
+      now,
+      { completeness: "partial" },
+    );
+
+    expect(readDailySnapshot<Snapshot>("company-research", "600519", now)).toBeNull();
+
+    writeDailySnapshot(
+      "company-research",
+      "600519",
+      { symbol: "600519", value: 65 },
+      now,
+      { completeness: "partial" },
+    );
+    const options = {
+      allowPartial: true,
+      validate: (value: unknown): value is Snapshot => (
+        typeof value === "object" && value !== null && (value as Snapshot).value > 0
+      ),
+    };
+    expect(readDailySnapshot<Snapshot>("company-research", "600519", now, options)?.value.value).toBe(65);
+    expect(listDailySnapshots<Snapshot>("company-research", now, options)).toHaveLength(1);
+    expect(readDailySnapshotMetadata("company-research", "600519", now, options)?.completeness).toBe("partial");
+  });
+
+  it("removes a partial snapshot that fails the caller's structural validation", () => {
+    const now = new Date("2026-08-03T10:00:00+08:00");
+    writeDailySnapshot(
+      "company-research",
+      "600519",
+      { symbol: "600519", value: 0 },
+      now,
+      { completeness: "partial" },
+    );
+
+    expect(readDailySnapshot<Snapshot>("company-research", "600519", now, {
+      allowPartial: true,
+      validate: (value): value is Snapshot => (value as Snapshot).value > 0,
+    })).toBeNull();
+    expect(localStorage.length).toBe(0);
+  });
+
   it("stores version and source cutoff while preserving the public cache hit shape", () => {
     const now = new Date("2026-08-03T10:00:00+08:00");
     writeDailySnapshot(

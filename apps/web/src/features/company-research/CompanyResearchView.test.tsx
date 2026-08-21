@@ -212,6 +212,27 @@ describe("CompanyResearchView", () => {
     expect(screen.getByRole("region", { name: "公司研究核心仪表" })).toHaveTextContent("76.0");
   });
 
+  it("shows today's structurally valid partial cache while refreshing", async () => {
+    writeDailySnapshot(
+      "company-research",
+      "600519",
+      research,
+      new Date(),
+      { completeness: "partial" },
+    );
+    const load = vi.fn(() => new Promise<CompanyResearchResponse>(() => undefined));
+
+    render(<CompanyResearchView
+      selectedSymbol="600519"
+      load={load}
+      search={vi.fn(async () => ({ query: "", items: [], server_time: "", source_status: "ready" as const }))}
+    />);
+
+    expect(await screen.findByRole("region", { name: "公司研究摘要" })).toHaveTextContent("贵州茅台");
+    expect(screen.getByRole("status", { name: "公司研究数据刷新状态" })).toHaveTextContent("正在载入最新数据，当前先展示当日缓存");
+    expect(screen.queryByText("正在建立 600519 研究账本")).not.toBeInTheDocument();
+  });
+
   it("keeps today's complete cache when the latest refresh fails", async () => {
     writeDailySnapshot("company-research", "600519", research, new Date());
     const load = vi.fn(async (
