@@ -9,6 +9,7 @@ import { DataWatermarkStrip } from "../../shared/evidence/DataWatermarkStrip";
 import { RealtimeAIInsight, type RealtimeAIInsightPayload } from "../../shared/RealtimeAIInsight";
 import { consumeRealtimeStream, type RealtimeStreamState } from "../../shared/realtimeStream";
 import { readDailySnapshot, writeDailySnapshot } from "../../shared/dailySnapshotCache";
+import { friendlyError } from "../../shared/friendlyError";
 import { resolveSnapshotState, type RuntimeSnapshot } from "../../shared/snapshotState";
 import type { LoadProgress, LoadProgressCallback } from "../../shared/fetchJsonWithProgress";
 import type { InstrumentSearchResponse } from "../stock-cockpit/types";
@@ -77,6 +78,13 @@ function researchSnapshot(value: CompanyResearchResponse): RuntimeSnapshot<Compa
     error: null,
     traceId: value.research_version?.snapshot_id ?? `${value.symbol}:${value.generated_at}`,
   };
+}
+
+function researchError(error: unknown): string {
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  return /[\u3400-\u9fff]/.test(message)
+    ? message
+    : friendlyError(error, "公司研究数据");
 }
 
 function pct(value: string | null | undefined, scale = 1): string {
@@ -284,8 +292,9 @@ export function CompanyResearchView({ load, search, selectedSymbol, onSelectSymb
   loadRef.current = load;
 
   const refreshEntry = useCallback(async (normalized: string) => {
+    const activeController = controllers.current.get(normalized);
+    if (activeController && !activeController.signal.aborted) return;
     const controller = new AbortController();
-    controllers.current.get(normalized)?.abort();
     controllers.current.set(normalized, controller);
     setEntries((current) => current.map((item) => item.symbol === normalized ? { ...item, refreshing: true, progress: null, refreshError: undefined } : item));
     try {
@@ -321,7 +330,7 @@ export function CompanyResearchView({ load, search, selectedSymbol, onSelectSymb
       } : item));
     } catch (error) {
       if (controller.signal.aborted) return;
-      const message = error instanceof Error ? error.message : "公司研究数据不可用";
+      const message = researchError(error);
       setEntries((current) => current.map((item) => item.symbol === normalized
         ? item.value
           ? { ...item, state: "ready", refreshing: false, refreshError: message }

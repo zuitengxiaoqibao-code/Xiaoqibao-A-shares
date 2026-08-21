@@ -24,6 +24,13 @@ const MAX_RECORDS = 500;
 const inFlight = new Map<string, Promise<unknown>>();
 const records: RequestLedgerRecord[] = [];
 
+function isCancelled(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { name?: unknown; message?: unknown };
+  return candidate.name === "AbortError"
+    || (typeof candidate.message === "string" && /\babort(?:ed)?\b/i.test(candidate.message));
+}
+
 function percentile(values: number[], fraction: number): number | null {
   if (values.length === 0) return null;
   const sorted = [...values].sort((left, right) => left - right);
@@ -39,7 +46,12 @@ function append(record: RequestLedgerRecord): void {
 export const requestLedger = {
   run<T>(key: string, operation: () => Promise<T> | T, metadata: RequestMetadata): Promise<T> {
     const active = inFlight.get(key);
-    if (active) return active as Promise<T>;
+    if (active) {
+      return (active as Promise<T>).catch((error: unknown) => {
+        if (!isCancelled(error)) throw error;
+        return requestLedger.run(key, operation, metadata);
+      });
+    }
 
     const startedAt = typeof performance === "undefined" ? Date.now() : performance.now();
     let operationResult: Promise<T>;
@@ -54,7 +66,7 @@ export const requestLedger = {
         return value;
       },
       (error: unknown) => {
-        append({ key, domain: metadata.domain, durationMs: (typeof performance === "undefined" ? Date.now() : performance.now()) - startedAt, status: "error", cacheHit: false });
+        append({ key, domain: metadata.domain, durationMs: (typeof performance === "undefined" ? Date.now() : performance.now()) - startedAt, status: isCancelled(error) ? "cancelled" : "error", cacheHit: false });
         throw error;
       },
     );

@@ -29,6 +29,21 @@ describe("requestLedger", () => {
     expect(readRequestLedger("company")).toMatchObject({ count: 2, failures: 1, inFlight: 0 });
   });
 
+  it("lets a new caller take over when the shared operation was cancelled", async () => {
+    let rejectOriginal!: (reason: unknown) => void;
+    const original = vi.fn(() => new Promise<string>((_resolve, reject) => { rejectOriginal = reject; }));
+    const replacement = vi.fn(async () => "fresh");
+
+    const first = requestLedger.run("company:301526", original, { domain: "company" });
+    const second = requestLedger.run("company:301526", replacement, { domain: "company" });
+    rejectOriginal(new DOMException("signal is aborted without reason", "AbortError"));
+
+    await expect(first).rejects.toMatchObject({ name: "AbortError" });
+    await expect(second).resolves.toBe("fresh");
+    expect(replacement).toHaveBeenCalledTimes(1);
+    expect(readRequestLedger("company")).toMatchObject({ count: 2, failures: 0, inFlight: 0 });
+  });
+
   it("reports bounded latency percentiles and cache reuse", async () => {
     requestLedger.record({ key: "a", domain: "overview", durationMs: 10, status: "ready", cacheHit: true });
     requestLedger.record({ key: "b", domain: "overview", durationMs: 30, status: "ready", cacheHit: false });

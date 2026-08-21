@@ -278,6 +278,42 @@ describe("CompanyResearchView", () => {
     }
   });
 
+  it("does not replace an in-flight company research request during periodic refresh", async () => {
+    vi.useFakeTimers();
+    try {
+      let requestSignal: AbortSignal | undefined;
+      const load = vi.fn((_symbol: string, _asOf?: string, signal?: AbortSignal) => {
+        requestSignal = signal;
+        return new Promise<CompanyResearchResponse>(() => undefined);
+      });
+      const { unmount } = render(<CompanyResearchView
+        selectedSymbol="301526"
+        load={load}
+        search={vi.fn(async () => ({ query: "", items: [], server_time: "", source_status: "ready" as const }))}
+      />);
+
+      await act(async () => { await Promise.resolve(); });
+      expect(load).toHaveBeenCalledTimes(1);
+      await act(async () => { await vi.advanceTimersByTimeAsync(300_000); });
+      expect(load).toHaveBeenCalledTimes(1);
+      expect(requestSignal?.aborted).toBe(false);
+      unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not expose an English abort message when company research cannot load", async () => {
+    render(<CompanyResearchView
+      selectedSymbol="301526"
+      load={vi.fn(async () => { throw new Error("signal is aborted without reason"); })}
+      search={vi.fn(async () => ({ query: "", items: [], server_time: "", source_status: "ready" as const }))}
+    />);
+
+    expect((await screen.findAllByText("公司研究数据暂不可用，请稍后重试。")).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/signal is aborted without reason/i)).not.toBeInTheDocument();
+  });
+
   it("shows today's loaded research and lets the user open it again", async () => {
     writeDailySnapshot("company-research", "600519", research, new Date());
     const load = vi.fn(async () => refreshedResearch);
