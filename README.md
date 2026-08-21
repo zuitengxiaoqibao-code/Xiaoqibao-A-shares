@@ -108,6 +108,16 @@ pnpm.cmd --filter @qibao/web build
 
 当前交付边界和后续数据工作见 [路线图](docs/roadmap.md)。
 
+## 可扩展研究与监控
+
+量化分析现包含受控策略版本、白名单表达式门禁、矩阵/组合回测基础能力；数据设置支持 CSV、TSV、JSON、JSONL、Excel、Parquet、SQLite、DuckDB 与 ZIP 的本地预览、字段映射和隔离导入。一级菜单“监控中心”保存触发快照和各投递通道状态，盘后任务按事实冻结、AI 解释、推送状态分别记录。AI 草稿不会执行用户或模型生成的 Python 代码，样本不足时也不会显示伪造概率。
+
+发布前额外运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\verify-tickflow-integration.ps1 -ReleaseRoot .\dist\XiaoQiBao-Portable
+```
+
 ## Windows 便携版
 
 便携版不需要安装，也不需要 Node.js 开发服务器。构建命令：
