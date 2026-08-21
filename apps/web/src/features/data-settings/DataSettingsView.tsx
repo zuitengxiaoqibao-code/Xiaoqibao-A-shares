@@ -22,6 +22,8 @@ import type {
 import type { StockPreparation } from "../stock-cockpit/types";
 import { LocalSourceSettingsSection } from "./LocalSourceSettingsSection";
 import { SourceHealthPanel } from "./SourceHealthPanel";
+import { DataImportPanel } from "./DataImportPanel";
+import { inspectDataImport, ingestDataImport } from "./api";
 export { isAutoSyncEnabled } from "./syncPolicy";
 
 type Props = {
@@ -260,6 +262,7 @@ export function DataSettingsView({
       save={saveLocalSources}
     />}
     {loadSourceHealth && <SourceHealthPanel load={loadSourceHealth} />}
+    <DataImportPanel inspect={inspectDataImport} ingest={ingestDataImport} />
     <section className="settings-section">
       <div className="settings-heading">
         <div><KeyRound size={20} /><span>

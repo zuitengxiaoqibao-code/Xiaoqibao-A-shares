@@ -13,6 +13,8 @@ import type {
   SourceHealthResponse,
   TdxImportJob,
   TdxImportScan,
+  DataImportPreview,
+  DataImportTask,
 } from "./types";
 
 async function settingsRequest(path: string, init?: RequestInit): Promise<AISettingsView> {
@@ -65,6 +67,23 @@ export const loadSourceHealth = async (): Promise<SourceHealthResponse> => {
   const response = await fetch("/api/v1/operations/source-health");
   if (!response.ok) throw new Error(`数据源健康读取失败 (${response.status})`);
   return response.json() as Promise<SourceHealthResponse>;
+};
+
+export const inspectDataImport = async (file: File): Promise<DataImportPreview> => {
+  const body = new FormData(); body.append("file", file);
+  const response = await fetch("/api/data-import/inspect", { method: "POST", body });
+  if (!response.ok) throw new Error("数据文件预览失败");
+  return response.json() as Promise<DataImportPreview>;
+};
+
+export const ingestDataImport = async (file: File, mapping: Record<string, string>): Promise<DataImportTask> => {
+  const body = new FormData(); body.append("file", file); body.append("mapping", JSON.stringify(mapping));
+  const response = await fetch("/api/data-import/ingest", { method: "POST", body });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null) as { detail?: string } | null;
+    throw new Error(payload?.detail ?? "数据导入失败");
+  }
+  return response.json() as Promise<DataImportTask>;
 };
 
 async function historySyncRequest(path: string, init?: RequestInit): Promise<HistorySyncJob> {

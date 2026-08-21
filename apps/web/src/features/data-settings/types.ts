@@ -43,6 +43,28 @@ export type SourceHealthItem = {
 };
 export type SourceHealthResponse = { generated_at: string; window_size: number; sources: SourceHealthItem[] };
 export type SourceHealthLoader = () => Promise<SourceHealthResponse>;
+export type DataImportPreview = {
+  path: string;
+  format: string;
+  columns: string[];
+  row_count: number;
+  preview_rows: Array<Record<string, unknown>>;
+  error: string | null;
+};
+export type DataImportTask = {
+  task_id: string;
+  state: string;
+  stage: string;
+  progress: number;
+  processed: number;
+  total: number;
+  quarantined_rows: number;
+  quality_status: "ready" | "partial" | "stale" | "unavailable";
+  error_message: string | null;
+  quarantine_reasons?: string[];
+};
+export type DataImportInspector = (file: File) => Promise<DataImportPreview>;
+export type DataImportIngestor = (file: File, mapping: Record<string, string>) => Promise<DataImportTask>;
 export type HistorySyncState = "pending" | "running" | "paused" | "completed" | "failed";
 export type HistorySyncJob = {
   job_id: string;
