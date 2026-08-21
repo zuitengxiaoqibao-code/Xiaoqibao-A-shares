@@ -14,13 +14,14 @@
 - Web 聚焦：35 passed（任务状态中心、公司研究请求、主界面接入）。
 - Web 全量：130 个测试文件，740 passed。
 - Ruff、TypeScript/Vite 生产构建、`git diff --check` 通过。
-- 最终真实 EXE smoke：窗口 324ms 可见，API 7316ms 就绪，完整验证 19909ms；公司研究与量化策略继续按真实证据返回 partial，不把缺失字段伪装为 ready。
+- 最终真实 EXE smoke：窗口 315ms 可见，API 7259ms 就绪，完整验证 19397ms；公司研究请求 93ms，量化策略请求 21ms。公司研究与量化策略继续按真实证据返回 partial，不把缺失字段伪装为 ready。
 - 恢复演练：36 个数据库、迁移版本 1、关键 API pass。
 - 发布质量门禁：通过。数据质量保留真实 warning：量化策略和公司研究为 partial，通达信专业探针为 unavailable，不使用模拟数据替代。
 
 ## 交付
 
 - EXE：`dist/XiaoQiBao-Portable/xiaoqibao.exe`
-- SHA-256：`1B167BCE9152A12CEFEEB8D0BFA05489AA9B54E76B4DA8C7796DBD8EDC04B117`
+- 源码提交：`0e1a4c1ff16b2d8aca47fe218df2513ed8421149`
+- SHA-256：`8D165931AEAFDA730A677CBC30C07E7948A45822018F4A74F6B14015690DC3DF`
 - 发布清单：`dist/XiaoQiBao-Portable/release-manifest.json`
 - 本次构建保留 `config/data/news/cache/logs/models/exports/backups` 八个持久目录。
