@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { apiClient } from "../../shared/apiClient";
+import { useRealtimeFallbackTick, useRealtimeSubscription } from "../../shared/realtime/RealtimeProvider";
 
 type PendingAlert = {
   alert_id: string;
@@ -37,6 +38,7 @@ export function MonitorTtsAnnouncer({ synthesize, pollMs = 15_000 }: { synthesiz
   const audio = useRef<HTMLAudioElement | null>(null);
   const objectUrl = useRef<string | null>(null);
   const [status, setStatus] = useState("监控语音待命");
+  const fallbackTick = useRealtimeFallbackTick();
 
   const release = () => {
     if (audio.current) {
@@ -96,14 +98,21 @@ export function MonitorTtsAnnouncer({ synthesize, pollMs = 15_000 }: { synthesiz
     mounted.current = true;
     controller.current = new AbortController();
     void pump();
-    const timer = window.setInterval(() => void pump(), pollMs);
     return () => {
       mounted.current = false;
       controller.current?.abort();
-      window.clearInterval(timer);
       release();
     };
   }, [pollMs, synthesize]);
+
+  useRealtimeSubscription("market_overview", () => { window.setTimeout(() => void pump(), 250); }, { fallbackToNetwork: false });
+  useRealtimeSubscription("news_events", () => { window.setTimeout(() => void pump(), 250); }, { fallbackToNetwork: false });
+  useRealtimeSubscription("quant_strategy", () => { window.setTimeout(() => void pump(), 250); }, { fallbackToNetwork: false });
+  useRealtimeSubscription("late_session_candidates", () => { window.setTimeout(() => void pump(), 250); }, { fallbackToNetwork: false });
+
+  useEffect(() => {
+    if (fallbackTick > 0) void pump();
+  }, [fallbackTick]);
 
   return <span className="sr-only" role="status" aria-live="polite">{status}</span>;
 }

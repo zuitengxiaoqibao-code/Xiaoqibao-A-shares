@@ -7,7 +7,7 @@ import { EvidenceLedger } from "../../shared/evidence/EvidenceLedger";
 import { FieldEvidenceDetails } from "../../shared/evidence/FieldEvidenceDetails";
 import { DataWatermarkStrip } from "../../shared/evidence/DataWatermarkStrip";
 import { RealtimeAIInsight, type RealtimeAIInsightPayload } from "../../shared/RealtimeAIInsight";
-import { consumeRealtimeStream, type RealtimeStreamState } from "../../shared/realtimeStream";
+import { useRealtimeState, useRealtimeSubscription } from "../../shared/realtime/RealtimeProvider";
 import { readDailySnapshot, writeDailySnapshot } from "../../shared/dailySnapshotCache";
 import { friendlyError } from "../../shared/friendlyError";
 import { resolveSnapshotState, type RuntimeSnapshot } from "../../shared/snapshotState";
@@ -309,7 +309,7 @@ export function CompanyResearchView({ load, search, selectedSymbol, onSelectSymb
   const [activeSymbol, setActiveSymbol] = useState<string | null>(null);
   const [comparison, setComparison] = useState<CompanyResearchComparison | null>(null);
   const [searching, setSearching] = useState(false);
-  const [researchStreamState, setResearchStreamState] = useState<RealtimeStreamState | "idle">("idle");
+  const researchStreamState = useRealtimeState();
   const [realtimeAIInsight, setRealtimeAIInsight] = useState<RealtimeAIInsightPayload | null>(null);
   const controllers = useRef(new Map<string, AbortController>());
   const initialized = useRef(false);
@@ -370,11 +370,7 @@ export function CompanyResearchView({ load, search, selectedSymbol, onSelectSymb
   }, []);
   refreshEntryRef.current = refreshEntry;
 
-  useEffect(() => {
-    const controller = new AbortController();
-    void consumeRealtimeStream<CompanyResearchResponse>(
-      ["company_research"],
-      (event) => {
+  useRealtimeSubscription<CompanyResearchResponse>("company_research", (event) => {
         const incoming = event.payload;
         if (!incoming?.symbol || !incoming.research_version?.snapshot_id) return;
         if (controllers.current.has(incoming.symbol)) return;
@@ -399,28 +395,11 @@ export function CompanyResearchView({ load, search, selectedSymbol, onSelectSymb
           refreshError: undefined,
           error: undefined,
         } : item));
-      },
-      controller.signal,
-      setResearchStreamState,
-    ).catch(() => {
-      if (!controller.signal.aborted) setResearchStreamState("error");
-    });
-    return () => controller.abort();
-  }, []);
+  });
 
-  useEffect(() => {
-    const controller = new AbortController();
-    void consumeRealtimeStream<RealtimeAIInsightPayload>(
-      ["ai_analysis"],
-      (event) => {
+  useRealtimeSubscription<RealtimeAIInsightPayload>("ai_analysis", (event) => {
         if (event.payload?.kind === "company_research") setRealtimeAIInsight(event.payload);
-      },
-      controller.signal,
-    ).catch(() => {
-      if (!controller.signal.aborted) setRealtimeAIInsight((current) => current);
-    });
-    return () => controller.abort();
-  }, []);
+  });
 
   async function addCompany(symbol: string, name = symbol) {
     const normalized = symbol.trim();

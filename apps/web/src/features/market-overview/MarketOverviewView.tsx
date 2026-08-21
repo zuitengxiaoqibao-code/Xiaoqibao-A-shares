@@ -28,7 +28,7 @@ import { SectorHeatmapPanel } from "../../shared/visualization/SectorHeatmapPane
 import { featureDisplayLabel, featureMeta } from "./featureCatalog";
 import { appendUniqueEntities, mergeEntitySnapshot, resolveIncrementalResponse } from "../../shared/incrementalResource";
 import { loadWorkspaceState, updateWorkspaceFilter } from "../../shared/workspace/workspaceState";
-import { consumeMarketOverviewStream } from "./api";
+import { useRealtimeFallback, useRealtimeFallbackTick, useRealtimeProviderAvailable, useRealtimeState, useRealtimeSubscription } from "../../shared/realtime/RealtimeProvider";
 import "./overview.css";
 
 const expectedIndices = [
@@ -121,7 +121,7 @@ export function mergeStableAnomalySnapshot(
 
 function defaultWorkspaceForSnapshot(response: MarketOverviewResponse): string {
   const { phase, freshness } = response.market_data;
-  if (phase === "premarket" || freshness === "previous_close") return "开盘啦";
+  if (phase === "premarket" || freshness === "previous_close") return "盘中异动";
   if (phase === "postclose" || phase === "closed" || freshness === "final") return "复盘统计大全";
   if (phase === "intraday") return response.anomalies.length > 0 ? "盘中异动" : "情绪周期";
   if (freshness === "stale" || freshness === "unavailable") return "情绪周期";
@@ -155,7 +155,6 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, onOpenCompa
   const [usingCache, setUsingCache] = useState(() => Boolean(initialCache));
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [clockNow, setClockNow] = useState(() => new Date());
-  const [realtimeTransport, setRealtimeTransport] = useState<"sse" | "polling">("polling");
   const [visible, setVisible] = useState(document.visibilityState !== "hidden");
   const [storedFeature] = useState(storedWorkspace);
   const [activeFeature, setActiveFeature] = useState(storedFeature ?? "盘中异动");
@@ -168,6 +167,10 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, onOpenCompa
   const openingRefreshDayRef = useRef<string | null>(null);
   const dataRef = useRef<MarketOverviewResponse | null>(data);
   dataRef.current = data;
+  const realtimeState = useRealtimeState();
+  const realtimeFallback = useRealtimeFallback();
+  const realtimeFallbackTick = useRealtimeFallbackTick();
+  const realtimeProviderAvailable = useRealtimeProviderAvailable();
   const alertState = useBreakingNewsAlerts(loadAlerts, undefined, 6);
   const aShareAlertState = useMemo(() => ({
     ...alertState,
@@ -231,17 +234,7 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, onOpenCompa
     };
   }, [refresh]);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    void consumeMarketOverviewStream(
-      applyIncoming,
-      controller.signal,
-      (state) => setRealtimeTransport(state === "connected" ? "sse" : "polling"),
-    ).catch(() => {
-      if (!controller.signal.aborted) setRealtimeTransport("polling");
-    });
-    return () => controller.abort();
-  }, [applyIncoming]);
+  useRealtimeSubscription<MarketOverviewResponse>("market_overview", (event) => applyIncoming(event.payload));
 
   useEffect(() => {
     const onVisibility = () => setVisible(document.visibilityState !== "hidden");
@@ -256,9 +249,13 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, onOpenCompa
 
   useEffect(() => {
     if (!autoRefresh || !visible) return;
-    const timer = window.setInterval(() => void refresh(), realtimeTransport === "sse" ? 30_000 : 5_000);
+    if (realtimeProviderAvailable) {
+      if (realtimeFallbackTick > 0) void refresh();
+      return;
+    }
+    const timer = window.setInterval(() => void refresh(), 5_000);
     return () => window.clearInterval(timer);
-  }, [autoRefresh, refresh, realtimeTransport, visible]);
+  }, [autoRefresh, realtimeFallbackTick, realtimeProviderAvailable, refresh, visible]);
 
   useEffect(() => {
     if (
@@ -448,7 +445,7 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, onOpenCompa
     <div className="overview-toolbar">
       <button type="button" aria-label="立即刷新" disabled={loading} onClick={() => void refresh()}><RefreshCw size={14} className={loading ? "spinning" : ""} />刷新</button>
       <label><input type="checkbox" checked={autoRefresh} onChange={(event) => setAutoRefresh(event.target.checked)} />自动刷新</label>
-      <span>间隔 <b>{realtimeTransport === "sse" ? 30 : 5}</b> 秒 · {realtimeTransport === "sse" ? "实时推送" : "HTTP 回退"}</span>
+      <span>{realtimeState === "connected" ? "实时推送已连接" : `HTTP 保底 · ${realtimeFallback ? 15 : 60} 秒`}</span>
       <span>当前筛选 <strong>{featureDisplayLabel(activeFeature)}</strong></span>
       {!visible && <span className="overview-paused">页面隐藏，刷新已暂停</span>}
       {data && <time dateTime={data.observed_at}>最新观测 {timeLabel(data.observed_at, true)}{usingCache && cacheTimestamp ? ` · 缓存 ${timeLabel(cacheTimestamp, true)}` : ""}</time>}

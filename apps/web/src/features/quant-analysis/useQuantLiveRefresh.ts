@@ -11,6 +11,7 @@ type Options<T> = {
   errorMessage: string;
   mergeData?: (previous: T | null, incoming: T) => T;
   initialDelayMs?: number;
+  polling?: boolean;
   cache?: {
     key: string;
     day: string;
@@ -103,6 +104,7 @@ export function useQuantLiveResource<T>({
   mergeData,
   initialDelayMs = 0,
   cache,
+  polling = true,
 }: Options<T>): QuantLiveResource<T> {
   const [activeDay, setActiveDay] = useState(cache?.day ?? shanghaiDay(new Date()));
   const activeCache = cache ? { ...cache, day: activeDay } : undefined;
@@ -239,6 +241,35 @@ export function useQuantLiveResource<T>({
       setStatus("paused");
       return undefined;
     }
+    if (!polling) {
+      let initialTimer: number | undefined;
+      const begin = () => {
+        initialTimer = undefined;
+        void refreshNow();
+      };
+      if (document.hidden) setStatus("paused");
+      else if (initialDelayMs > 0) initialTimer = window.setTimeout(begin, initialDelayMs);
+      else begin();
+      const handleVisibility = () => {
+        if (document.hidden) {
+          if (initialTimer !== undefined) window.clearTimeout(initialTimer);
+          initialTimer = undefined;
+          inFlightRef.current?.controller.abort();
+          inFlightRef.current = null;
+          setStatus("paused");
+        } else if (dataRef.current === null) {
+          setStatus("loading");
+          void refreshNow();
+        }
+      };
+      document.addEventListener("visibilitychange", handleVisibility);
+      return () => {
+        if (initialTimer !== undefined) window.clearTimeout(initialTimer);
+        inFlightRef.current?.controller.abort();
+        inFlightRef.current = null;
+        document.removeEventListener("visibilitychange", handleVisibility);
+      };
+    }
     let timer: number | undefined;
     let initialTimer: number | undefined;
     const stopTimer = () => {
@@ -287,7 +318,7 @@ export function useQuantLiveResource<T>({
       inFlightRef.current = null;
       document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, [activeDay, enabled, initialDelayMs, intervalMs, loader, refreshNow]);
+  }, [activeDay, enabled, initialDelayMs, intervalMs, loader, polling, refreshNow]);
 
   return {
     data,

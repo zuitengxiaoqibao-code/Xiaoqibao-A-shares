@@ -124,12 +124,12 @@ export function QuantLiveStatusBar({
     </header>
     <div>
       <article className={tickStatus}>
-        <span><Clock3 size={13} />TICK 1秒</span>
+        <span><Clock3 size={13} />TICK 实时总线</span>
         <b>{statusLabel(tickStatus)}</b>
         <small>{ageLabel(ageSeconds(latestTick?.observed_at ?? null, now))} · {latestTick?.source ?? "本地盘中归档"}</small>
       </article>
       <article className={effectiveStrategyStatus}>
-        <span><Database size={13} />市场策略 5秒</span>
+        <span><Database size={13} />市场策略 实时快照</span>
         <b>{!strategyEnabled ? "未启用" : strategy ? {
           live: "行情实时",
           delayed: "行情延迟",
@@ -160,7 +160,7 @@ export function QuantLiveStatusBar({
         </>}
       </article>
       <article className={boardStatus}>
-        <span><Database size={13} />候选池 30秒</span>
+        <span><Database size={13} />候选池 按事件更新</span>
         <b>{statusLabel(boardStatus)}</b>
         <small>{ageLabel(ageSeconds(boardLastSuccessAt, now))} · {board?.as_of ?? "等待规则池"}</small>
       </article>

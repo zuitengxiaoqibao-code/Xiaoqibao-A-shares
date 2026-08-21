@@ -2,7 +2,7 @@ import { Activity, AlertTriangle, CheckCircle2, Clock3, Database, RefreshCw, Shi
 import { useEffect, useMemo, useRef, useState } from "react";
 import { loadLateSessionAIAnalysis } from "./api";
 import { DailyRefreshStatus } from "../../shared/DailyRefreshStatus";
-import { consumeRealtimeStream, type RealtimeStreamState } from "../../shared/realtimeStream";
+import { useRealtimeFallbackTick, useRealtimeState, useRealtimeSubscription } from "../../shared/realtime/RealtimeProvider";
 import type { LateSessionAIAnalysis, LateSessionRuleSettings, LateSessionSelectionLoader, LateSessionSelectionResponse, LoadProgress } from "./types";
 import "./lateSessionSelection.css";
 
@@ -72,16 +72,12 @@ export function LateSessionSelectionView({ load, analyze = loadLateSessionAIAnal
   const [aiAnalysis, setAiAnalysis] = useState<LateSessionAIAnalysis | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
-  const [streamState, setStreamState] = useState<RealtimeStreamState | "idle">("idle");
-  const streamConnected = useRef(false);
+  const streamState = useRealtimeState();
+  const streamFallbackTick = useRealtimeFallbackTick();
   const settingsRef = useRef(activeSettings);
   settingsRef.current = activeSettings;
 
-  useEffect(() => {
-    const controller = new AbortController();
-    void consumeRealtimeStream<LateSessionSelectionResponse>(
-      ["late_session_candidates"],
-      (event) => {
+  useRealtimeSubscription<LateSessionSelectionResponse>("late_session_candidates", (event) => {
         const incoming = event.payload;
         if (!incoming?.server_time || !incoming?.settings) return;
         const expected = settingsRef.current;
@@ -91,14 +87,7 @@ export function LateSessionSelectionView({ load, analyze = loadLateSessionAIAnal
           return incoming;
         });
         setError(null);
-      },
-      controller.signal,
-      (state) => { streamConnected.current = state === "connected"; setStreamState(state); },
-    ).catch(() => {
-      if (!controller.signal.aborted) { streamConnected.current = false; setStreamState("error"); }
-    });
-    return () => controller.abort();
-  }, []);
+  });
 
   useEffect(() => {
     let disposed = false;
@@ -111,11 +100,9 @@ export function LateSessionSelectionView({ load, analyze = loadLateSessionAIAnal
           setSnapshot(next);
           setError(null);
           if (!activeSettings) { setActiveSettings(next.settings); setDraft(next.settings); }
-          const interval = streamConnected.current ? Math.max(30_000, next.next_refresh_ms) : Math.max(1000, next.next_refresh_ms);
-          timer = window.setTimeout(() => void refresh(false), interval);
         }
       } catch (cause) {
-        if (!disposed) { setError(cause instanceof Error ? cause.message : "尾盘选股数据加载失败"); timer = window.setTimeout(() => void refresh(false), 5000); }
+        if (!disposed) setError(cause instanceof Error ? cause.message : "尾盘选股数据加载失败");
       } finally {
         if (!disposed) { setApplying(false); if (foreground) setLoading(false); }
       }
@@ -123,6 +110,13 @@ export function LateSessionSelectionView({ load, analyze = loadLateSessionAIAnal
     void refresh(true);
     return () => { disposed = true; if (timer) window.clearTimeout(timer); };
   }, [load, activeSettings]);
+
+  useEffect(() => {
+    if (streamFallbackTick === 0) return;
+    void load(activeSettings).then((next) => { setSnapshot(next); setError(null); }).catch((cause) => {
+      setError(cause instanceof Error ? cause.message : "尾盘选股数据加载失败");
+    });
+  }, [activeSettings, load, streamFallbackTick]);
 
   const aiKey = useMemo(() => snapshot ? [snapshot.trading_date, snapshot.candidate_count, snapshot.no_data_reason ?? "", snapshot.candidates.map((item) => item.quote.symbol).join(",")].join("|") : "", [snapshot]);
   useEffect(() => {

@@ -63,6 +63,16 @@ import { loadCompanyResearch, loadCompanyResearchComparison } from "../features/
 import { analyzePortfolioRisk, loadPortfolioRisk, loadWatchlistRisk, removePortfolioPosition, savePortfolioPosition } from "../features/portfolio-risk/api";
 import { A_SHARE_WATCHLIST_CHANGED_EVENT, readAShareWatchlist } from "../features/stock-cockpit/watchlist";
 import { MonitorTtsAnnouncer } from "../features/monitor-center/MonitorTtsAnnouncer";
+import { RealtimeProvider } from "../shared/realtime/RealtimeProvider";
+
+const REALTIME_TOPICS = [
+  "ai_analysis",
+  "company_research",
+  "late_session_candidates",
+  "market_overview",
+  "news_events",
+  "quant_strategy",
+] as const;
 
 export function App() {
   useEffect(() => { void loadAShareInstrumentDirectory().catch(() => undefined); }, []);
@@ -80,7 +90,7 @@ export function App() {
       window.clearInterval(timer);
     };
   }, []);
-  return <SelectedInstrumentProvider><MonitorTtsAnnouncer synthesize={synthesizeSpeech} /><Dashboard
+  return <RealtimeProvider topics={REALTIME_TOPICS}><SelectedInstrumentProvider><MonitorTtsAnnouncer synthesize={synthesizeSpeech} /><Dashboard
     loadSnapshot={loadSnapshot}
     syncHistory={syncHistory}
     runBacktest={runBacktest}
@@ -129,5 +139,5 @@ export function App() {
     loadSpeechVoices={loadSpeechVoices}
     saveSpeechSettings={saveSpeechSettings}
     synthesizeSpeech={synthesizeSpeech}
-  /></SelectedInstrumentProvider>;
+  /></SelectedInstrumentProvider></RealtimeProvider>;
 }

@@ -26,6 +26,7 @@ function Fixture({
   cacheKey,
   cacheDay = shanghaiDay(new Date()),
   initialDelayMs = 0,
+  polling = true,
 }: {
   loader: (signal?: AbortSignal) => Promise<{ value: string }>;
   intervalMs?: number;
@@ -33,6 +34,7 @@ function Fixture({
   cacheKey?: string;
   cacheDay?: string;
   initialDelayMs?: number;
+  polling?: boolean;
 }) {
   const state = useQuantLiveResource({
     loader,
@@ -40,6 +42,7 @@ function Fixture({
     enabled: true,
     errorMessage: "加载失败",
     initialDelayMs,
+    polling,
     cache: cacheKey ? {
       key: cacheKey,
       day: cacheDay,
@@ -84,6 +87,16 @@ describe("useQuantLiveResource", () => {
     expect(screen.getByTestId("value")).toHaveTextContent("second");
     expect(loader).toHaveBeenCalledTimes(2);
     expect(screen.getByTestId("status")).toHaveTextContent("live");
+  });
+
+  it("can disable polling while retaining the first load and external snapshot path", async () => {
+    const loader = vi.fn(async () => ({ value: "first" }));
+    render(<Fixture loader={loader} intervalMs={1000} polling={false} external={{ value: "streamed" }} />);
+    await flushPromises();
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(loader).toHaveBeenCalledTimes(1);
+    await act(async () => { screen.getByRole("button", { name: "外部快照" }).click(); });
+    expect(screen.getByTestId("value")).toHaveTextContent("streamed");
   });
 
   it("pauses while hidden and refreshes immediately when visible again", async () => {

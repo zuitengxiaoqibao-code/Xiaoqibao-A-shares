@@ -338,7 +338,7 @@ describe("QuantAnalysisDashboard", () => {
     expect(screen.getByRole("region", { name: "高频 TICK 分时" })).toBeInTheDocument();
   });
 
-  it("keeps the last ready strategy snapshot while an automatic candidate refresh is pending", async () => {
+  it("keeps the last ready strategy snapshot without restarting candidate scans on a timer", async () => {
     vi.useFakeTimers();
     try {
       const pendingDashboard: QuantStrategyDashboard = {
@@ -397,9 +397,9 @@ describe("QuantAnalysisDashboard", () => {
 
       await act(async () => { await vi.advanceTimersByTimeAsync(25_000); });
 
-      expect(loadQuantStrategy).toHaveBeenCalledTimes(2);
+      expect(loadQuantStrategy).toHaveBeenCalledTimes(1);
       expect(screen.getByRole("region", { name: "市场风格评分" })).toHaveTextContent("76.0");
-      expect(screen.getByRole("progressbar", { name: "候选扫描后台预热" })).toHaveAttribute("aria-valuenow", "20");
+      expect(screen.queryByRole("progressbar", { name: "候选扫描后台预热" })).not.toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }
@@ -517,7 +517,7 @@ describe("QuantAnalysisDashboard", () => {
     await waitFor(() => expect(loadKronosForecast).toHaveBeenCalledWith("000001", "2026-07-24", 20), { timeout: 2_000 });
   });
 
-  it("polls real data layers at separate frequencies while the page is visible", async () => {
+  it("loads each data layer once and avoids duplicate timer-driven requests", async () => {
     vi.useFakeTimers();
     const loadBoard = vi.fn(async () => board);
     const loadTicks = vi.fn(async (symbol: string) => ticks(symbol));
@@ -540,7 +540,7 @@ describe("QuantAnalysisDashboard", () => {
       expect(runBacktest).not.toHaveBeenCalled();
       expect(loadTicks).toHaveBeenCalledWith("600001");
       expect(screen.getByRole("region", { name: "量化实时数据状态" }))
-        .toHaveTextContent("TICK 1秒");
+        .toHaveTextContent("TICK 实时总线");
 
       await act(async () => { await vi.advanceTimersByTimeAsync(250); });
       expect(loadQuantStrategy).toHaveBeenCalledTimes(1);
@@ -550,19 +550,19 @@ describe("QuantAnalysisDashboard", () => {
       expect(runBacktest).toHaveBeenCalledWith("600001", expect.any(AbortSignal));
 
       await act(async () => { await vi.advanceTimersByTimeAsync(400); });
-      expect(loadTicks).toHaveBeenCalledTimes(2);
+      expect(loadTicks).toHaveBeenCalledTimes(1);
 
       await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
       expect(loadQuantStrategy).toHaveBeenCalledTimes(1);
-      expect(loadTicks).toHaveBeenCalledTimes(6);
+      expect(loadTicks).toHaveBeenCalledTimes(1);
 
       await act(async () => { await vi.advanceTimersByTimeAsync(26000); });
       await act(async () => {
         await Promise.resolve();
         await Promise.resolve();
       });
-      expect(loadQuantStrategy).toHaveBeenCalledTimes(2);
-      expect(loadBoard).toHaveBeenCalledTimes(2);
+      expect(loadQuantStrategy).toHaveBeenCalledTimes(1);
+      expect(loadBoard).toHaveBeenCalledTimes(1);
     } finally {
       view.unmount();
       vi.useRealTimers();

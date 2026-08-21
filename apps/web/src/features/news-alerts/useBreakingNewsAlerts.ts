@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import type { BreakingNewsAlert, BreakingNewsAlertLoader } from "./types";
 import { appendUniqueEntities } from "../../shared/incrementalResource";
+import { useRealtimeFallbackTick, useRealtimeProviderAvailable, useRealtimeSubscription } from "../../shared/realtime/RealtimeProvider";
 
 
 export function useBreakingNewsAlerts(
@@ -12,6 +13,8 @@ export function useBreakingNewsAlerts(
   const [alerts, setAlerts] = useState<BreakingNewsAlert[]>([]);
   const [loading, setLoading] = useState(Boolean(load));
   const [error, setError] = useState<string | null>(null);
+  const fallbackTick = useRealtimeFallbackTick();
+  const providerAvailable = useRealtimeProviderAvailable();
 
   useEffect(() => {
     if (!load) {
@@ -21,12 +24,7 @@ export function useBreakingNewsAlerts(
       return;
     }
     const controller = new AbortController();
-    let timer: number | undefined;
     let inFlight = false;
-    const stopTimer = () => {
-      if (timer !== undefined) window.clearInterval(timer);
-      timer = undefined;
-    };
     const refresh = async (initial = false) => {
       if (inFlight || controller.signal.aborted) return;
       inFlight = true;
@@ -44,30 +42,42 @@ export function useBreakingNewsAlerts(
         if (!controller.signal.aborted && initial) setLoading(false);
       }
     };
-    const startTimer = () => {
-      stopTimer();
-      if (document.visibilityState !== "hidden") {
-        timer = window.setInterval(() => { void refresh(); }, 60_000);
-      }
-    };
     const handleVisibility = () => {
-      if (document.visibilityState === "hidden") {
-        stopTimer();
-        return;
-      }
-      void refresh();
-      startTimer();
+      if (document.visibilityState !== "hidden") void refresh();
     };
     setError(null);
     void refresh(true);
-    startTimer();
     document.addEventListener("visibilitychange", handleVisibility);
     return () => {
-      stopTimer();
       controller.abort();
       document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, [limit, load, symbol]);
+
+  useRealtimeSubscription("news_events", () => {
+    if (load && document.visibilityState !== "hidden") void load(symbol, undefined, limit).then((response) => {
+      setAlerts((current) => appendUniqueEntities(current, response.alerts, (item) => item.event_id));
+      setError(null);
+    }).catch((reason) => setError(reason instanceof Error ? reason.message : "重要事件提醒暂不可用"));
+  });
+
+  useEffect(() => {
+    if (!load || fallbackTick === 0 || document.visibilityState === "hidden") return;
+    void load(symbol, undefined, limit).then((response) => {
+      setAlerts((current) => appendUniqueEntities(current, response.alerts, (item) => item.event_id));
+      setError(null);
+    }).catch((reason) => setError(reason instanceof Error ? reason.message : "重要事件提醒暂不可用"));
+  }, [fallbackTick, limit, load, symbol]);
+
+  useEffect(() => {
+    if (providerAvailable || !load) return undefined;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== "hidden") void load(symbol, undefined, limit).then((response) => {
+        setAlerts((current) => appendUniqueEntities(current, response.alerts, (item) => item.event_id));
+      }).catch((reason) => setError(reason instanceof Error ? reason.message : "重要事件提醒暂不可用"));
+    }, 60_000);
+    return () => window.clearInterval(timer);
+  }, [limit, load, providerAvailable, symbol]);
 
   return { alerts, loading, error };
 }

@@ -11,7 +11,7 @@ import type {
   StockTimelineLoader,
   StockTimelineResponse,
 } from "./types";
-import { consumeRealtimeStream, type RealtimeStreamState } from "../../shared/realtimeStream";
+import { useRealtimeFallbackTick, useRealtimeState, useRealtimeSubscription } from "../../shared/realtime/RealtimeProvider";
 
 
 const UP_COLOR = chartTheme.upColor;
@@ -355,7 +355,8 @@ export function StockEventKline({
   const [data, setData] = useState<StockTimelineResponse | null>(() => cache.get(cacheKey) ?? null);
   const [loading, setLoading] = useState(!data);
   const [error, setError] = useState("");
-  const [realtimeState, setRealtimeState] = useState<RealtimeStreamState | "idle">("idle");
+  const realtimeState = useRealtimeState();
+  const realtimeFallbackTick = useRealtimeFallbackTick();
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const dataRef = useRef<StockTimelineResponse | null>(data);
   const liveRequestRef = useRef(false);
@@ -431,50 +432,18 @@ export function StockEventKline({
       });
   }, [asOf, cacheKey, liveSelection, load, symbol]);
 
-  useEffect(() => {
-    if (!liveSelection) {
-      setRealtimeState("idle");
-      return undefined;
-    }
-    const controller = new AbortController();
-    void consumeRealtimeStream<{ status?: string }>(
-      ["news_events", "market_overview"],
-      (event) => {
-        if (event.kind === "news_events" || event.kind === "market_overview") refreshLive();
-      },
-      controller.signal,
-      setRealtimeState,
-    ).catch(() => {
-      if (!controller.signal.aborted) setRealtimeState("error");
-    });
-    return () => controller.abort();
-  }, [liveSelection, refreshLive]);
+  useRealtimeSubscription("news_events", () => { if (liveSelection) refreshLive(); });
+  useRealtimeSubscription("market_overview", () => { if (liveSelection) refreshLive(); });
 
   useEffect(() => {
-    if (!liveSelection) return undefined;
-    let timer: number | undefined;
-    const stop = () => {
-      if (timer !== undefined) window.clearInterval(timer);
-      timer = undefined;
-    };
-    const start = () => {
-      stop();
-      if (document.visibilityState !== "hidden") timer = window.setInterval(refreshLive, 5_000);
-    };
-    const onVisibility = () => {
-      if (document.visibilityState === "hidden") stop();
-      else { refreshLive(); start(); }
-    };
-    start();
-    document.addEventListener("visibilitychange", onVisibility);
+    if (!liveSelection || realtimeFallbackTick === 0) return undefined;
+    refreshLive();
     return () => {
-      stop();
       liveControllerRef.current?.abort();
       liveControllerRef.current = null;
       liveRequestRef.current = false;
-      document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [liveSelection, refreshLive]);
+  }, [liveSelection, realtimeFallbackTick, refreshLive]);
 
   const option = useMemo(
     () => data && data.bars.length ? stockTimelineOption(data, selectedEventId, chartEventLimit) : null,

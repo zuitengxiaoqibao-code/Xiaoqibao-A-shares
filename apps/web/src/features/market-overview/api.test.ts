@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { loadMarketIntervalReview, loadMarketOverview, parseMarketOverviewSseBuffer } from "./api";
+import { loadMarketIntervalReview, loadMarketOverview } from "./api";
 
 describe("market overview api", () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -47,30 +47,5 @@ describe("market overview api", () => {
       "/api/v1/a-shares/market-overview/interval?start_date=2026-07-01&end_date=2026-07-29",
       { signal: controller.signal },
     );
-  });
-});
-
-describe("market overview SSE parser", () => {
-  it("parses complete frames and keeps an incomplete frame for the next chunk", () => {
-    const first = parseMarketOverviewSseBuffer(
-      'event: market_overview\ndata: {"kind":"market_overview","payload":{"status":"ready"}}\n\n' +
-      'event: market_overview\ndata: {"kind":"market_overview","payload":{"status":"partial"}}',
-    );
-    expect(first.events).toHaveLength(1);
-    expect(first.events[0].status).toBe("ready");
-    expect(first.rest).toContain('"status":"partial"');
-
-    const second = parseMarketOverviewSseBuffer(`${first.rest}\n\n`);
-    expect(second.events).toHaveLength(1);
-    expect(second.events[0].status).toBe("partial");
-  });
-
-  it("ignores keep-alive and unrelated event frames", () => {
-    const result = parseMarketOverviewSseBuffer(
-      ': keep-alive\n\n' +
-      'event: news_events\ndata: {"kind":"news_events","payload":{}}\n\n',
-    );
-    expect(result.events).toEqual([]);
-    expect(result.rest).toBe("");
   });
 });

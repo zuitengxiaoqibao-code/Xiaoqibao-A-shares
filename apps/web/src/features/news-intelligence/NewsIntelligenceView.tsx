@@ -7,7 +7,7 @@ import { friendlyError } from "../../shared/friendlyError";
 import { NewsEventGraph } from "./NewsEventGraph";
 import { NewsEventGrid } from "./NewsEventGrid";
 import { EventImpactPanel } from "./EventImpactPanel";
-import { consumeRealtimeStream, type RealtimeStreamState } from "../../shared/realtimeStream";
+import { useRealtimeState, useRealtimeSubscription } from "../../shared/realtime/RealtimeProvider";
 import { RealtimeAIInsight, type RealtimeAIInsightPayload } from "../../shared/RealtimeAIInsight";
 
 type Props = {
@@ -35,7 +35,7 @@ export function NewsIntelligenceView({ selectedSymbol, loadBundle, syncNews, syn
   const [eventImpact, setEventImpact] = useState<EventImpactReport | null>(null);
   const [impactLoading, setImpactLoading] = useState(false);
   const [impactError, setImpactError] = useState("");
-  const [newsStreamState, setNewsStreamState] = useState<RealtimeStreamState | "idle">("idle");
+  const newsStreamState = useRealtimeState();
   const [realtimeAIInsight, setRealtimeAIInsight] = useState<RealtimeAIInsightPayload | null>(null);
   const requestVersion = useRef(0);
   const impactRequestVersion = useRef(0);
@@ -61,11 +61,7 @@ export function NewsIntelligenceView({ selectedSymbol, loadBundle, syncNews, syn
     void runBundleRequest(loadBundle, "新闻数据", "loading");
     return () => { requestVersion.current += 1; };
   }, [loadBundle, selectedSymbol]);
-  useEffect(() => {
-    const controller = new AbortController();
-    void consumeRealtimeStream<{ snapshot_id?: string }>(
-      ["news_events"],
-      (event) => {
+  useRealtimeSubscription<{ snapshot_id?: string }>("news_events", (event) => {
         if (!event.payload?.snapshot_id) return;
         const request = ++requestVersion.current;
         const requestSymbol = selectedSymbol;
@@ -74,25 +70,10 @@ export function NewsIntelligenceView({ selectedSymbol, loadBundle, syncNews, syn
         }).catch((cause) => {
           if (request === requestVersion.current) setError(friendlyError(cause, "新闻数据"));
         });
-      },
-      controller.signal,
-      setNewsStreamState,
-    ).catch(() => {
-      if (!controller.signal.aborted) setNewsStreamState("error");
-    });
-    return () => controller.abort();
-  }, [loadBundle, selectedSymbol]);
-  useEffect(() => {
-    const controller = new AbortController();
-    void consumeRealtimeStream<RealtimeAIInsightPayload>(
-      ["ai_analysis"],
-      (event) => {
+  });
+  useRealtimeSubscription<RealtimeAIInsightPayload>("ai_analysis", (event) => {
         if (event.payload?.kind === "news_events") setRealtimeAIInsight(event.payload);
-      },
-      controller.signal,
-    ).catch(() => undefined);
-    return () => controller.abort();
-  }, []);
+  });
   const interpretationByEvent = useMemo(() => new Map(bundle?.interpretations.map((item) => [item.event_id, item]) ?? []), [bundle]);
   async function collect() { await runBundleRequest(async () => { await syncNews(selectedSymbol ?? undefined); return loadBundle(); }, "新闻数据", "loading"); }
   async function collectHotspots() {

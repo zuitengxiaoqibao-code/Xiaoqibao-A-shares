@@ -24,7 +24,7 @@ import { chartTheme } from "../../shared/visualization/chartTheme";
 import type { StockTimelineLoader } from "../stock-timeline/types";
 import { useQuantLiveResource } from "./useQuantLiveRefresh";
 import { retainReadyStrategySnapshot } from "./strategySnapshot";
-import { consumeRealtimeStream, type RealtimeStreamState } from "../../shared/realtimeStream";
+import { useRealtimeFallbackTick, useRealtimeState, useRealtimeSubscription } from "../../shared/realtime/RealtimeProvider";
 import { equityPoints, factorRadar, signalMetrics } from "./metrics";
 import { shanghaiDay } from "../../shared/tradingDayContext";
 import type {
@@ -238,6 +238,7 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     loader: boardLoader,
     intervalMs: 30_000,
     errorMessage: "首次涨停候选数据暂不可用",
+    polling: false,
     cache: { key: "quant-board", day: cacheDay, validate: isBoardSnapshot },
   });
   const board = boardResource.data;
@@ -284,6 +285,7 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     intervalMs: 1_000,
     enabled: Boolean(selected),
     errorMessage: "盘中 TICK 归档暂不可用",
+    polling: false,
     cache: {
       key: `quant-ticks:${selected ?? "none"}`,
       day: cacheDay,
@@ -307,6 +309,7 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     // by a five-second full-dashboard request.
     intervalMs: 30_000,
     enabled: Boolean(loadQuantStrategy),
+    polling: false,
     errorMessage: "短线策略数据暂不可用",
     mergeData: retainReadyStrategySnapshot,
     initialDelayMs: 250,
@@ -315,43 +318,29 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
   const strategyDashboard = strategyResource.data;
   const strategyRef = useRef(strategyDashboard);
   strategyRef.current = strategyDashboard;
-  const [strategyStreamState, setStrategyStreamState] = useState<RealtimeStreamState | "idle">("idle");
+  const strategyStreamState = useRealtimeState();
+  const realtimeFallbackTick = useRealtimeFallbackTick();
   const [realtimeAIInsight, setRealtimeAIInsight] = useState<RealtimeAIInsightPayload | null>(null);
-  useEffect(() => {
-    if (!loadQuantStrategy) {
-      setStrategyStreamState("idle");
-      return undefined;
-    }
-    const controller = new AbortController();
-    void consumeRealtimeStream<NonNullable<typeof strategyDashboard>>(
-      ["quant_strategy"],
-      (event) => {
+  useRealtimeSubscription<NonNullable<typeof strategyDashboard>>("quant_strategy", (event) => {
+        if (!loadQuantStrategy) return;
         const incoming = event.payload;
         if (!incoming || incoming.formula_version !== "a-share-short-strategy-v2.0") return;
         const current = strategyRef.current;
         if (current && current.as_of === incoming.as_of && Date.parse(incoming.generated_at) <= Date.parse(current.generated_at)) return;
         strategyResource.acceptExternal(incoming);
-      },
-      controller.signal,
-      setStrategyStreamState,
-    ).catch(() => {
-      if (!controller.signal.aborted) setStrategyStreamState("error");
-    });
-    return () => controller.abort();
-  }, [loadQuantStrategy, strategyResource.acceptExternal]);
-  useEffect(() => {
-    const controller = new AbortController();
-    void consumeRealtimeStream<RealtimeAIInsightPayload>(
-      ["ai_analysis"],
-      (event) => {
+  });
+  useRealtimeSubscription("market_overview", () => {
+    if (selected) void tickResource.refreshNow();
+    void boardResource.refreshNow();
+  });
+  useRealtimeSubscription<RealtimeAIInsightPayload>("ai_analysis", (event) => {
         if (event.payload?.kind === "quant_strategy") setRealtimeAIInsight(event.payload);
-      },
-      controller.signal,
-    ).catch(() => {
-      if (!controller.signal.aborted) setRealtimeAIInsight((current) => current);
-    });
-    return () => controller.abort();
-  }, []);
+  });
+  useEffect(() => {
+    if (realtimeFallbackTick === 0) return;
+    if (selected) void tickResource.refreshNow();
+    void boardResource.refreshNow();
+  }, [boardResource.refreshNow, realtimeFallbackTick, selected, tickResource.refreshNow]);
   const shadowLoader = useCallback(
     () => loadQuantShadowDecisions ? loadQuantShadowDecisions(50) : Promise.resolve([]),
     [loadQuantShadowDecisions],
@@ -360,6 +349,7 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     loader: shadowLoader,
     intervalMs: 60_000,
     enabled: Boolean(loadQuantShadowDecisions),
+    polling: false,
     errorMessage: "策略影子账本暂不可用",
     initialDelayMs: 1_800,
     cache: { key: "quant-shadow:50", day: cacheDay, validate: isShadowRecords },
@@ -372,6 +362,7 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     loader: shadowAnalyticsLoader,
     intervalMs: 60_000,
     enabled: Boolean(loadQuantShadowAnalytics),
+    polling: false,
     errorMessage: "评分校准统计暂不可用",
     initialDelayMs: 2_200,
     cache: {
@@ -390,6 +381,7 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     loader: calibrationLoader,
     intervalMs: 300_000,
     enabled: Boolean(loadQuantCalibration),
+    polling: false,
     errorMessage: "量化走样校准报告暂不可用",
     initialDelayMs: 2_600,
     cache: {
@@ -408,6 +400,7 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     loader: decisionJournalLoader,
     intervalMs: 60_000,
     enabled: Boolean(loadDecisionJournal),
+    polling: false,
     errorMessage: "个人复盘日志暂不可用",
     initialDelayMs: 1_800,
     cache: { key: "quant-decision-journal:50", day: cacheDay, validate: isDecisionJournal },
@@ -427,6 +420,7 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     loader: backtestLoader,
     intervalMs: 300_000,
     enabled: Boolean(selected && boardAsOf),
+    polling: false,
     errorMessage: "历史回测暂不可用",
     initialDelayMs: 600,
     cache: {
@@ -445,6 +439,7 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     loader: walkForwardLoader,
     intervalMs: 300_000,
     enabled: Boolean(selected && boardAsOf && loadWalkForward),
+    polling: false,
     errorMessage: "样本外验证暂不可用",
     initialDelayMs: 850,
     cache: {
@@ -463,6 +458,7 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     loader: forecastLoader,
     intervalMs: 300_000,
     enabled: Boolean(selected && boardAsOf && loadKronosForecast),
+    polling: false,
     errorMessage: "价格路径预测暂不可用",
     initialDelayMs: 1_100,
     cache: {
