@@ -13,6 +13,7 @@ import { QuantLiveStatusBar } from "./QuantLiveStatusBar";
 import { QuantChart } from "./QuantChart";
 import { ShortTermStrategyWorkbench } from "./ShortTermStrategyWorkbench";
 import { QuantShadowLedgerPanel } from "./QuantShadowLedgerPanel";
+import { QuantResearchIntelligencePanel } from "./QuantResearchIntelligencePanel";
 import { TdxFormulaPanel } from "./TdxFormulaPanel";
 import { WalkForwardEvidenceStrip } from "./WalkForwardEvidenceStrip";
 import { StockEventKline } from "../stock-timeline/StockEventKline";
@@ -32,6 +33,7 @@ import type {
   KronosForecastResponse,
   QuantForecastLoader,
   QuantCalibrationLoader,
+  QuantResearchLoader,
   QuantStrategyLoader,
   QuantShadowAnalyticsLoader,
   QuantShadowLoader,
@@ -50,6 +52,7 @@ type Props = {
   loadQuantShadowDecisions?: QuantShadowLoader;
   loadQuantShadowAnalytics?: QuantShadowAnalyticsLoader;
   loadQuantCalibration?: QuantCalibrationLoader;
+  loadQuantResearch?: QuantResearchLoader;
   loadDecisionJournal?: DecisionJournalLoader;
   createDecisionJournal?: DecisionJournalCreator;
   loadTdxFormula?: TdxFormulaLoader;
@@ -162,7 +165,7 @@ function candidatesFrom(board: FirstLimitUpBoard | null): FirstLimitUpCandidate[
   });
 }
 
-export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, runBacktest, loadKronosForecast, loadQuantStrategy, loadQuantShadowDecisions, loadQuantShadowAnalytics, loadQuantCalibration, loadDecisionJournal, createDecisionJournal, loadTdxFormula, loadTimeline, loadWalkForward, selectedSymbol, searchInstruments, onSelectSymbol }: Props) {
+export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, runBacktest, loadKronosForecast, loadQuantStrategy, loadQuantResearch, loadQuantShadowDecisions, loadQuantShadowAnalytics, loadQuantCalibration, loadDecisionJournal, createDecisionJournal, loadTdxFormula, loadTimeline, loadWalkForward, selectedSymbol, searchInstruments, onSelectSymbol }: Props) {
   const [selected, setSelected] = useState<string | null>(selectedSymbol ?? null);
   const [selectedIdentity, setSelectedIdentity] = useState<AShareInstrument | null>(null);
   const [backtest, setBacktest] = useState<BacktestResult | null>(null);
@@ -500,6 +503,7 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
       loading={strategyResource.status === "loading" && !strategyDashboard}
       error={strategyResource.error}
     />}
+    {loadQuantResearch && <QuantResearchIntelligencePanel load={loadQuantResearch} />}
     <RealtimeAIInsight insight={realtimeAIInsight} domainLabel="量化分析" />
     {loadQuantShadowDecisions && <QuantShadowLedgerPanel
       records={shadowResource.data ?? []}

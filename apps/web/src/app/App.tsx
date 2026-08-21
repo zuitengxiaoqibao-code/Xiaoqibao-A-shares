@@ -49,7 +49,7 @@ import {
 } from "../features/candidate-sentiment/api";
 import { loadFirstLimitUp, refreshFirstLimitUp } from "../features/first-limit-up/api";
 import { loadLateSessionSelection } from "../features/late-session-selection/api";
-import { createDecisionJournal, loadDecisionJournal, loadKronosForecast, loadQuantCalibration, loadQuantShadowAnalytics, loadQuantShadowDecisions, loadQuantStrategy, loadQuantTicks, loadTdxFormula, loadWalkForward } from "../features/quant-analysis/api";
+import { createDecisionJournal, loadDecisionJournal, loadKronosForecast, loadQuantCalibration, loadQuantResearch, loadQuantShadowAnalytics, loadQuantShadowDecisions, loadQuantStrategy, loadQuantTicks, loadTdxFormula, loadWalkForward } from "../features/quant-analysis/api";
 import { loadMarketIntervalReview, loadMarketOverview } from "../features/market-overview/api";
 import { loadStockTimeline } from "../features/stock-timeline/api";
 import { loadBreakingNewsAlerts } from "../features/news-alerts/api";
@@ -99,6 +99,7 @@ export function App() {
     loadKronosForecast={loadKronosForecast}
     loadWalkForward={loadWalkForward}
     loadQuantStrategy={loadQuantStrategy}
+    loadQuantResearch={loadQuantResearch}
     loadQuantShadowDecisions={loadQuantShadowDecisions}
     loadQuantShadowAnalytics={loadQuantShadowAnalytics}
     loadQuantCalibration={loadQuantCalibration}

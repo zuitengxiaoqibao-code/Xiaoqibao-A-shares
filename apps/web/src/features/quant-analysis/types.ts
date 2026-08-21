@@ -243,6 +243,8 @@ export type QuantShadowDecisionRecord = {
   formula_version: string;
   candidate_status: string;
   market_regime?: string | null;
+  decision_source?: "quant_strategy" | "opportunity_scan" | "ai_hypothesis" | "manual_watch";
+  opportunity_type?: string | null;
   strategy_score: string;
   reference_price: string | null;
   frozen_at: string;
@@ -255,7 +257,9 @@ export type QuantShadowLoader = (limit?: number) => Promise<QuantShadowDecisionR
 
 export type QuantShadowAnalytics = {
   status: "ready" | "partial" | "insufficient";
-  horizon: 1 | 3 | 5 | 10 | 20;
+  horizon: 1 | 3 | 5 | 10 | 20 | 60;
+  decision_source?: "quant_strategy" | "opportunity_scan" | "ai_hypothesis" | "manual_watch" | null;
+  opportunity_type?: string | null;
   mature_sample_count: number;
   pending_sample_count: number;
   hit_rate_percent: string | null;
@@ -301,7 +305,7 @@ export type QuantShadowAnalytics = {
   limitations: string[];
 };
 
-export type QuantShadowAnalyticsLoader = (horizon?: 1 | 3 | 5 | 10 | 20) => Promise<QuantShadowAnalytics>;
+export type QuantShadowAnalyticsLoader = (horizon?: 1 | 3 | 5 | 10 | 20 | 60) => Promise<QuantShadowAnalytics>;
 
 export type QuantCalibrationReport = {
   status: "ready" | "partial" | "unavailable";
@@ -319,7 +323,7 @@ export type QuantCalibrationReport = {
   limitations: string[];
 };
 
-export type QuantCalibrationLoader = (horizon?: 1 | 3 | 5 | 10 | 20) => Promise<QuantCalibrationReport>;
+export type QuantCalibrationLoader = (horizon?: 1 | 3 | 5 | 10 | 20 | 60) => Promise<QuantCalibrationReport>;
 
 export type DecisionJournalAction = "observe" | "no_trade" | "buy" | "sell";
 
@@ -374,3 +378,133 @@ export type SignalMetric = {
   tone: "positive" | "warning" | "danger" | "muted";
 };
 import type { EvidenceLedgerEntry } from "../../shared/evidence/EvidenceLedger";
+
+export type QuantResearchStatus = "ready" | "partial" | "insufficient" | "stale" | "unavailable" | "error";
+
+export type QuantResearchModuleStatus = {
+  status: QuantResearchStatus;
+  message: string;
+};
+
+export type QuantRiskGateCheck = {
+  key: "evidence" | "tradability" | "financial_anomaly" | "signal_conflict" | "concentration";
+  label: string;
+  status: "pass" | "warn" | "block" | "unavailable";
+  reason: string;
+  metric_value: string | null;
+  threshold: string | null;
+  source_snapshot_ids: string[];
+};
+
+export type QuantRiskGateSummary = {
+  symbol: string;
+  overall_status: "pass" | "warn" | "block";
+  checks: QuantRiskGateCheck[];
+  blockers: string[];
+  formula_version: "quant-risk-gates-v1";
+};
+
+export type QuantOpportunityPitch = {
+  symbol: string;
+  name: string;
+  opportunity_type: string;
+  opportunity_name: string;
+  market_regime: string | null;
+  status: "triggered" | "watch" | "excluded" | "insufficient";
+  strategy_score: string;
+  trigger_confirmed: boolean;
+  reference_price: string | null;
+  core_evidence: string[];
+  trigger_rules: string[];
+  invalidation_rules: string[];
+  risk_gate: QuantRiskGateSummary;
+  shadow_sample_count: number;
+  calibrated_hit_rate_percent: string | null;
+  average_return_percent: string | null;
+  sources: string[];
+  source_snapshot_ids: string[];
+  limitations: string[];
+};
+
+export type QuantResearchSnapshot = {
+  status: QuantResearchStatus;
+  as_of: string;
+  observed_at: string;
+  generated_at: string;
+  snapshot_source: "computed" | "cache" | "empty";
+  refresh_state: "ready" | "pending" | "failed";
+  refresh_progress: number;
+  refresh_stage: string;
+  formula_version: "quant-research-intelligence-v1";
+  factor_registry: {
+    status: QuantResearchStatus;
+    as_of: string;
+    formula_version: "quant-factor-registry-v1";
+    limitations: string[];
+    factors: Array<{
+      factor_id: string;
+      name: string;
+      family: string;
+      direction: "positive" | "negative" | "bidirectional";
+      required_fields: string[];
+      minimum_history: number;
+      formula_version: string;
+      owner: "system" | "ai_research";
+      lifecycle: "candidate" | "active" | "watch" | "retired";
+      registered_at: string;
+      retired_at: string | null;
+      retirement_reason: string | null;
+    }>;
+  };
+  factor_health: Array<{
+    factor_id: string;
+    name: string;
+    family: string;
+    status: "healthy" | "watch" | "insufficient" | "stale" | "error";
+    sample_count: number;
+    valid_day_count: number;
+    coverage_percent: string;
+    rank_ic_20: string | null;
+    icir: string | null;
+    direction_accuracy_percent: string | null;
+    limitations: string[];
+  }>;
+  risk_summaries: QuantRiskGateSummary[];
+  opportunities: QuantOpportunityPitch[];
+  shadow_cohorts: Array<{
+    opportunity_type: string;
+    decision_source: string;
+    horizon: 1 | 3 | 5 | 10 | 20 | 60;
+    status: QuantResearchStatus;
+    sample_count: number;
+    hit_rate_percent: string | null;
+    average_return_percent: string | null;
+    generated_at: string;
+    limitations: string[];
+  }>;
+  etf_exposures: Array<{
+    etf_symbol: string;
+    etf_name: string;
+    mapping_basis: "industry" | "theme" | "correlation";
+    exposure_weight_percent: string;
+    common_sample_count: number;
+    correlation: string | null;
+    average_amount_20d: string | null;
+    status: QuantResearchStatus;
+    limitations: string[];
+  }>;
+  hypotheses: Array<{
+    hypothesis_id: string;
+    statement: string;
+    expected_direction: "positive" | "negative" | "bidirectional";
+    status: "draft" | "validating" | "accepted" | "rejected" | "insufficient" | "error";
+    generated_at: string;
+    input_evidence_hash: string;
+    limitations: string[];
+  }>;
+  module_statuses: Record<"factor_registry" | "factor_health" | "risk" | "opportunities" | "shadow" | "etf" | "hypotheses", QuantResearchModuleStatus>;
+  source_snapshot_ids: string[];
+  limitations: string[];
+};
+
+export type QuantResearchLoader = () => Promise<QuantResearchSnapshot>;

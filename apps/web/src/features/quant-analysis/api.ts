@@ -1,4 +1,4 @@
-import type { DecisionJournalCreate, DecisionJournalEntry, IntradayTick, KronosForecastResponse, QuantCalibrationReport, QuantShadowAnalytics, QuantShadowDecisionRecord, QuantStrategyDashboard, TdxFormulaResponse, WalkForwardReport } from "./types";
+import type { DecisionJournalCreate, DecisionJournalEntry, IntradayTick, KronosForecastResponse, QuantCalibrationReport, QuantResearchSnapshot, QuantShadowAnalytics, QuantShadowDecisionRecord, QuantStrategyDashboard, TdxFormulaResponse, WalkForwardReport } from "./types";
 import { coalescedFetch } from "../../shared/coalescedFetch";
 import { requestLedger } from "../../shared/performance/requestLedger";
 
@@ -69,19 +69,27 @@ export async function loadQuantStrategy(limit = 12): Promise<QuantStrategyDashbo
   }, { domain: "quant-strategy" });
 }
 
+export async function loadQuantResearch(): Promise<QuantResearchSnapshot> {
+  return requestLedger.run("quant-research", async () => {
+    const response = await coalescedFetch("/api/v1/a-shares/quant-research");
+    if (!response.ok) throw new Error(`量化研究快照请求失败 (${response.status})`);
+    return response.json() as Promise<QuantResearchSnapshot>;
+  }, { domain: "quant-research" });
+}
+
 export async function loadQuantShadowDecisions(limit = 50): Promise<QuantShadowDecisionRecord[]> {
   const response = await coalescedFetch(`/api/v1/a-shares/quant-strategy/shadow?limit=${encodeURIComponent(String(limit))}`);
   if (!response.ok) throw new Error(`策略影子账本请求失败 (${response.status})`);
   return response.json() as Promise<QuantShadowDecisionRecord[]>;
 }
 
-export async function loadQuantShadowAnalytics(horizon: 1 | 3 | 5 | 10 | 20 = 5): Promise<QuantShadowAnalytics> {
+export async function loadQuantShadowAnalytics(horizon: 1 | 3 | 5 | 10 | 20 | 60 = 5): Promise<QuantShadowAnalytics> {
   const response = await coalescedFetch(`/api/v1/a-shares/quant-strategy/shadow/analytics?horizon=${horizon}`);
   if (!response.ok) throw new Error(`策略校准统计请求失败 (${response.status})`);
   return response.json() as Promise<QuantShadowAnalytics>;
 }
 
-export async function loadQuantCalibration(horizon: 1 | 3 | 5 | 10 | 20 = 5): Promise<QuantCalibrationReport> {
+export async function loadQuantCalibration(horizon: 1 | 3 | 5 | 10 | 20 | 60 = 5): Promise<QuantCalibrationReport> {
   const response = await coalescedFetch(`/api/v1/a-shares/quant-strategy/shadow/calibration?horizon=${horizon}`);
   if (!response.ok) throw new Error(`量化校准报告请求失败 (${response.status})`);
   return response.json() as Promise<QuantCalibrationReport>;
