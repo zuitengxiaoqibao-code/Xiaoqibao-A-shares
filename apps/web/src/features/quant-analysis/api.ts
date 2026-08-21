@@ -10,12 +10,15 @@ const focusRegistrationState = new Map<string, {
   registeredUntil: number;
 }>();
 
-export async function registerQuantFocus(symbol: string): Promise<void> {
+type FocusSource = "quant_analysis" | "watchlist";
+
+async function registerFocus(symbol: string, source: FocusSource): Promise<void> {
   const now = Date.now();
-  const current = focusRegistrationState.get(symbol);
+  const key = `${source}:${symbol}`;
+  const current = focusRegistrationState.get(key);
   if (current?.registeredUntil && current.registeredUntil > now) return;
   if (current && now - current.lastAttemptAt < FOCUS_RETRY_AFTER_MS) return;
-  focusRegistrationState.set(symbol, {
+  focusRegistrationState.set(key, {
     lastAttemptAt: now,
     registeredUntil: current?.registeredUntil ?? 0,
   });
@@ -24,14 +27,22 @@ export async function registerQuantFocus(symbol: string): Promise<void> {
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ source: "quant_analysis", ttl_seconds: FOCUS_TTL_SECONDS }),
+      body: JSON.stringify({ source, ttl_seconds: FOCUS_TTL_SECONDS }),
     },
   );
   if (!response.ok) throw new Error(`盘中监测登记失败 (${response.status})`);
-  focusRegistrationState.set(symbol, {
+  focusRegistrationState.set(key, {
     lastAttemptAt: now,
     registeredUntil: now + FOCUS_RENEW_AFTER_MS,
   });
+}
+
+export async function registerQuantFocus(symbol: string): Promise<void> {
+  return registerFocus(symbol, "quant_analysis");
+}
+
+export async function registerWatchlistFocus(symbol: string): Promise<void> {
+  return registerFocus(symbol, "watchlist");
 }
 
 export async function loadQuantTicks(

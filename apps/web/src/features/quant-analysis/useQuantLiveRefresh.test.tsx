@@ -2,6 +2,7 @@ import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useQuantLiveResource } from "./useQuantLiveRefresh";
+import { shanghaiDay } from "../../shared/tradingDayContext";
 
 function setDocumentHidden(value: boolean) {
   Object.defineProperty(document, "hidden", {
@@ -23,12 +24,14 @@ function Fixture({
   intervalMs = 1000,
   external,
   cacheKey,
+  cacheDay = shanghaiDay(new Date()),
   initialDelayMs = 0,
 }: {
-  loader: () => Promise<{ value: string }>;
+  loader: (signal?: AbortSignal) => Promise<{ value: string }>;
   intervalMs?: number;
   external?: { value: string };
   cacheKey?: string;
+  cacheDay?: string;
   initialDelayMs?: number;
 }) {
   const state = useQuantLiveResource({
@@ -39,6 +42,7 @@ function Fixture({
     initialDelayMs,
     cache: cacheKey ? {
       key: cacheKey,
+      day: cacheDay,
       validate: (value: unknown): value is { value: string } => (
         typeof value === "object" && value !== null && typeof (value as { value?: unknown }).value === "string"
       ),
@@ -143,6 +147,24 @@ describe("useQuantLiveResource", () => {
     expect(screen.getByTestId("value")).toHaveTextContent("new-selection");
   });
 
+  it("aborts the previous request when the loader changes", async () => {
+    let previousSignal: AbortSignal | undefined;
+    const first = vi.fn((signal?: AbortSignal) => {
+      previousSignal = signal;
+      return new Promise<{ value: string }>(() => undefined);
+    });
+    const second = vi.fn(async () => ({ value: "new-selection" }));
+    const view = render(<Fixture loader={first} />);
+    await flushPromises();
+
+    view.rerender(<Fixture loader={second} />);
+    await flushPromises();
+
+    expect(previousSignal).toBeInstanceOf(AbortSignal);
+    expect(previousSignal?.aborted).toBe(true);
+    expect(second).toHaveBeenCalledTimes(1);
+  });
+
   it("cleans up timers after unmount", async () => {
     const loader = vi.fn(async () => ({ value: "verified" }));
     const view = render(<Fixture loader={loader} />);
@@ -184,5 +206,21 @@ describe("useQuantLiveResource", () => {
     await flushPromises();
     expect(loader).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId("value")).toHaveTextContent("fresh");
+  });
+
+  it("clears yesterday's in-memory value at Shanghai day rollover", async () => {
+    vi.setSystemTime(new Date("2026-08-20T15:59:59.500Z"));
+    const loader = vi.fn()
+      .mockResolvedValueOnce({ value: "previous-day" })
+      .mockRejectedValueOnce(new Error("new day unavailable"));
+    render(<Fixture loader={loader} cacheKey="tick:600519" cacheDay="2026-08-20" />);
+    await flushPromises();
+    expect(screen.getByTestId("value")).toHaveTextContent("previous-day");
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    await flushPromises();
+
+    expect(screen.getByTestId("value")).toHaveTextContent("empty");
+    expect(screen.getByTestId("status")).toHaveTextContent("error");
   });
 });

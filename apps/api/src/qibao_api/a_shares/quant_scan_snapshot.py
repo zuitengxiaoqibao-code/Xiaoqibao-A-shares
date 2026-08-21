@@ -131,4 +131,3 @@ class QuantScanSnapshotManager:
         )
         for path in candidates[2:]:
             shutil.rmtree(path, ignore_errors=True)
-

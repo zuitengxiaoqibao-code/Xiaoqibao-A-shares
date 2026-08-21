@@ -49,7 +49,7 @@ import {
 } from "../features/candidate-sentiment/api";
 import { loadFirstLimitUp, refreshFirstLimitUp } from "../features/first-limit-up/api";
 import { loadLateSessionSelection } from "../features/late-session-selection/api";
-import { createDecisionJournal, loadDecisionJournal, loadKronosForecast, loadQuantCalibration, loadQuantResearch, loadQuantShadowAnalytics, loadQuantShadowDecisions, loadQuantStrategy, loadQuantTicks, loadTdxFormula, loadWalkForward } from "../features/quant-analysis/api";
+import { createDecisionJournal, loadDecisionJournal, loadKronosForecast, loadQuantCalibration, loadQuantResearch, loadQuantShadowAnalytics, loadQuantShadowDecisions, loadQuantStrategy, loadQuantTicks, loadTdxFormula, loadWalkForward, registerWatchlistFocus } from "../features/quant-analysis/api";
 import { loadMarketIntervalReview, loadMarketOverview } from "../features/market-overview/api";
 import { loadStockTimeline } from "../features/stock-timeline/api";
 import { loadBreakingNewsAlerts } from "../features/news-alerts/api";
@@ -61,9 +61,24 @@ import {
 } from "../features/speech/api";
 import { loadCompanyResearch, loadCompanyResearchComparison } from "../features/company-research/api";
 import { analyzePortfolioRisk, loadPortfolioRisk, loadWatchlistRisk, removePortfolioPosition, savePortfolioPosition } from "../features/portfolio-risk/api";
+import { A_SHARE_WATCHLIST_CHANGED_EVENT, readAShareWatchlist } from "../features/stock-cockpit/watchlist";
 
 export function App() {
   useEffect(() => { void loadAShareInstrumentDirectory().catch(() => undefined); }, []);
+  useEffect(() => {
+    const registerWatchlist = () => {
+      readAShareWatchlist().forEach((symbol) => {
+        void registerWatchlistFocus(symbol).catch(() => undefined);
+      });
+    };
+    registerWatchlist();
+    window.addEventListener(A_SHARE_WATCHLIST_CHANGED_EVENT, registerWatchlist);
+    const timer = window.setInterval(registerWatchlist, 5 * 60 * 1000);
+    return () => {
+      window.removeEventListener(A_SHARE_WATCHLIST_CHANGED_EVENT, registerWatchlist);
+      window.clearInterval(timer);
+    };
+  }, []);
   return <SelectedInstrumentProvider><Dashboard
     loadSnapshot={loadSnapshot}
     syncHistory={syncHistory}

@@ -169,6 +169,11 @@ class PollStateRepository:
         );
         CREATE INDEX IF NOT EXISTS ix_intraday_market_symbol_observed
         ON intraday_market_snapshot_events(symbol, observed_at, sequence);
+        CREATE TABLE IF NOT EXISTS intraday_market_snapshot_keys (
+          symbol TEXT NOT NULL, observed_second INTEGER NOT NULL,
+          snapshot_sequence INTEGER,
+          PRIMARY KEY(symbol, observed_second)
+        );
         CREATE TABLE IF NOT EXISTS intraday_poll_batches (
           batch_id TEXT PRIMARY KEY, scope TEXT NOT NULL, occurred_at TEXT NOT NULL
         );
@@ -211,6 +216,14 @@ class PollStateRepository:
             self.connection.execute(
                 "ALTER TABLE intraday_market_snapshot_events ADD COLUMN content_hash TEXT"
             )
+        self.connection.execute(
+            """INSERT OR IGNORE INTO intraday_market_snapshot_keys(
+            symbol,observed_second,snapshot_sequence)
+            SELECT symbol,CAST(strftime('%s',observed_at) AS INTEGER),MIN(sequence)
+            FROM intraday_market_snapshot_events
+            WHERE strftime('%s',observed_at) IS NOT NULL
+            GROUP BY symbol,CAST(strftime('%s',observed_at) AS INTEGER)"""
+        )
 
     def close(self) -> None:
         with self._lock:
@@ -270,16 +283,17 @@ class PollStateRepository:
         return tuple(row["symbol"] for row in rows)
 
     def append_snapshots(self, scope: Scope, snapshots) -> None:
-        rows = [(
-            scope, item.symbol, item.observed_at.isoformat(),
-            getattr(item, "source_snapshot_id", None), self._snapshot_payload(item),
-        ) for item in snapshots]
         with self._lock, self.connection:
-            self.connection.executemany(
+            for item in snapshots:
+                if not self._claim_snapshot_second(item):
+                    continue
+                cursor = self.connection.execute(
                 """INSERT INTO intraday_market_snapshot_events(
                 scope,symbol,observed_at,source_snapshot_id,payload) VALUES(?,?,?,?,?)""",
-                rows,
-            )
+                    (scope, item.symbol, item.observed_at.isoformat(),
+                     getattr(item, "source_snapshot_id", None), self._snapshot_payload(item)),
+                )
+                self._bind_snapshot_sequence(item, cursor.lastrowid)
 
     def append_success_batch(
         self, batch_id: str, scope: Scope, snapshots, state: PollState,
@@ -304,8 +318,8 @@ class PollStateRepository:
                 prior_rows = self.connection.execute(
                     """SELECT content_hash,payload,observed_at
                     FROM intraday_market_snapshot_events
-                    WHERE scope=? AND symbol=? ORDER BY sequence DESC""",
-                    (scope, item.symbol),
+                    WHERE symbol=? ORDER BY sequence DESC""",
+                    (item.symbol,),
                 ).fetchall()
                 trading_date = item.observed_at.astimezone(CHINA_TZ).date()
                 prior = next((
@@ -320,7 +334,9 @@ class PollStateRepository:
                     )
                 if prior_hash == content_hash:
                     continue
-                self.connection.execute(
+                if not self._claim_snapshot_second(item):
+                    continue
+                cursor = self.connection.execute(
                     """INSERT INTO intraday_market_snapshot_events(
                     scope,symbol,observed_at,source_snapshot_id,payload,content_hash)
                     VALUES(?,?,?,?,?,?)""",
@@ -328,11 +344,28 @@ class PollStateRepository:
                      getattr(item, "source_snapshot_id", None), snapshot_payload,
                      content_hash),
                 )
+                self._bind_snapshot_sequence(item, cursor.lastrowid)
             self.connection.execute(
                 "INSERT INTO intraday_poll_state_events(occurred_at,payload) VALUES(?,?)",
                 (occurred_at.isoformat(), payload),
             )
         return True
+
+    def _claim_snapshot_second(self, snapshot) -> bool:
+        observed_second = int(snapshot.observed_at.timestamp())
+        cursor = self.connection.execute(
+            """INSERT OR IGNORE INTO intraday_market_snapshot_keys(
+            symbol,observed_second,snapshot_sequence) VALUES(?,?,NULL)""",
+            (snapshot.symbol, observed_second),
+        )
+        return cursor.rowcount == 1
+
+    def _bind_snapshot_sequence(self, snapshot, sequence: int) -> None:
+        self.connection.execute(
+            """UPDATE intraday_market_snapshot_keys SET snapshot_sequence=?
+            WHERE symbol=? AND observed_second=? AND snapshot_sequence IS NULL""",
+            (sequence, snapshot.symbol, int(snapshot.observed_at.timestamp())),
+        )
 
     @staticmethod
     def _snapshot_payload(snapshot) -> str | None:
@@ -377,8 +410,11 @@ class PollStateRepository:
     ) -> tuple[MarketFeedSnapshot, ...]:
         with self._lock:
             rows = self.connection.execute(
-                """SELECT symbol,payload FROM intraday_market_snapshot_events
-                WHERE payload IS NOT NULL ORDER BY sequence""",
+                """SELECT event.symbol,event.payload
+                FROM intraday_market_snapshot_events AS event
+                JOIN intraday_market_snapshot_keys AS snapshot_key
+                  ON snapshot_key.snapshot_sequence=event.sequence
+                WHERE event.payload IS NOT NULL ORDER BY event.sequence""",
             ).fetchall()
         latest = {}
         for row in rows:
@@ -395,8 +431,12 @@ class PollStateRepository:
     ) -> tuple[MarketFeedSnapshot, ...]:
         with self._lock:
             rows = self.connection.execute(
-                """SELECT payload FROM intraday_market_snapshot_events
-                WHERE symbol=? AND payload IS NOT NULL ORDER BY observed_at, sequence""",
+                """SELECT event.payload
+                FROM intraday_market_snapshot_events AS event
+                JOIN intraday_market_snapshot_keys AS snapshot_key
+                  ON snapshot_key.snapshot_sequence=event.sequence
+                WHERE event.symbol=? AND event.payload IS NOT NULL
+                ORDER BY event.observed_at,event.sequence""",
                 (symbol,),
             ).fetchall()
         values = []

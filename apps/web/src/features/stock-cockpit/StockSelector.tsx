@@ -17,8 +17,8 @@ import type { AShareInstrument, InstrumentSearchResponse } from "./types";
 import { friendlyError } from "../../shared/friendlyError";
 import { DailyCacheHistory } from "../../shared/DailyCacheHistory";
 import { createInstrumentDirectory } from "../../shared/instruments/instrumentDirectory";
+import { readAShareWatchlist, writeAShareWatchlist } from "./watchlist";
 
-const WATCHLIST_KEY = "qibao.a_share.watchlist.v1";
 type CandidateTab = "short_term" | "swing" | "watchlist";
 const candidateTabs: ReadonlyArray<readonly [CandidateTab, string]> = [
   ["watchlist", "自选股"],
@@ -42,15 +42,6 @@ type CachedStockSnapshot = {
   symbol: string;
   instrument?: { name?: string | null };
 };
-
-function readWatchlist(): string[] {
-  try {
-    const value = JSON.parse(localStorage.getItem(WATCHLIST_KEY) ?? "[]");
-    const cleaned = Array.isArray(value) ? [...new Set(value.filter((item): item is string => typeof item === "string" && isAShareSymbol(item)))] : [];
-    localStorage.setItem(WATCHLIST_KEY, JSON.stringify(cleaned));
-    return cleaned;
-  } catch { localStorage.setItem(WATCHLIST_KEY, "[]"); return []; }
-}
 
 function WatchButton({ symbol, watched, onToggle }: { symbol: string; watched: boolean; onToggle: () => void }) {
   return <button className="watch-button" type="button" aria-label={`${watched ? "将" : "将"} ${symbol} ${watched ? "移出自选" : "加入自选"}`} title={`${symbol} ${watched ? "移出自选" : "加入自选"}`} onClick={onToggle}>{watched ? <BookmarkCheck size={15} /> : <Bookmark size={15} />}</button>;
@@ -118,7 +109,7 @@ export function StockSelector({ loadCandidates, loadWatchlistScores, prepare, se
   const [searchSourceStatus, setSearchSourceStatus] = useState<"ready" | "unavailable">("ready");
   const [searchError, setSearchError] = useState("");
   const [candidateError, setCandidateError] = useState("");
-  const [watchlist, setWatchlist] = useState(readWatchlist);
+  const [watchlist, setWatchlist] = useState(readAShareWatchlist);
   const [identities, setIdentities] = useState<Record<string, AShareInstrument>>({});
   const [identityErrors, setIdentityErrors] = useState<Record<string, string>>({});
   const [watchlistScores, setWatchlistScores] = useState<CandidateScoreBoard | null>(null);
@@ -194,7 +185,6 @@ export function StockSelector({ loadCandidates, loadWatchlistScores, prepare, se
 
   useEffect(() => { if (board) void resolveSymbols([...board.short_term, ...board.swing].map((item) => item.symbol)); }, [board, resolveSymbols]);
   useEffect(() => { void resolveSymbols(watchlist); }, [watchlist, resolveSymbols]);
-
   const refreshWatchlistScores = useCallback(async (hydrateMissing = false) => {
     if (!loadWatchlistScores || watchlist.length === 0) {
       watchlistScoresRef.current = null;
@@ -330,7 +320,7 @@ export function StockSelector({ loadCandidates, loadWatchlistScores, prepare, se
 
   const candidateEntries = useMemo(() => board && tab !== "watchlist" ? board[tab] : [], [board, tab]);
   const watchlistScoreBySymbol = useMemo(() => new Map(watchlistScores?.items.map((item) => [item.symbol, item]) ?? []), [watchlistScores]);
-  function toggleWatch(symbol: string) { if (!isAShareSymbol(symbol)) return; setWatchlist((current) => { const next = current.includes(symbol) ? current.filter((item) => item !== symbol) : [...current, symbol]; localStorage.setItem(WATCHLIST_KEY, JSON.stringify(next)); return next; }); }
+  function toggleWatch(symbol: string) { if (!isAShareSymbol(symbol)) return; setWatchlist((current) => writeAShareWatchlist(current.includes(symbol) ? current.filter((item) => item !== symbol) : [...current, symbol])); }
   function retryIdentity(symbol: string) { identityRequests.current.delete(symbol); setIdentityErrors((current) => { const next = { ...current }; delete next[symbol]; return next; }); void resolveSymbols([symbol]); }
   function selectTab(next: CandidateTab) { setTab(next); window.setTimeout(() => tabRefs.current[next]?.focus(), 0); }
   function retrySentiment() {

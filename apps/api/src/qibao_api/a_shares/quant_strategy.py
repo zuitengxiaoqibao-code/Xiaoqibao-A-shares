@@ -1263,16 +1263,11 @@ class QuantStrategyService:
             pending_missing = tuple(dict.fromkeys((
                 *persisted.missing_data,
                 "market_overview_pending",
-                "candidate_scan_pending",
             )))
             return finish(persisted.model_copy(update={
                 "refresh_state": "pending",
                 "snapshot_at": persisted.snapshot_at or persisted.generated_at,
                 "refresh_started_at": now,
-                "candidate_scan_state": "pending",
-                "candidate_scan_started_at": now,
-                "candidate_scan_phase": "loading_overview",
-                "candidate_scan_error": None,
                 "snapshot_source": "disk",
                 "missing_data": pending_missing,
             }))

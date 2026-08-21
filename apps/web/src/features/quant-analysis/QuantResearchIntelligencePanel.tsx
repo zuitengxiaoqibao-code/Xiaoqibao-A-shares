@@ -8,6 +8,7 @@ import type {
   QuantResearchLoader, QuantResearchSnapshot, QuantResearchStatus, QuantRiskGateCheck,
 } from "./types";
 import { useQuantLiveResource } from "./useQuantLiveRefresh";
+import { shanghaiDay } from "../../shared/tradingDayContext";
 
 
 type Props = { load: QuantResearchLoader };
@@ -62,7 +63,11 @@ export function QuantResearchIntelligencePanel({ load }: Props) {
     intervalMs: 60_000,
     errorMessage: "量化研究快照加载失败",
     initialDelayMs: 1_400,
-    cache: { key: "quant-research-intelligence", validate: isResearchSnapshot },
+    cache: {
+      key: "quant-research-intelligence",
+      day: shanghaiDay(new Date()),
+      validate: isResearchSnapshot,
+    },
   });
   const [filter, setFilter] = useState("all");
   const snapshot = resource.data;

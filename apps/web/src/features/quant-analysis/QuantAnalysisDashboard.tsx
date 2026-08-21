@@ -26,6 +26,7 @@ import { useQuantLiveResource } from "./useQuantLiveRefresh";
 import { retainReadyStrategySnapshot } from "./strategySnapshot";
 import { consumeRealtimeStream, type RealtimeStreamState } from "../../shared/realtimeStream";
 import { equityPoints, factorRadar, signalMetrics } from "./metrics";
+import { shanghaiDay } from "../../shared/tradingDayContext";
 import type {
   DecisionJournalCreator,
   DecisionJournalLoader,
@@ -217,6 +218,7 @@ function isDecisionJournal(value: unknown): value is Awaited<ReturnType<Decision
 }
 
 export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, runBacktest, loadKronosForecast, loadQuantStrategy, loadQuantResearch, loadQuantShadowDecisions, loadQuantShadowAnalytics, loadQuantCalibration, loadDecisionJournal, createDecisionJournal, loadTdxFormula, loadTimeline, loadWalkForward, selectedSymbol, searchInstruments, onSelectSymbol }: Props) {
+  const cacheDay = shanghaiDay(new Date());
   const [selected, setSelected] = useState<string | null>(selectedSymbol ?? null);
   const [selectedIdentity, setSelectedIdentity] = useState<AShareInstrument | null>(null);
   const emptyRefreshAttempted = useRef(false);
@@ -236,7 +238,7 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     loader: boardLoader,
     intervalMs: 30_000,
     errorMessage: "首次涨停候选数据暂不可用",
-    cache: { key: "quant-board", validate: isBoardSnapshot },
+    cache: { key: "quant-board", day: cacheDay, validate: isBoardSnapshot },
   });
   const board = boardResource.data;
 
@@ -284,6 +286,7 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     errorMessage: "盘中 TICK 归档暂不可用",
     cache: {
       key: `quant-ticks:${selected ?? "none"}`,
+      day: cacheDay,
       validate: (value): value is IntradayTick[] => isTickSnapshot(value, selected),
     },
   });
@@ -307,7 +310,7 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     errorMessage: "短线策略数据暂不可用",
     mergeData: retainReadyStrategySnapshot,
     initialDelayMs: 250,
-    cache: { key: "quant-strategy:12", validate: isStrategySnapshot },
+    cache: { key: "quant-strategy:12", day: cacheDay, validate: isStrategySnapshot },
   });
   const strategyDashboard = strategyResource.data;
   const strategyRef = useRef(strategyDashboard);
@@ -359,7 +362,7 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     enabled: Boolean(loadQuantShadowDecisions),
     errorMessage: "策略影子账本暂不可用",
     initialDelayMs: 1_800,
-    cache: { key: "quant-shadow:50", validate: isShadowRecords },
+    cache: { key: "quant-shadow:50", day: cacheDay, validate: isShadowRecords },
   });
   const shadowAnalyticsLoader = useCallback(
     () => loadQuantShadowAnalytics ? loadQuantShadowAnalytics(5) : Promise.reject(new Error("shadow analytics disabled")),
@@ -373,6 +376,7 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     initialDelayMs: 2_200,
     cache: {
       key: "quant-shadow-analytics:5",
+      day: cacheDay,
       validate: (value): value is Awaited<ReturnType<QuantShadowAnalyticsLoader>> => (
         isRecord(value) && typeof value.generated_at === "string" && Array.isArray(value.buckets)
       ),
@@ -390,6 +394,7 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     initialDelayMs: 2_600,
     cache: {
       key: "quant-calibration:5",
+      day: cacheDay,
       validate: (value): value is Awaited<ReturnType<QuantCalibrationLoader>> => (
         isRecord(value) && typeof value.generated_at === "string" && Array.isArray(value.splits)
       ),
@@ -405,7 +410,7 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     enabled: Boolean(loadDecisionJournal),
     errorMessage: "个人复盘日志暂不可用",
     initialDelayMs: 1_800,
-    cache: { key: "quant-decision-journal:50", validate: isDecisionJournal },
+    cache: { key: "quant-decision-journal:50", day: cacheDay, validate: isDecisionJournal },
   });
   const refreshDecisionJournal = decisionJournalResource.refreshNow;
   const appendDecisionJournal = useCallback(async (request: Parameters<DecisionJournalCreator>[0]) => {
@@ -415,7 +420,7 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
   }, [createDecisionJournal, refreshDecisionJournal]);
   const boardAsOf = board?.as_of;
   const backtestLoader = useCallback(
-    () => selected && boardAsOf ? runBacktest(selected, undefined) : Promise.reject(new Error("backtest target unavailable")),
+    (signal?: AbortSignal) => selected && boardAsOf ? runBacktest(selected, signal) : Promise.reject(new Error("backtest target unavailable")),
     [boardAsOf, runBacktest, selected],
   );
   const backtestResource = useQuantLiveResource({
@@ -426,12 +431,13 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     initialDelayMs: 600,
     cache: {
       key: `quant-backtest:${selected ?? "none"}:${boardAsOf ?? "none"}`,
+      day: cacheDay,
       validate: (value): value is BacktestResult => hasMatchingSymbol(value, selected),
     },
   });
   const walkForwardLoader = useCallback(
-    () => selected && loadWalkForward
-      ? loadWalkForward(selected, undefined)
+    (signal?: AbortSignal) => selected && loadWalkForward
+      ? loadWalkForward(selected, signal)
       : Promise.reject(new Error("walk-forward target unavailable")),
     [loadWalkForward, selected],
   );
@@ -443,6 +449,7 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     initialDelayMs: 850,
     cache: {
       key: `quant-walk-forward:${selected ?? "none"}:${boardAsOf ?? "none"}`,
+      day: cacheDay,
       validate: (value): value is Awaited<ReturnType<QuantWalkForwardLoader>> => hasMatchingSymbol(value, selected),
     },
   });
@@ -460,6 +467,7 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     initialDelayMs: 1_100,
     cache: {
       key: `quant-kronos:${selected ?? "none"}:${boardAsOf ?? "none"}`,
+      day: cacheDay,
       validate: (value): value is KronosForecastResponse => hasMatchingSymbol(value, selected),
     },
   });

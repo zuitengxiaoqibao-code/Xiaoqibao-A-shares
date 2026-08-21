@@ -101,11 +101,15 @@ def test_registered_focus_source_merges_primary_and_user_selected_symbols(tmp_pa
         "600519", source="quant_analysis", registered_at=NOW,
         expires_at=NOW + timedelta(minutes=15),
     )
+    repository.register_focus_symbol(
+        "300001", source="watchlist", registered_at=NOW,
+        expires_at=NOW + timedelta(minutes=15),
+    )
     source = RegisteredFocusSymbolSource(
         lambda _now: ("000001", "600519"), repository,
     )
 
-    assert source(NOW) == ("000001", "600519")
+    assert source(NOW) == ("000001", "600519", "300001")
 
 
 def test_failure_backoff_caps_and_success_resets(tmp_path) -> None:
@@ -325,6 +329,72 @@ def test_due_executions_advance_state_but_persist_only_changed_quote_content(tmp
     latest = {item.symbol: item for item in reopened.latest_snapshots(NOW + timedelta(seconds=360))}
     assert latest["000001"].price == Decimal("10.1")
     assert latest["300001"].price == Decimal("20")
+
+
+def test_same_symbol_and_observed_second_is_archived_once_across_scopes(tmp_path) -> None:
+    repository = PollStateRepository(tmp_path / "same-second.sqlite3")
+    state = PollState(
+        last_focus_success_at=NOW,
+        next_focus_due_at=NOW + timedelta(seconds=60),
+        next_universe_due_at=NOW + timedelta(seconds=180),
+    )
+    first = MarketFeedSnapshot(
+        symbol="000001", price=Decimal("10"), change=Decimal("0"),
+        change_percent=Decimal("0"), volume=Decimal("100"), source="focus",
+        observed_at=NOW, fetched_at=NOW, quality="ready", source_snapshot_id="focus-1",
+    )
+    changed = first.model_copy(update={
+        "price": Decimal("10.1"), "source": "universe", "source_snapshot_id": "universe-1",
+        "fetched_at": NOW + timedelta(milliseconds=500),
+    })
+
+    assert repository.append_success_batch("focus-1", "focus", (first,), state, NOW)
+    assert repository.append_success_batch("universe-1", "universe", (changed,), state, NOW)
+
+    stored = repository.intraday_snapshots(
+        "000001", date(2026, 7, 14), cutoff=NOW + timedelta(seconds=1),
+    )
+    assert len(stored) == 1
+    assert stored[0].price == Decimal("10")
+
+
+def test_legacy_same_second_duplicates_are_deduplicated_in_read_projection(tmp_path) -> None:
+    database = tmp_path / "legacy-same-second.sqlite3"
+    repository = PollStateRepository(database)
+    base = MarketFeedSnapshot(
+        symbol="000001", price=Decimal("10"), change=Decimal("0"),
+        change_percent=Decimal("0"), volume=Decimal("100"), source="focus",
+        observed_at=NOW, fetched_at=NOW, quality="ready", source_snapshot_id="legacy-1",
+    )
+    duplicate = base.model_copy(update={
+        "price": Decimal("10.2"), "source": "universe", "source_snapshot_id": "legacy-2",
+        "fetched_at": NOW + timedelta(milliseconds=500),
+    })
+    for scope, value in (("focus", base), ("universe", duplicate)):
+        repository.connection.execute(
+            """INSERT INTO intraday_market_snapshot_events(
+            scope,symbol,observed_at,source_snapshot_id,payload,content_hash)
+            VALUES(?,?,?,?,?,?)""",
+            (
+                scope, value.symbol, value.observed_at.isoformat(), value.source_snapshot_id,
+                PollStateRepository._snapshot_payload(value),
+                PollStateRepository._snapshot_content_hash(value),
+            ),
+        )
+    repository.connection.commit()
+    repository.close()
+
+    reopened = PollStateRepository(database)
+    stored = reopened.intraday_snapshots(
+        "000001", date(2026, 7, 14), cutoff=NOW + timedelta(seconds=1),
+    )
+    latest = reopened.latest_snapshots(NOW + timedelta(seconds=1))
+
+    assert len(stored) == 1
+    assert stored[0].source_snapshot_id == "legacy-1"
+    assert len(latest) == 1
+    assert latest[0].source_snapshot_id == "legacy-1"
+    assert len(reopened.snapshots()) == 2
 
 
 def test_intraday_snapshots_filter_symbol_trading_date_and_cutoff(tmp_path) -> None:

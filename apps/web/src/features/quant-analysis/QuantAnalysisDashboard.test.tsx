@@ -432,16 +432,16 @@ describe("QuantAnalysisDashboard", () => {
 
   it("reloads archived ticks and backtest evidence when the candidate changes", async () => {
     const loadTicks = vi.fn(async (symbol: string) => ticks(symbol));
-    const runBacktest = vi.fn(async (symbol: string) => backtest(symbol));
+    const runBacktest = vi.fn(async (symbol: string, _signal?: AbortSignal) => backtest(symbol));
     render(<QuantAnalysisDashboard loadBoard={async () => board} loadTicks={loadTicks} runBacktest={runBacktest} />);
 
     await waitFor(() => expect(loadTicks).toHaveBeenCalledWith("600001"));
-    await waitFor(() => expect(runBacktest).toHaveBeenCalledWith("600001", undefined));
+    await waitFor(() => expect(runBacktest).toHaveBeenCalledWith("600001", expect.any(AbortSignal)));
 
     fireEvent.change(screen.getByRole("combobox", { name: "量化分析股票" }), { target: { value: "000001" } });
 
     await waitFor(() => expect(loadTicks).toHaveBeenCalledWith("000001"));
-    await waitFor(() => expect(runBacktest).toHaveBeenCalledWith("000001", undefined));
+    await waitFor(() => expect(runBacktest).toHaveBeenCalledWith("000001", expect.any(AbortSignal)));
     expect(await screen.findByRole("img", { name: "样本二盘中价格和成交量" })).toBeInTheDocument();
   });
 
@@ -522,7 +522,7 @@ describe("QuantAnalysisDashboard", () => {
     const loadBoard = vi.fn(async () => board);
     const loadTicks = vi.fn(async (symbol: string) => ticks(symbol));
     const loadQuantStrategy = vi.fn(async () => strategyDashboard);
-    const runBacktest = vi.fn(async (symbol: string) => backtest(symbol));
+    const runBacktest = vi.fn(async (symbol: string, _signal?: AbortSignal) => backtest(symbol));
     const view = render(<QuantAnalysisDashboard
       loadBoard={loadBoard}
       loadTicks={loadTicks}
@@ -547,7 +547,7 @@ describe("QuantAnalysisDashboard", () => {
       expect(runBacktest).not.toHaveBeenCalled();
 
       await act(async () => { await vi.advanceTimersByTimeAsync(350); });
-      expect(runBacktest).toHaveBeenCalledWith("600001", undefined);
+      expect(runBacktest).toHaveBeenCalledWith("600001", expect.any(AbortSignal));
 
       await act(async () => { await vi.advanceTimersByTimeAsync(400); });
       expect(loadTicks).toHaveBeenCalledTimes(2);

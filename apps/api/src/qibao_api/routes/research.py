@@ -97,7 +97,7 @@ class CandidateSentimentBatchRequest(BaseModel):
 class IntradayFocusRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    source: str = Field(default="quant_analysis", min_length=1, max_length=64)
+    source: Literal["quant_analysis", "watchlist"] = "quant_analysis"
     ttl_seconds: int = Field(default=900, ge=60, le=3600)
 
 

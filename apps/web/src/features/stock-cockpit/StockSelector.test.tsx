@@ -288,11 +288,15 @@ describe("StockSelector", () => {
   });
 
   it("adds a search result to watchlist", async () => {
+    const changed = vi.fn();
+    window.addEventListener("qibao:a-share-watchlist-change", changed);
     renderSelector();
     fireEvent.change(screen.getByRole("searchbox", { name: "搜索 A 股" }), { target: { value: "平安" } });
     await screen.findByRole("option", { name: /000001.*平安银行/ });
     fireEvent.click(screen.getByRole("button", { name: "将 000001 加入自选" }));
     expect(localStorage.getItem("qibao.a_share.watchlist.v1")).toBe('["000001"]');
+    expect(changed).toHaveBeenCalledTimes(1);
+    window.removeEventListener("qibao:a-share-watchlist-change", changed);
   });
 
   it("shows verified historical price without presenting it as live quote data", async () => {

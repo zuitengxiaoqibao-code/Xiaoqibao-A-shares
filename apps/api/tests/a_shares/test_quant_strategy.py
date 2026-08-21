@@ -630,10 +630,10 @@ def test_service_serves_disk_snapshot_before_first_overview_refresh(tmp_path) ->
     assert first.refresh_state == "pending"
     assert first.snapshot_source == "disk"
     assert first.candidates == stored.candidates
-    assert first.candidate_scan_state == "pending"
-    assert first.candidate_scan_phase == "loading_overview"
+    assert first.candidate_scan_state == "ready"
+    assert first.candidate_scan_phase == stored.candidate_scan_phase
     assert "market_overview_pending" in first.missing_data
-    assert "candidate_scan_pending" in first.missing_data
+    assert "candidate_scan_pending" not in first.missing_data
     release.set()
     reader.close()
 

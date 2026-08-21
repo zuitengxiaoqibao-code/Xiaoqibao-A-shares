@@ -686,6 +686,29 @@ def test_intraday_focus_registration_keeps_selected_stock_in_monitor_scope() -> 
     )]
 
 
+def test_intraday_focus_registration_accepts_watchlist_and_rejects_unknown_sources() -> None:
+    repository = IntradayFocusRepository()
+    application = FastAPI()
+    application.include_router(research_router)
+    application.state.poll_state_repository = repository
+    application.dependency_overrides[get_server_time] = lambda: SEARCH_NOW
+    client = TestClient(application)
+
+    accepted = client.post(
+        "/api/v1/a-shares/000001/intraday-focus",
+        json={"source": "watchlist", "ttl_seconds": 900},
+    )
+    rejected = client.post(
+        "/api/v1/a-shares/000001/intraday-focus",
+        json={"source": "external-caller", "ttl_seconds": 900},
+    )
+
+    assert accepted.status_code == 200
+    assert accepted.json()["source"] == "watchlist"
+    assert rejected.status_code == 422
+    assert len(repository.calls) == 1
+
+
 class TimelineService:
     def __init__(self) -> None:
         self.calls = []

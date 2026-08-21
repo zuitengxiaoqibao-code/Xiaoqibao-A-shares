@@ -5,7 +5,7 @@ import { shanghaiDay } from "../../shared/tradingDayContext";
 export type QuantLiveStatus = "loading" | "live" | "delayed" | "paused" | "error";
 
 type Options<T> = {
-  loader: () => Promise<T>;
+  loader: (signal?: AbortSignal) => Promise<T>;
   intervalMs: number;
   enabled?: boolean;
   errorMessage: string;
@@ -13,6 +13,7 @@ type Options<T> = {
   initialDelayMs?: number;
   cache?: {
     key: string;
+    day: string;
     validate: (value: unknown) => value is T;
   };
 };
@@ -31,6 +32,7 @@ export type QuantLiveResource<T> = {
 type QuantCacheEnvelope<T> = {
   schemaVersion: 1;
   day: string;
+  observedAt: string;
   cachedAt: string;
   value: T;
 };
@@ -45,9 +47,9 @@ function quantCacheKey(key: string, day: string): string {
   return `${quantCachePrefix(key)}${day}`;
 }
 
-function readQuantCache<T>(cache: Options<T>["cache"], now = new Date()): { value: T; cachedAt: Date } | null {
+function readQuantCache<T>(cache: Options<T>["cache"]): { value: T; observedAt: Date } | null {
   if (!cache) return null;
-  const day = shanghaiDay(now);
+  const day = cache.day;
   const prefix = quantCachePrefix(cache.key);
   try {
     for (let index = localStorage.length - 1; index >= 0; index -= 1) {
@@ -58,17 +60,19 @@ function readQuantCache<T>(cache: Options<T>["cache"], now = new Date()): { valu
     const raw = localStorage.getItem(key);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as QuantCacheEnvelope<unknown>;
+    const observedAt = new Date(parsed.observedAt);
     const cachedAt = new Date(parsed.cachedAt);
     if (
       parsed.schemaVersion !== 1
       || parsed.day !== day
+      || Number.isNaN(observedAt.getTime())
       || Number.isNaN(cachedAt.getTime())
       || !cache.validate(parsed.value)
     ) {
       localStorage.removeItem(key);
       return null;
     }
-    return { value: parsed.value, cachedAt };
+    return { value: parsed.value, observedAt };
   } catch {
     localStorage.removeItem(quantCacheKey(cache.key, day));
     return null;
@@ -77,11 +81,12 @@ function readQuantCache<T>(cache: Options<T>["cache"], now = new Date()): { valu
 
 function writeQuantCache<T>(cache: Options<T>["cache"], value: T, now = new Date()): void {
   if (!cache || !cache.validate(value)) return;
-  const day = shanghaiDay(now);
+  const day = cache.day;
   try {
     localStorage.setItem(quantCacheKey(cache.key, day), JSON.stringify({
       schemaVersion: 1,
       day,
+      observedAt: now.toISOString(),
       cachedAt: now.toISOString(),
       value,
     } satisfies QuantCacheEnvelope<T>));
@@ -99,8 +104,15 @@ export function useQuantLiveResource<T>({
   initialDelayMs = 0,
   cache,
 }: Options<T>): QuantLiveResource<T> {
+  const [activeDay, setActiveDay] = useState(cache?.day ?? shanghaiDay(new Date()));
+  const activeCache = cache ? { ...cache, day: activeDay } : undefined;
   const initialCacheRef = useRef<{ value: T; cachedAt: Date } | null | undefined>(undefined);
-  if (initialCacheRef.current === undefined) initialCacheRef.current = readQuantCache(cache);
+  if (initialCacheRef.current === undefined) {
+    const restored = readQuantCache(activeCache);
+    initialCacheRef.current = restored
+      ? { value: restored.value, cachedAt: restored.observedAt }
+      : null;
+  }
   const initialCache = initialCacheRef.current;
   const [data, setData] = useState<T | null>(initialCache?.value ?? null);
   const [status, setStatus] = useState<QuantLiveStatus>(
@@ -115,12 +127,14 @@ export function useQuantLiveResource<T>({
   const loaderVersionRef = useRef(0);
   const errorMessageRef = useRef(errorMessage);
   const mergeDataRef = useRef(mergeData);
-  const cacheRef = useRef(cache);
-  const cacheKeyRef = useRef(cache?.key);
+  const cacheRef = useRef(activeCache);
+  const cacheIdentityRef = useRef(activeCache ? `${activeCache.key}:${activeCache.day}` : undefined);
+  const cacheDayPropRef = useRef(cache?.day);
   const dataRef = useRef<T | null>(initialCache?.value ?? null);
   const inFlightRef = useRef<{
     version: number;
     token: symbol;
+    controller: AbortController;
     promise: Promise<void>;
   } | null>(null);
   const mountedRef = useRef(true);
@@ -132,10 +146,11 @@ export function useQuantLiveResource<T>({
   loaderRef.current = loader;
   errorMessageRef.current = errorMessage;
   mergeDataRef.current = mergeData;
-  cacheRef.current = cache;
+  cacheRef.current = activeCache;
 
   useEffect(() => () => {
     mountedRef.current = false;
+    inFlightRef.current?.controller.abort();
   }, []);
 
   const refreshNow = useCallback(async () => {
@@ -144,12 +159,13 @@ export function useQuantLiveResource<T>({
       return inFlightRef.current.promise;
     }
     const token = Symbol("quant-live-request");
+    const controller = new AbortController();
     const request = (async () => {
       if (!mountedRef.current) return;
       setRefreshing(true);
       setLastAttemptAt(new Date());
       try {
-        const value = await loaderRef.current();
+        const value = await loaderRef.current(controller.signal);
         if (!mountedRef.current || version !== loaderVersionRef.current) return;
         const resolvedValue = mergeDataRef.current?.(dataRef.current, value) ?? value;
         if (resolvedValue === null || resolvedValue === undefined) {
@@ -162,6 +178,7 @@ export function useQuantLiveResource<T>({
         setLastSuccessAt(new Date());
         setStatus(document.hidden ? "paused" : "live");
       } catch {
+        if (controller.signal.aborted) return;
         if (!mountedRef.current || version !== loaderVersionRef.current) return;
         setError(errorMessageRef.current);
         setStatus(dataRef.current === null ? "error" : "delayed");
@@ -172,7 +189,7 @@ export function useQuantLiveResource<T>({
         if (inFlightRef.current?.token === token) inFlightRef.current = null;
       }
     })();
-    inFlightRef.current = { version, token, promise: request };
+    inFlightRef.current = { version, token, controller, promise: request };
     return request;
   }, []);
 
@@ -189,15 +206,33 @@ export function useQuantLiveResource<T>({
   }, []);
 
   useEffect(() => {
-    if (cacheKeyRef.current === cache?.key) return;
-    cacheKeyRef.current = cache?.key;
-    const restored = readQuantCache(cache);
+    if (cacheDayPropRef.current === cache?.day) return;
+    cacheDayPropRef.current = cache?.day;
+    setActiveDay(cache?.day ?? shanghaiDay(new Date()));
+  }, [cache?.day]);
+
+  useEffect(() => {
+    if (!cache) return undefined;
+    const boundary = Date.parse(`${activeDay}T16:00:00Z`);
+    const delay = Math.max(1, boundary - Date.now());
+    const timer = window.setTimeout(() => setActiveDay(shanghaiDay(new Date())), delay);
+    return () => window.clearTimeout(timer);
+  }, [activeDay, cache?.key]);
+
+  useEffect(() => {
+    const identity = activeCache ? `${activeCache.key}:${activeCache.day}` : undefined;
+    if (cacheIdentityRef.current === identity) return;
+    cacheIdentityRef.current = identity;
+    loaderVersionRef.current += 1;
+    inFlightRef.current?.controller.abort();
+    inFlightRef.current = null;
+    const restored = readQuantCache(activeCache);
     dataRef.current = restored?.value ?? null;
     setData(restored?.value ?? null);
-    setLastSuccessAt(restored?.cachedAt ?? null);
+    setLastSuccessAt(restored?.observedAt ?? null);
     setError("");
     setStatus(document.hidden ? "paused" : restored ? "delayed" : enabled ? "loading" : "paused");
-  }, [cache?.key, enabled]);
+  }, [activeCache?.day, activeCache?.key, enabled]);
 
   useEffect(() => {
     if (!enabled) {
@@ -230,6 +265,8 @@ export function useQuantLiveResource<T>({
     const handleVisibility = () => {
       if (document.hidden) {
         stopTimer();
+        inFlightRef.current?.controller.abort();
+        inFlightRef.current = null;
         setStatus("paused");
         return;
       }
@@ -246,9 +283,11 @@ export function useQuantLiveResource<T>({
     }
     return () => {
       stopTimer();
+      inFlightRef.current?.controller.abort();
+      inFlightRef.current = null;
       document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, [enabled, initialDelayMs, intervalMs, loader, refreshNow]);
+  }, [activeDay, enabled, initialDelayMs, intervalMs, loader, refreshNow]);
 
   return {
     data,
