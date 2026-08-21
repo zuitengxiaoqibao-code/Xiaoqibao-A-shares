@@ -9,12 +9,26 @@ from qibao_api.a_shares.quant_calibration import build_calibration_report
 from qibao_api.contracts.decision_journal import DecisionJournalCreate, DecisionJournalEntry
 from qibao_api.contracts.quant_strategy import QuantStrategyDashboard
 from qibao_api.dependencies import get_decision_journal, get_quant_shadow_ledger, get_quant_strategy_service, get_server_time
+from qibao_api.a_shares.strategy_draft_gate import StrategyDraftGate
 
 
 router = APIRouter(
     prefix="/api/v1/a-shares/quant-strategy",
     tags=["A股量化策略"],
 )
+
+
+@router.post("/drafts/validate")
+def validate_strategy_draft(payload: dict) -> dict:
+    """只做确定性门禁校验，不执行 AI 或用户提交的 Python 代码。"""
+    data_version = str(payload.pop("data_version", "unknown"))
+    result = StrategyDraftGate.review(payload, data_version)
+    return {
+        "status": result.status,
+        "reasons": result.reasons,
+        "evidence": result.evidence,
+        "probability": result.probability,
+    }
 
 
 @router.get("", response_model=QuantStrategyDashboard)
