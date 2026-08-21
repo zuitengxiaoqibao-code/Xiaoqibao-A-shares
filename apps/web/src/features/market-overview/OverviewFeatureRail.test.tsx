@@ -4,6 +4,7 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { OverviewFeatureRail } from "./OverviewFeatureRail";
+import { CORE_OVERVIEW_WORKSPACES } from "./workspaces/workspaceRegistry";
 
 describe("OverviewFeatureRail", () => {
   it("renders every feature in one continuous grid so wrapped rows share columns", () => {
@@ -35,5 +36,15 @@ describe("OverviewFeatureRail", () => {
     expect(screen.queryByRole("button", { name: "开盘检查" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "开盘啦" })).toHaveAttribute("data-feature-key", "开盘啦");
     expect(screen.getByRole("button", { name: "隔夜单/抢筹" })).toHaveAttribute("title", expect.stringContaining("委托"));
+  });
+
+  it("marks only the eight core overview workspaces for first-screen priority", () => {
+    render(<OverviewFeatureRail active="盘中异动" onSelect={vi.fn()} />);
+
+    const navigation = screen.getByRole("navigation", { name: "市场功能筛选" });
+    const core = [...navigation.querySelectorAll('button[data-core-overview="true"]')];
+    expect(core).toHaveLength(CORE_OVERVIEW_WORKSPACES.length);
+    expect(core.map((item) => item.textContent)).toEqual(expect.arrayContaining([...CORE_OVERVIEW_WORKSPACES]));
+    expect(navigation.querySelectorAll('button[data-core-overview="true"]')).toHaveLength(8);
   });
 });

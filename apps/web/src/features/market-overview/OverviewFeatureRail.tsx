@@ -1,4 +1,5 @@
 import { featureCatalog } from "./featureCatalog";
+import { isCoreOverviewWorkspace } from "./workspaces/workspaceRegistry";
 
 export function OverviewFeatureRail({ active, onSelect }: {
   active: string;
@@ -13,6 +14,7 @@ export function OverviewFeatureRail({ active, onSelect }: {
       data-family={feature.family}
       className={active === feature.key ? "active" : ""}
       aria-pressed={active === feature.key}
+      data-core-overview={isCoreOverviewWorkspace(feature.key) ? "true" : undefined}
       onClick={() => onSelect(feature.key)}
     >{feature.label}</button>)}
   </nav>;

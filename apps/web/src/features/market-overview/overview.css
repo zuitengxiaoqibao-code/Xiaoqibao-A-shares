@@ -82,6 +82,7 @@
 .overview-feature-rail button { width: 100%; min-width: 0; height: 100%; padding: 0 8px; overflow: hidden; border: 0; background: var(--surface-raised); color: var(--overview-text); font-size: 12px; text-align: center; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .overview-feature-rail button:hover { background: var(--surface-emphasis); color: var(--overview-blue); }
 .overview-feature-rail button.active { background: color-mix(in srgb, var(--overview-up) 20%, var(--surface-raised)); color: var(--overview-up); font-weight: 600; box-shadow: inset 0 -2px var(--overview-up); }
+.overview-feature-rail button[data-core-overview="true"] { border-top: 2px solid color-mix(in srgb, var(--overview-blue) 48%, transparent); }
 .overview-feature-rail button:focus-visible { position: relative; z-index: 1; outline-color: var(--overview-blue); }
 
 .overview-toolbar { display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 4px 8px; border: 1px solid var(--overview-line); background: var(--surface-raised); color: var(--overview-muted); font-size: 12px; }

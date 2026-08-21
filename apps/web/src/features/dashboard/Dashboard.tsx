@@ -94,14 +94,7 @@ const MonitorCenterView = lazy(() => loadMonitorCenterModule().then(({ MonitorCe
 const primaryRoutePreloaders = [
   loadTodayDecisionModule,
   loadCompanyResearchModule,
-  loadFirstLimitUpModule,
   loadQuantAnalysisModule,
-  loadNewsIntelligenceModule,
-  loadBeginnerRiskModule,
-  loadHistoryReviewModule,
-  loadDataSettingsModule,
-  loadOperationsModule,
-  loadConvertibleBondModule,
 ];
 
 type ViewState =

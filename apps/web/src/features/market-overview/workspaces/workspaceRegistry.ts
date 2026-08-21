@@ -1,5 +1,23 @@
 import type { WorkspaceBlock, WorkspaceDefinition, WorkspaceEvidence } from "./workspaceTypes";
 
+/** 首屏优先工作区；其余工作区仍保留一级菜单并按选择后挂载。 */
+export const CORE_OVERVIEW_WORKSPACES = [
+  "盘中异动",
+  "情绪周期",
+  "涨停板",
+  "板块涨停",
+  "游资追踪",
+  "人气榜",
+  "热点播报",
+  "复盘统计大全",
+] as const;
+
+export type CoreOverviewWorkspace = (typeof CORE_OVERVIEW_WORKSPACES)[number];
+
+export function isCoreOverviewWorkspace(label: string): label is CoreOverviewWorkspace {
+  return (CORE_OVERVIEW_WORKSPACES as readonly string[]).includes(label);
+}
+
 const quoteTruth = "价格与成交只取本地通达信当前快照；代表股票集合不是全市场完整排名。";
 const newsTruth = "只展示已写入本地新闻库且已关联 A 股代码的资讯，未核验内容会明确标记。";
 const historyTruth = "只有本地日线窗口完整时才给出历史结论，覆盖不足时保持未验证。";
