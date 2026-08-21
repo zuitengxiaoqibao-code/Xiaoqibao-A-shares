@@ -3,6 +3,20 @@ param([switch]$SkipTests)
 $ErrorActionPreference = "Stop"
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $Python = Join-Path $Root ".venv\Scripts\python.exe"
+if (-not (Test-Path -LiteralPath $Python)) {
+    throw "Missing build Python environment. Run the README environment setup first."
+}
+
+# The portable build and API tests must resolve the same declared dependency
+# set. Reinstalling the editable package is incremental when nothing changed,
+# while also pulling newly declared runtime dependencies into the build venv.
+Write-Host "Synchronizing API dependencies for the portable build..."
+& $Python -m pip install --disable-pip-version-check --quiet -e (Join-Path $Root "apps\api[dev]")
+if ($LASTEXITCODE -ne 0) { throw "API dependency synchronization failed" }
+
+& $Python -c "import multipart"
+if ($LASTEXITCODE -ne 0) { throw "Portable build dependency check failed: python-multipart" }
+
 $Release = Join-Path $Root "dist\XiaoQiBao-Portable"
 $DistRoot = Join-Path $Root "dist"
 $ReleaseExe = Join-Path $Release "xiaoqibao.exe"
