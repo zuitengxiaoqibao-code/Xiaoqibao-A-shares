@@ -16,6 +16,13 @@
 - Ruff：通过；冷启动导入测试确认主程序不会提前加载 DuckDB。
 - 所有真实数据不足状态继续使用 `partial`、`stale` 或 `unavailable`，没有随机行情、模拟候选或伪造 AI 概率。
 
-## 发布待验收
+## 最终 EXE 验收
 
-最终 EXE 路径、SHA-256、首帧/API 启动耗时、真实数据 smoke、持久目录保留和恢复状态在本次便携构建完成后回填。
+- 便携 EXE：`D:/Users/90090/Documents/金融财经/.worktrees/a-share-daily-research/dist/XiaoQiBao-Portable/xiaoqibao.exe`。
+- 发布清单绑定 clean commit：`892a9acb7594689b7b57e550f2e60ce3019885a0`；EXE SHA-256：`394613AF1E2CAD4FE2EC16D290276A65F6C88F99D1030D21424BDBDA46E02F14`；迁移版本：`1`。
+- 真实 EXE smoke：窗口可见 `90ms`，API 就绪 `4354ms`，完整验证 `18048ms`；请求耗时：overview `6654ms`、quant `45ms`、portfolio `38ms`、research `273ms`。
+- 真实数据状态：信息总览 `ready`、覆盖率 `98.77%`；量化策略 `partial`（12 个真实候选、证据覆盖 `85%`）；公司研究 `partial`（600519、证据覆盖 `0.65`、10 项反方检查）；无持仓组合风险 `unavailable`；通达信专业字段按实际能力保留 `ready/unavailable`，不以普通行情或模拟值替代。
+- 恢复演练：临时副本校验 `36` 个数据库文件，迁移 `1`，关键 API `pass`；八个持久目录 `config/data/news/cache/logs/models/exports/backups` 均保留。
+- 发布整合门禁：`TickFlow integration gate passed`。API `1624 passed, 1 skipped`，Web `128` 个测试文件/`732 passed`，Ruff、生产构建、UTF-8 乱码扫描和 `git diff --check` 通过。
+- 依赖治理：`scripts/build-portable.ps1` 现在会在构建前同步 `apps/api[dev]` 锁定依赖并预检 `python-multipart`，避免测试环境与打包环境分叉。
+- 边界：本轮只启动并结束观测台自动验证实例，未启动、关闭、重启或控制通达信，未控制鼠标或桌面；真实数据不足继续使用 `partial/stale/unavailable`，不伪造完整结果。
