@@ -41,3 +41,73 @@ def test_service_retry_reuses_frozen_facts(tmp_path):
     second = service.run(date(2026, 8, 21), now)
     assert first == second
     assert calls == 1
+
+
+def test_service_records_explicit_unconfigured_delivery_status(tmp_path):
+    repository = PostCloseReportRepository(tmp_path)
+    service = PostCloseReportService(
+        repository,
+        lambda _date: {"涨停": 10},
+        delivery=lambda _report: "未配置",
+    )
+
+    report = service.run(
+        date(2026, 8, 21), datetime(2026, 8, 21, 8, 0, tzinfo=timezone.utc)
+    )
+
+    delivery = repository.delivery(report.report_id)
+    assert delivery["feishu"]["status"] == "未配置"
+    assert delivery["feishu"]["reason"] is None
+
+
+def test_service_records_delivery_result_status_without_recollecting_facts(tmp_path):
+    repository = PostCloseReportRepository(tmp_path)
+    calls = 0
+
+    def source(_date):
+        nonlocal calls
+        calls += 1
+        return {"涨停": 10}
+
+    service = PostCloseReportService(
+        repository,
+        source,
+        delivery=lambda _report: type("Result", (), {"status": "sent"})(),
+    )
+    first = service.run(
+        date(2026, 8, 21), datetime(2026, 8, 21, 8, 0, tzinfo=timezone.utc)
+    )
+    second = service.run(
+        date(2026, 8, 21), datetime(2026, 8, 21, 8, 0, tzinfo=timezone.utc)
+    )
+
+    assert repository.delivery(first.report_id)["feishu"]["status"] == "sent"
+    assert second == first
+    assert calls == 1
+
+
+def test_service_retries_delivery_without_recollecting_facts(tmp_path):
+    repository = PostCloseReportRepository(tmp_path)
+    calls = 0
+
+    def source(_date):
+        nonlocal calls
+        calls += 1
+        return {"涨停": 10}
+
+    service = PostCloseReportService(
+        repository,
+        source,
+        delivery=lambda _report: type("Result", (), {"status": "sent"})(),
+    )
+    report = service.run(
+        date(2026, 8, 21), datetime(2026, 8, 21, 8, 0, tzinfo=timezone.utc)
+    )
+    repository.record_delivery(report.report_id, "feishu", "failed", "首次失败")
+    service.delivery = lambda _report: type("Result", (), {"status": "sent"})()
+
+    result = service.retry_delivery(report.report_id)
+
+    assert result == "sent"
+    assert repository.delivery(report.report_id)["feishu"]["status"] == "sent"
+    assert calls == 1

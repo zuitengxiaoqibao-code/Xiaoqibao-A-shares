@@ -70,6 +70,34 @@ class PostCloseReportRepository:
             ))
         return max(candidates, key=lambda item: item.observed_at) if candidates else None
 
+    def get(self, report_id: str) -> FrozenMarketReport | None:
+        if not report_id.startswith("postclose-") or "/" in report_id or "\\" in report_id:
+            return None
+        target = self.root / f"{report_id}.json"
+        if not target.exists():
+            return None
+        value = json.loads(target.read_text(encoding="utf-8"))
+        return FrozenMarketReport(
+            value["report_id"],
+            date.fromisoformat(value["trading_date"]),
+            datetime.fromisoformat(value["observed_at"]),
+            value["facts"],
+            value["quality"],
+            Decimal(value["coverage"]),
+            value["ai_status"],
+            value["explanation"],
+        )
+
+    def list(self, limit: int = 30) -> list[FrozenMarketReport]:
+        reports = []
+        for path in self.root.glob("postclose-*.json"):
+            if path.name.endswith(".delivery.json"):
+                continue
+            report = self.get(path.stem)
+            if report is not None:
+                reports.append(report)
+        return sorted(reports, key=lambda item: item.observed_at, reverse=True)[: max(1, limit)]
+
     def record_delivery(self, report_id: str, channel: str, status: str, reason: str | None = None) -> None:
         target = self.root / f"{report_id}.delivery.json"
         state = json.loads(target.read_text(encoding="utf-8")) if target.exists() else {}
@@ -112,11 +140,32 @@ class PostCloseReportService:
         self.repository.append(report)
         if self.delivery is not None:
             try:
-                self.delivery(report)
+                delivery_result = self.delivery(report)
             except Exception as error:
                 self.repository.record_delivery(report.report_id, "feishu", "failed", str(error))
             else:
-                self.repository.record_delivery(report.report_id, "feishu", "sent")
+                status = getattr(delivery_result, "status", delivery_result)
+                if not isinstance(status, str) or not status:
+                    status = "sent"
+                self.repository.record_delivery(report.report_id, "feishu", status)
         else:
             self.repository.record_delivery(report.report_id, "feishu", "未配置")
         return report
+
+    def retry_delivery(self, report_id: str) -> str:
+        report = self.repository.get(report_id)
+        if report is None:
+            raise KeyError(report_id)
+        if self.delivery is None:
+            self.repository.record_delivery(report_id, "feishu", "未配置")
+            return "未配置"
+        try:
+            result = self.delivery(report)
+        except Exception as error:
+            self.repository.record_delivery(report_id, "feishu", "failed", str(error))
+            raise
+        status = getattr(result, "status", result)
+        if not isinstance(status, str) or not status:
+            status = "sent"
+        self.repository.record_delivery(report_id, "feishu", status)
+        return status

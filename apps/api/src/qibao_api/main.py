@@ -175,6 +175,9 @@ from qibao_api.routes.speech import router as speech_router
 from qibao_api.routes.data_import import router as data_import_router
 from qibao_api.routes.monitor_center import router as monitor_center_router
 from qibao_api.a_shares.postclose_report import PostCloseReportRepository, PostCloseReportService
+from qibao_api.a_shares.monitor_center import MonitorCenterService, MonitorRuntime
+from qibao_api.notifications.feishu import FeishuWebhookDelivery
+from qibao_api.notifications.settings import NotificationSettingsRepository
 from qibao_api.settings import Settings
 from qibao_api.static_frontend import install_static_frontend
 from qibao_api.settings_repository import AISettingsRepository, EffectiveAISettingsResolver
@@ -485,6 +488,19 @@ async def _refresh_local_source_discovery(
         logger.warning("local source discovery refresh unavailable", exc_info=True)
 
 
+def _deliver_postclose_report(delivery, report) -> str:
+    result = delivery.send(
+        title=f"A 股盘后复盘 {report.trading_date.isoformat()}",
+        lines=(
+            f"数据状态：{report.quality}",
+            f"证据覆盖率：{report.coverage}%",
+            f"AI 解释：{report.ai_status}",
+            f"报告编号：{report.report_id}",
+        ),
+    )
+    return result.status
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     startup_started = time.monotonic()
@@ -536,6 +552,21 @@ async def lifespan(application: FastAPI):
     application.state.speech_settings_repository = speech_settings_repository
     is_portable_runtime = bool(os.environ.get("QIBAO_PORTABLE_ROOT"))
     portable_root = Path(os.environ.get("QIBAO_PORTABLE_ROOT", settings.data_dir))
+    notification_settings_repository = NotificationSettingsRepository(
+        portable_root / "config"
+    )
+    application.state.notification_settings_repository = notification_settings_repository
+    feishu_delivery = FeishuWebhookDelivery(notification_settings_repository.load)
+    application.state.feishu_delivery = feishu_delivery
+    monitor_center_service = MonitorCenterService(
+        settings.data_dir / "monitor-center.json"
+    )
+    application.state.monitor_center_service = monitor_center_service
+    monitor_runtime = MonitorRuntime(
+        realtime_snapshot_bus, monitor_center_service, feishu=feishu_delivery
+    )
+    application.state.monitor_runtime = monitor_runtime
+    monitor_runtime.start()
     local_source_settings_repository = LocalSourceSettingsRepository(
         portable_root / "config" / "data-sources.json"
     )
@@ -1286,13 +1317,18 @@ async def lifespan(application: FastAPI):
                 application.state.local_market_review_source = (
                     local_market_review_source
                 )
+                postclose_report_repository = PostCloseReportRepository(settings.data_dir / "postclose-reports")
+                application.state.postclose_report_repository = postclose_report_repository
                 postclose_report_service = PostCloseReportService(
-                    PostCloseReportRepository(settings.data_dir / "postclose-reports"),
+                    postclose_report_repository,
                     lambda trading_date: (
                         local_market_review_source.current()
                         if local_market_review_source.current() is not None
                         and local_market_review_source.current().as_of == trading_date
                         else local_market_review_source.refresh(as_of=trading_date)
+                    ),
+                    delivery=lambda report: _deliver_postclose_report(
+                        feishu_delivery, report
                     ),
                 )
                 application.state.postclose_report_service = postclose_report_service
@@ -1522,6 +1558,7 @@ async def lifespan(application: FastAPI):
                 )
                 if realtime_ai_trigger_queue is not None:
                     realtime_ai_trigger_queue.close()
+                monitor_runtime.close()
                 if tdx_auto_import_task is not None:
                     tdx_auto_import_task.cancel()
                     with suppress(asyncio.CancelledError):

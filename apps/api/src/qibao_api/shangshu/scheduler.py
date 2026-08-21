@@ -158,6 +158,10 @@ class DailyBriefingScheduler:
                 self._run_first_limit_up(
                     trading_date, slot, occurred_at=now, trigger="manual"
                 )
+            if phase == "postclose" and history_ready:
+                self._run_postclose_report(
+                    trading_date, slot, occurred_at=now, trigger="manual"
+                )
             return self._run(
                 phase, trading_date, slot,
                 workflow_now=now,

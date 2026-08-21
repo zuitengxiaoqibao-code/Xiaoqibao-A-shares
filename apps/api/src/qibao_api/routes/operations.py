@@ -42,9 +42,67 @@ from qibao_api.dependencies import (
 )
 from qibao_api.gongbu.backup_service import BackupRecord, BackupVerification
 from qibao_api.operations.freshness import DEFAULT_FRESHNESS_POLICIES
+from qibao_api.a_shares.postclose_report import PostCloseReportRepository
 
 
 router = APIRouter(prefix="/api/v1/operations", tags=["工部运维"])
+
+
+def _postclose_repository(request: Request) -> PostCloseReportRepository:
+    existing = getattr(request.app.state, "postclose_report_repository", None)
+    if existing is not None:
+        return existing
+    return PostCloseReportRepository("data/postclose-reports")
+
+
+@router.get("/postclose-reports")
+def list_postclose_reports(request: Request, limit: int = Query(30, ge=1, le=100)):
+    repository = _postclose_repository(request)
+    return [
+        {
+            "report_id": report.report_id,
+            "trading_date": report.trading_date,
+            "observed_at": report.observed_at,
+            "quality": report.quality,
+            "coverage": str(report.coverage),
+            "ai_status": report.ai_status,
+            "delivery": repository.delivery(report.report_id),
+        }
+        for report in repository.list(limit)
+    ]
+
+
+@router.get("/postclose-reports/{report_id}")
+def get_postclose_report(report_id: str, request: Request):
+    repository = _postclose_repository(request)
+    report = repository.get(report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="盘后报告不存在")
+    return {
+        "report_id": report.report_id,
+        "trading_date": report.trading_date,
+        "observed_at": report.observed_at,
+        "facts": report.facts,
+        "quality": report.quality,
+        "coverage": str(report.coverage),
+        "ai_status": report.ai_status,
+        "explanation": report.explanation,
+        "delivery": repository.delivery(report.report_id),
+    }
+
+
+@router.post("/postclose-reports/{report_id}/retry")
+def retry_postclose_report(report_id: str, request: Request):
+    service = getattr(request.app.state, "postclose_report_service", None)
+    if service is None or not hasattr(service, "retry_delivery"):
+        raise HTTPException(status_code=503, detail="盘后投递服务尚未就绪")
+    try:
+        status = service.retry_delivery(report_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="盘后报告不存在") from error
+    except Exception as error:
+        raise HTTPException(status_code=503, detail="盘后投递失败，详细原因已记录") from error
+    return {"report_id": report_id, "status": status}
 
 
 @router.get("/realtime-stream")
@@ -221,6 +279,80 @@ def diagnostics_summary(
             cache_state="not_applicable",
             limitations=limitations,
         ))
+    registry = getattr(request.app.state, "shared_snapshot_registry", None)
+    snapshot_rows = {
+        item.get("kind"): item
+        for item in (registry.summary() if registry is not None and hasattr(registry, "summary") else [])
+    }
+
+    def add_domain(
+        domain: str,
+        kind: str,
+        *,
+        unavailable_reason: str,
+        repair_action: str,
+        default_status: str = "unavailable",
+    ) -> None:
+        item = snapshot_rows.get(kind, {})
+        version = int(item.get("snapshot_version") or 0)
+        freshness = str(item.get("freshness") or "unavailable")
+        status = (
+            default_status if version == 0
+            else "stale" if freshness == "stale"
+            else "partial" if freshness in {"partial", "unavailable"}
+            else "ready"
+        )
+        coverage = item.get("coverage_percent")
+        limitations: tuple[str, ...] = ()
+        if status != "ready":
+            latest = item.get("trade_date")
+            limitations = (
+                f"最新数据日期：{latest or '尚无可核验快照'}；{unavailable_reason}",
+                f"修复建议：{repair_action}",
+            )
+        quality_items.append(DataQualityItem(
+            domain=domain,
+            status=status,
+            source=str(item.get("source") or "local-observation-platform"),
+            trade_date=item.get("trade_date"),
+            observed_at=item.get("observed_at"),
+            coverage_percent=(round(float(coverage), 2) if coverage is not None else None),
+            cache_state="cache" if version else "not_applicable",
+            limitations=limitations,
+        ))
+
+    add_domain(
+        "quant_strategy", "quant_factors",
+        unavailable_reason="量化因子覆盖或时效不足",
+        repair_action="前往数据与运维中心补齐日线，再刷新量化分析",
+    )
+    add_domain(
+        "company_research", "financial_valuation",
+        unavailable_reason="财务或估值证据尚未形成完整快照",
+        repair_action="在公司研究刷新目标股票，并检查财务数据源",
+    )
+    portfolio_store = getattr(request.app.state, "portfolio_risk_store", None)
+    quality_items.append(DataQualityItem(
+        domain="portfolio_risk",
+        status="partial" if portfolio_store is not None else "unavailable",
+        source="local-portfolio",
+        cache_state="cache" if portfolio_store is not None else "not_applicable",
+        limitations=(
+            "尚无持仓时无法计算组合集中度和回撤",
+            "修复建议：在风险提醒中录入真实持仓后重新分析",
+        ),
+    ))
+    tdx_professional = getattr(request.app.state, "tdx_professional_source", None)
+    quality_items.append(DataQualityItem(
+        domain="tdx_professional",
+        status="partial" if tdx_professional is not None else "unavailable",
+        source="local-tdx",
+        cache_state="not_applicable",
+        limitations=(
+            "专业字段按本机通达信实际能力返回，普通行情不替代专业语义",
+            "修复建议：在数据设置检测本地通达信目录与专业接口能力",
+        ),
+    ))
     quality_matrix = DataQualityMatrix(
         generated_at=generated_at,
         items=tuple(quality_items),

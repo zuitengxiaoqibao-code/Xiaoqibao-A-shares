@@ -12,6 +12,7 @@ from qibao_api.operations.read_model import OperationsReadModel
 from qibao_api.tasks.progress import TaskProgressRegistry
 from qibao_api.operations.performance_store import PerformanceStore
 from qibao_api.operations.realtime_snapshot_bus import RealtimeSnapshotBus
+from qibao_api.a_shares.postclose_report import PostCloseReportBuilder, PostCloseReportRepository
 
 
 NOW = datetime(2026, 7, 14, 8, 0, tzinfo=UTC)
@@ -248,6 +249,34 @@ def test_operations_diagnostics_is_safe_and_actionable(tmp_path) -> None:
     assert "token" not in response.text.lower()
 
 
+def test_operations_diagnostics_includes_research_domain_watermarks_and_repairs(tmp_path):
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_scheduler] = lambda: Scheduler()
+    app.dependency_overrides[get_backup_service] = lambda: Backups()
+    app.dependency_overrides[get_operations_read_model] = lambda: OperationsReadModel(tmp_path)
+    app.dependency_overrides[get_operations_repository] = lambda: SourceHealth()
+    app.dependency_overrides[get_tdx_auto_import_monitor] = lambda: type(
+        "Monitor", (), {"status": lambda self: {"state": "unchanged", "file_count": 2, "error": None}}
+    )()
+    app.state.shared_snapshot_registry = type("Registry", (), {"summary": lambda self: [
+        {"kind": "quant_factors", "snapshot_version": 3, "trade_date": "2026-07-17", "observed_at": NOW.isoformat(), "coverage_percent": 85.0, "freshness": "stale", "source": "local-tdx"},
+        {"kind": "financial_valuation", "snapshot_version": 0, "trade_date": None, "observed_at": None, "coverage_percent": None, "freshness": "unavailable", "source": "unavailable"},
+    ]})()
+    app.state.tdx_professional_source = object()
+    client = TestClient(app)
+
+    body = client.get("/api/v1/operations/diagnostics").json()
+    by_domain = {item["domain"]: item for item in body["quality_matrix"]["items"]}
+
+    assert by_domain["quant_strategy"]["status"] == "stale"
+    assert "2026-07-17" in " ".join(by_domain["quant_strategy"]["limitations"])
+    assert "补齐" in " ".join(by_domain["quant_strategy"]["limitations"])
+    assert by_domain["company_research"]["status"] == "unavailable"
+    assert by_domain["portfolio_risk"]["status"] == "unavailable"
+    assert by_domain["tdx_professional"]["status"] == "partial"
+
+
 def test_operations_route_returns_real_task_progress_and_404_for_unknown() -> None:
     registry = TaskProgressRegistry(clock=lambda: NOW)
     task = registry.create("company-research", total=4)
@@ -301,3 +330,44 @@ def test_operations_storage_requires_preview_confirmation_and_exposes_performanc
     assert metrics.json()["snapshots"][0]["kind"] == "market_cross_section"
     assert metrics.json()["snapshots"][0]["duplicate_compute_count"] == 1
     assert freshness.json()["policies"]["intraday_quote"]["live_seconds"] == 120
+
+
+def test_postclose_report_routes_list_and_retry_delivery_without_recollecting(tmp_path):
+    repository = PostCloseReportRepository(tmp_path)
+    report = PostCloseReportBuilder().freeze(
+        date(2026, 8, 21), NOW, {"涨停": 10}, coverage=80
+    )
+    repository.append(report)
+    repository.record_delivery(report.report_id, "feishu", "failed", "网络连接失败")
+
+    class Postclose:
+        def retry_delivery(self, report_id):
+            assert report_id == report.report_id
+            repository.record_delivery(report_id, "feishu", "sent")
+            return "sent"
+
+    app = FastAPI()
+    app.include_router(router)
+    app.state.postclose_report_repository = repository
+    app.state.postclose_report_service = Postclose()
+    client = TestClient(app)
+
+    listed = client.get("/api/v1/operations/postclose-reports")
+    retried = client.post(f"/api/v1/operations/postclose-reports/{report.report_id}/retry")
+    detail = client.get(f"/api/v1/operations/postclose-reports/{report.report_id}")
+
+    assert listed.status_code == 200
+    assert listed.json()[0]["report_id"] == report.report_id
+    assert retried.json() == {"report_id": report.report_id, "status": "sent"}
+    assert detail.json()["delivery"]["feishu"]["status"] == "sent"
+
+
+def test_postclose_report_route_rejects_path_traversal(tmp_path):
+    app = FastAPI()
+    app.include_router(router)
+    app.state.postclose_report_repository = PostCloseReportRepository(tmp_path)
+    client = TestClient(app)
+
+    response = client.get("/api/v1/operations/postclose-reports/..%2Fsecret")
+
+    assert response.status_code in {404, 422}

@@ -7,13 +7,29 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 
 from qibao_api.a_shares.monitor_center import MonitorCenterService
+from qibao_api.notifications.settings import (
+    NotificationSettings,
+    NotificationSettingsRepository,
+)
 
 router = APIRouter(prefix="/api/v1/monitor-center", tags=["监控中心"])
 
 
 def _service(request: Request) -> MonitorCenterService:
+    existing = getattr(request.app.state, "monitor_center_service", None)
+    if existing is not None:
+        return existing
     path = Path(getattr(request.app.state, "data_dir", "data")) / "monitor-center.json"
     return MonitorCenterService(path)
+
+
+def _notification_repository(request: Request) -> NotificationSettingsRepository:
+    repository = getattr(request.app.state, "notification_settings_repository", None)
+    if repository is not None:
+        return repository
+    return NotificationSettingsRepository(
+        Path(getattr(request.app.state, "data_dir", "data"))
+    )
 
 
 @router.get("/rules")
@@ -32,6 +48,68 @@ def save_rule(payload: dict[str, Any], request: Request) -> dict[str, Any]:
 @router.get("/alerts")
 def alerts(request: Request, limit: int = 50) -> list[dict[str, Any]]:
     return _service(request).history(limit)
+
+
+@router.get("/alerts/pending-tts")
+def pending_tts(request: Request, limit: int = 10) -> list[dict[str, Any]]:
+    return _service(request).pending_tts(limit)
+
+
+@router.post("/alerts/{alert_id}/delivery")
+def complete_delivery(alert_id: str, payload: dict[str, Any], request: Request) -> dict[str, str]:
+    try:
+        return _service(request).complete_delivery(
+            alert_id, str(payload.get("channel", "")), str(payload.get("status", "")), payload.get("reason")
+        )
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="告警不存在") from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.post("/notification-settings/test")
+def test_notification_settings(request: Request) -> dict[str, str]:
+    delivery = getattr(request.app.state, "feishu_delivery", None)
+    if delivery is None:
+        return {"status": "未配置", "message": "飞书投递器尚未初始化"}
+    try:
+        result = delivery.send(title="一树-A股观测台测试", lines=("这是一条本机配置测试消息，不代表交易信号。",))
+        return {"status": result.status, "message": result.message}
+    except Exception as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@router.get("/notification-settings")
+def notification_settings(request: Request) -> dict[str, object]:
+    return _notification_repository(request).view()
+
+
+@router.put("/notification-settings")
+def save_notification_settings(
+    payload: dict[str, Any], request: Request
+) -> dict[str, object]:
+    if set(payload) != {"feishu_enabled", "feishu_webhook"}:
+        raise HTTPException(status_code=422, detail="通知设置字段不完整")
+    try:
+        repository = _notification_repository(request)
+        webhook = payload["feishu_webhook"]
+        if webhook is None and repository.view()["feishu_configured"]:
+            webhook = repository.load().feishu_webhook
+        settings = NotificationSettings(
+            feishu_enabled=payload["feishu_enabled"],
+            feishu_webhook=webhook,
+        )
+        repository.save(settings)
+        return repository.view()
+    except (KeyError, TypeError, ValueError, RuntimeError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.delete("/notification-settings")
+def delete_notification_settings(request: Request) -> dict[str, object]:
+    repository = _notification_repository(request)
+    repository.delete()
+    return repository.view()
 
 
 @router.post("/test")

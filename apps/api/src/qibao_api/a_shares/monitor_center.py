@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import queue
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -62,7 +63,12 @@ class MonitorCenterService:
     @staticmethod
     def _matches(snapshot: dict[str, Any], conditions: dict[str, Any]) -> bool:
         for field, operators in conditions.items():
-            value = snapshot.get(field)
+            value: Any = snapshot
+            for segment in field.split("."):
+                if not isinstance(value, dict) or segment not in value:
+                    value = None
+                    break
+                value = value[segment]
             if value is None:
                 return False
             for operator, expected in operators.items():
@@ -78,12 +84,23 @@ class MonitorCenterService:
                     return False
         return True
 
-    def evaluate(self, snapshot: dict[str, Any], observed_at: datetime) -> dict[str, Any] | None:
+    def evaluate(
+        self,
+        snapshot: dict[str, Any],
+        observed_at: datetime,
+        *,
+        topic: str | None = None,
+    ) -> dict[str, Any] | None:
         if observed_at.tzinfo is None:
             raise ValueError("观测时间必须带时区")
         with self._lock:
             for rule in self._state["rules"]:
-                if not rule.get("enabled", True) or not self._matches(snapshot, rule["conditions"]):
+                topics = rule.get("topics") or []
+                if (
+                    not rule.get("enabled", True)
+                    or (topics and topic not in topics)
+                    or not self._matches(snapshot, rule["conditions"])
+                ):
                     continue
                 identity = f"{rule['id']}|{snapshot.get('symbol', '')}|{json.dumps(snapshot, sort_keys=True, ensure_ascii=False)}"
                 input_hash = hashlib.sha256(identity.encode("utf-8")).hexdigest()
@@ -92,7 +109,18 @@ class MonitorCenterService:
                     elapsed = observed_at.timestamp() - datetime.fromisoformat(prior["observed_at"]).timestamp()
                     if elapsed < int(rule.get("cooldown_seconds", 60)):
                         return None
-                alert = {"alert_id": f"alert-{input_hash[:24]}", "rule_id": rule["id"], "symbol": snapshot.get("symbol"), "observed_at": observed_at.astimezone(timezone.utc).isoformat(), "input_hash": input_hash, "snapshot": snapshot, "delivery": {"in_app": "pending", "tts": "pending", "feishu": "pending"}}
+                channels = rule.get("channels")
+                delivery = {"in_app": "pending", "tts": "pending", "feishu": "pending"}
+                if isinstance(channels, dict):
+                    if channels.get("in_app") is False:
+                        delivery["in_app"] = "未配置"
+                    if channels.get("tts") is False:
+                        delivery["tts"] = "未配置"
+                    if channels.get("feishu") is False:
+                        delivery["feishu"] = "未配置"
+                alert = {"alert_id": f"alert-{input_hash[:24]}", "rule_id": rule["id"], "topic": topic, "symbol": snapshot.get("symbol"), "observed_at": observed_at.astimezone(timezone.utc).isoformat(), "input_hash": input_hash, "snapshot": snapshot, "delivery": delivery}
+                if isinstance(channels, dict) and channels.get("in_app") is True:
+                    delivery["in_app"] = "sent"
                 self._state["alerts"].append(alert)
                 self._save()
                 return alert
@@ -110,3 +138,87 @@ class MonitorCenterService:
     def history(self, limit: int = 50) -> list[dict[str, Any]]:
         with self._lock:
             return list(reversed(self._state["alerts"][-max(1, limit):]))
+
+    def pending_tts(
+        self, limit: int = 10, *, max_age_seconds: int = 300
+    ) -> list[dict[str, Any]]:
+        cutoff = datetime.now(timezone.utc).timestamp() - max(1, max_age_seconds)
+        with self._lock:
+            return [
+                dict(item)
+                for item in reversed(self._state["alerts"])
+                if item["delivery"].get("tts") == "pending"
+                and datetime.fromisoformat(item["observed_at"]).timestamp() >= cutoff
+            ][: max(1, limit)]
+
+    def complete_delivery(self, alert_id: str, channel: str, status: str, reason: str | None = None) -> dict[str, str]:
+        if channel not in {"tts", "feishu", "in_app"}:
+            raise ValueError("不支持的告警投递通道")
+        if status not in {"pending", "playing", "sent", "failed", "未配置"}:
+            raise ValueError("不支持的告警投递状态")
+        with self._lock:
+            alert = next((item for item in self._state["alerts"] if item["alert_id"] == alert_id), None)
+            if alert is None:
+                raise KeyError(alert_id)
+            alert["delivery"][channel] = status
+            if reason:
+                alert.setdefault("delivery_reason", {})[channel] = reason
+            self._save()
+            return dict(alert["delivery"])
+
+
+class MonitorRuntime:
+    """Consume verified realtime snapshots and persist independent alerts."""
+
+    def __init__(self, bus, service: MonitorCenterService, *, feishu=None) -> None:
+        self.bus = bus
+        self.service = service
+        self.feishu = feishu
+        self._subscription = None
+        self._thread: threading.Thread | None = None
+        self._stop = threading.Event()
+
+    def start(self) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._subscription = self.bus.subscribe({"market_overview", "quant_strategy", "news_events", "late_session_candidates"})
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run, name="monitor-runtime", daemon=True)
+        self._thread.start()
+
+    def close(self) -> None:
+        self._stop.set()
+        if self._subscription is not None:
+            self.bus.unsubscribe(self._subscription)
+            self._subscription = None
+        if self._thread is not None:
+            self._thread.join(timeout=2)
+            self._thread = None
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                event = self._subscription.get(timeout=0.5) if self._subscription is not None else None
+            except queue.Empty:
+                continue
+            if not event or not isinstance(event.get("payload"), dict):
+                continue
+            alert = self.service.evaluate(
+                event["payload"],
+                datetime.fromisoformat(event["observed_at"]),
+                topic=event.get("kind"),
+            )
+            if (
+                alert is None
+                or self.feishu is None
+                or alert["delivery"].get("feishu") != "pending"
+            ):
+                continue
+            try:
+                result = self.feishu.send(
+                    title=f"A 股监控告警：{alert.get('symbol') or '全市场'}",
+                    lines=(f"规则：{alert['rule_id']}", f"观测时间：{alert['observed_at']}", f"告警编号：{alert['alert_id']}"),
+                )
+                self.service.complete_delivery(alert["alert_id"], "feishu", result.status)
+            except Exception as error:
+                self.service.complete_delivery(alert["alert_id"], "feishu", "failed", str(error))

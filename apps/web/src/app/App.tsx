@@ -62,6 +62,7 @@ import {
 import { loadCompanyResearch, loadCompanyResearchComparison } from "../features/company-research/api";
 import { analyzePortfolioRisk, loadPortfolioRisk, loadWatchlistRisk, removePortfolioPosition, savePortfolioPosition } from "../features/portfolio-risk/api";
 import { A_SHARE_WATCHLIST_CHANGED_EVENT, readAShareWatchlist } from "../features/stock-cockpit/watchlist";
+import { MonitorTtsAnnouncer } from "../features/monitor-center/MonitorTtsAnnouncer";
 
 export function App() {
   useEffect(() => { void loadAShareInstrumentDirectory().catch(() => undefined); }, []);
@@ -79,7 +80,7 @@ export function App() {
       window.clearInterval(timer);
     };
   }, []);
-  return <SelectedInstrumentProvider><Dashboard
+  return <SelectedInstrumentProvider><MonitorTtsAnnouncer synthesize={synthesizeSpeech} /><Dashboard
     loadSnapshot={loadSnapshot}
     syncHistory={syncHistory}
     runBacktest={runBacktest}

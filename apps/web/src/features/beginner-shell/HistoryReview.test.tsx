@@ -80,4 +80,22 @@ describe("HistoryReview", () => {
     expect(screen.getByText("趋势结果")).toBeInTheDocument();
     expect(screen.queryByText(/internal-hash|internal-advice|internal-snapshot/)).not.toBeInTheDocument();
   });
+
+  it("shows frozen postclose facts and delivery status for the selected date", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => [{
+      report_id: "postclose-2026-07-15-a1",
+      trading_date: "2026-07-15",
+      observed_at: "2026-07-15T07:31:00Z",
+      quality: "partial",
+      coverage: "85",
+      ai_status: "unavailable",
+      delivery: { feishu: { status: "failed", reason: "网络连接失败" } },
+    }] }));
+
+    render(<HistoryReview loadCurrent={() => Promise.resolve(response())} symbol="600519" />);
+
+    expect(await screen.findByText("盘后冻结报告")).toBeInTheDocument();
+    expect(screen.getByText(/证据覆盖 85%/)).toBeInTheDocument();
+    expect(screen.getByText(/飞书投递失败/)).toBeInTheDocument();
+  });
 });
