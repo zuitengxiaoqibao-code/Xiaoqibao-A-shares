@@ -218,6 +218,7 @@ from qibao_api.operations.precompute_snapshots import (
 )
 from qibao_api.operations.observability import ObservabilityStore
 from qibao_api.operations.shared_snapshots import SharedSnapshotRegistry
+from qibao_api.operations.page_snapshots import PageSnapshotService
 from qibao_api.operations.realtime_snapshot_bus import RealtimeSnapshotBus
 from qibao_api.operations.realtime_ai import RealtimeAITriggerQueue
 from qibao_api.storage.replay_snapshot_store import ReplaySnapshotStore
@@ -521,6 +522,7 @@ async def lifespan(application: FastAPI):
         settings.data_dir / "shared-snapshots.sqlite3"
     )
     application.state.shared_snapshot_registry = shared_snapshot_registry
+    application.state.page_snapshot_service = PageSnapshotService(shared_snapshot_registry)
     realtime_snapshot_bus = RealtimeSnapshotBus(max_queue_size=32)
     application.state.realtime_snapshot_bus = realtime_snapshot_bus
     replay_snapshot_store = ReplaySnapshotStore(

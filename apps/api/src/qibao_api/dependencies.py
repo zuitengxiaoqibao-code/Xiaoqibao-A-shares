@@ -164,6 +164,10 @@ def get_shared_snapshot_registry(request: Request):
     return getattr(request.app.state, "shared_snapshot_registry", None)
 
 
+def get_page_snapshot_service(request: Request):
+    return getattr(request.app.state, "page_snapshot_service", None)
+
+
 def get_realtime_snapshot_bus(request: Request):
     return getattr(request.app.state, "realtime_snapshot_bus", None)
 

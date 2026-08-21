@@ -35,6 +35,7 @@ from qibao_api.dependencies import (
     get_task_progress_registry,
     get_performance_store,
     get_precompute_snapshot_store,
+    get_page_snapshot_service,
     get_observability_store,
     get_replay_snapshot_store,
     get_shared_snapshot_registry,
@@ -46,6 +47,16 @@ from qibao_api.a_shares.postclose_report import PostCloseReportRepository
 
 
 router = APIRouter(prefix="/api/v1/operations", tags=["工部运维"])
+
+
+@router.get("/page-snapshots/{menu}")
+def page_snapshot(menu: str, service=Depends(get_page_snapshot_service)):
+    if service is None:
+        raise HTTPException(status_code=503, detail="页面首屏快照服务尚未就绪")
+    try:
+        return service.snapshot(menu).model_dump(mode="json")
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail="未知页面菜单") from error
 
 
 def _postclose_repository(request: Request) -> PostCloseReportRepository:
