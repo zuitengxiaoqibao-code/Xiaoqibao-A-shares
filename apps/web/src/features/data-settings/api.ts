@@ -16,11 +16,10 @@ import type {
   DataImportPreview,
   DataImportTask,
 } from "./types";
+import { apiClient } from "../../shared/apiClient";
 
 async function settingsRequest(path: string, init?: RequestInit): Promise<AISettingsView> {
-  const response = await fetch(path, init);
-  if (!response.ok) throw new Error(`AI 设置请求失败 (${response.status})`);
-  return response.json();
+  return (await apiClient.request<AISettingsView>(path, { ...init, context: "AI 设置" })).data;
 }
 
 export const loadAISettings = (signal?: AbortSignal) => settingsRequest("/api/v1/settings/ai", { signal });
@@ -33,12 +32,7 @@ async function localSourceRequest(
   path: string,
   init?: RequestInit,
 ): Promise<LocalSourceSettingsView> {
-  const response = await fetch(path, init);
-  if (!response.ok) {
-    const payload = await response.json().catch(() => null) as { detail?: string } | null;
-    throw new Error(payload?.detail ?? `本地行情设置请求失败 (${response.status})`);
-  }
-  return response.json() as Promise<LocalSourceSettingsView>;
+  return (await apiClient.request<LocalSourceSettingsView>(path, { ...init, context: "本地行情设置" })).data;
 }
 
 export const loadLocalSourceSettings = (signal?: AbortSignal) => localSourceRequest(
@@ -55,68 +49,41 @@ export const saveLocalSourceSettings = (input: LocalSourceSettings, signal?: Abo
 );
 
 export const syncAShareUniverse = async (): Promise<AShareUniverseSyncResult> => {
-  const response = await fetch("/api/v1/a-shares/universe/sync", { method: "POST" });
-  if (!response.ok) {
-    const payload = await response.json().catch(() => null) as { detail?: { message?: string } } | null;
-    throw new Error(payload?.detail?.message ?? `A 股证券目录同步失败 (${response.status})`);
-  }
-  return response.json() as Promise<AShareUniverseSyncResult>;
+  return apiClient.post<AShareUniverseSyncResult>("/api/v1/a-shares/universe/sync", undefined, { context: "A 股证券目录同步" });
 };
 
 export const loadSourceHealth = async (): Promise<SourceHealthResponse> => {
-  const response = await fetch("/api/v1/operations/source-health");
-  if (!response.ok) throw new Error(`数据源健康读取失败 (${response.status})`);
-  return response.json() as Promise<SourceHealthResponse>;
+  return apiClient.get<SourceHealthResponse>("/api/v1/operations/source-health", { context: "数据源健康" });
 };
 
 export const inspectDataImport = async (file: File): Promise<DataImportPreview> => {
   const body = new FormData(); body.append("file", file);
-  const response = await fetch("/api/data-import/inspect", { method: "POST", body });
-  if (!response.ok) throw new Error("数据文件预览失败");
-  return response.json() as Promise<DataImportPreview>;
+  return (await apiClient.request<DataImportPreview>("/api/data-import/inspect", { method: "POST", body, context: "数据文件预览" })).data;
 };
 
 export const ingestDataImport = async (file: File, mapping: Record<string, string>): Promise<DataImportTask> => {
   const body = new FormData(); body.append("file", file); body.append("mapping", JSON.stringify(mapping));
-  const response = await fetch("/api/data-import/ingest", { method: "POST", body });
-  if (!response.ok) {
-    const payload = await response.json().catch(() => null) as { detail?: string } | null;
-    throw new Error(payload?.detail ?? "数据导入失败");
-  }
-  return response.json() as Promise<DataImportTask>;
+  return (await apiClient.request<DataImportTask>("/api/data-import/ingest", { method: "POST", body, context: "数据导入" })).data;
 };
 
 async function historySyncRequest(path: string, init?: RequestInit): Promise<HistorySyncJob> {
-  const response = await fetch(path, init);
-  if (!response.ok) {
-    const payload = await response.json().catch(() => null) as { detail?: string } | null;
-    throw new Error(payload?.detail ?? `全市场日线同步失败 (${response.status})`);
-  }
-  return response.json() as Promise<HistorySyncJob>;
+  return (await apiClient.request<HistorySyncJob>(path, { ...init, context: "全市场日线同步" })).data;
 }
 
 export const loadHistorySync = async (): Promise<HistorySyncJob | null> => {
-  const response = await fetch("/api/v1/a-shares/history-sync/current");
-  if (!response.ok) throw new Error(`日线同步进度读取失败 (${response.status})`);
-  return response.json() as Promise<HistorySyncJob | null>;
+  return apiClient.get<HistorySyncJob | null>("/api/v1/a-shares/history-sync/current", { context: "日线同步进度" });
 };
 
 export const loadHistoryCoverage = async (): Promise<HistoryCoverageSummary> => {
-  const response = await fetch("/api/v1/a-shares/history-sync/coverage");
-  if (!response.ok) throw new Error(`日线覆盖率读取失败 (${response.status})`);
-  return response.json() as Promise<HistoryCoverageSummary>;
+  return apiClient.get<HistoryCoverageSummary>("/api/v1/a-shares/history-sync/coverage", { context: "日线覆盖率" });
 };
 
 export const loadHistoryRepairCenter = async (): Promise<HistoryRepairCenter> => {
-  const response = await fetch("/api/v1/a-shares/history-sync/repair-center?limit=100");
-  if (!response.ok) throw new Error(`日线修复中心读取失败 (${response.status})`);
-  return response.json() as Promise<HistoryRepairCenter>;
+  return apiClient.get<HistoryRepairCenter>("/api/v1/a-shares/history-sync/repair-center?limit=100", { context: "日线修复中心" });
 };
 
 export const loadHistoryRepairAudits = async (): Promise<HistoryRepairAudit[]> => {
-  const response = await fetch("/api/v1/a-shares/history-sync/repair-audits?limit=20");
-  if (!response.ok) throw new Error(`日线修复审计读取失败 (${response.status})`);
-  return response.json() as Promise<HistoryRepairAudit[]>;
+  return apiClient.get<HistoryRepairAudit[]>("/api/v1/a-shares/history-sync/repair-audits?limit=20", { context: "日线修复审计" });
 };
 
 export const startHistoryBackfill = () => historySyncRequest(
@@ -141,12 +108,7 @@ export const restartCurrentHistory = () => historySyncRequest(
 );
 
 async function historySupplementRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, init);
-  if (!response.ok) {
-    const payload = await response.json().catch(() => null) as { detail?: string } | null;
-    throw new Error(payload?.detail ?? `官方日线补齐请求失败 (${response.status})`);
-  }
-  return response.json() as Promise<T>;
+  return (await apiClient.request<T>(path, { ...init, context: "官方日线补齐" })).data;
 }
 
 export const loadOfficialTdxInfo = () => historySupplementRequest<OfficialTdxPackageInfo>(
@@ -160,12 +122,7 @@ export const startOfficialTdxSupplement = () => historySupplementRequest<History
 );
 
 async function tdxImportRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, init);
-  if (!response.ok) {
-    const payload = await response.json().catch(() => null) as { detail?: string } | null;
-    throw new Error(payload?.detail ?? `通达信本地导入失败 (${response.status})`);
-  }
-  return response.json() as Promise<T>;
+  return (await apiClient.request<T>(path, { ...init, context: "通达信本地导入" })).data;
 }
 
 export const scanTdxImport = (paths: string[] = []) => tdxImportRequest<TdxImportScan>(

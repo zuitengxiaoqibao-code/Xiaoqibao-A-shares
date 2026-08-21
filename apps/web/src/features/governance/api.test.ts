@@ -15,10 +15,8 @@ describe("convertible-bond compliance API", () => {
     await loadCompliance("convertible_bond");
     await complianceAction("eastmoney", "authorize", "contract:test", "convertible_bond");
 
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      1,
-      "/api/v1/libu/status?asset=convertible_bond",
-    );
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/libu/status?asset=convertible_bond");
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: "GET" });
     expect(fetchMock.mock.calls[1][0]).toBe(
       "/api/v1/libu/sources/eastmoney/authorize?asset=convertible_bond",
     );

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { apiClient } from "../../shared/apiClient";
 
 type PendingAlert = {
   alert_id: string;
@@ -22,11 +23,11 @@ function alertText(alert: PendingAlert): string {
 }
 
 async function complete(alertId: string, status: "playing" | "sent" | "failed", reason?: string) {
-  await fetch(`/api/v1/monitor-center/alerts/${encodeURIComponent(alertId)}/delivery`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ channel: "tts", status, reason }),
-  });
+  await apiClient.post(
+    `/api/v1/monitor-center/alerts/${encodeURIComponent(alertId)}/delivery`,
+    { channel: "tts", status, reason },
+    { context: "监控语音状态写入" },
+  );
 }
 
 export function MonitorTtsAnnouncer({ synthesize, pollMs = 15_000 }: { synthesize: Synthesize; pollMs?: number }) {
@@ -55,9 +56,10 @@ export function MonitorTtsAnnouncer({ synthesize, pollMs = 15_000 }: { synthesiz
     running.current = true;
     let activeAlert: PendingAlert | null = null;
     try {
-      const response = await fetch("/api/v1/monitor-center/alerts/pending-tts?limit=1", { signal: controller.current?.signal });
-      if (!response.ok) throw new Error("监控语音告警读取失败");
-      const alerts = await response.json() as PendingAlert[];
+      const alerts = await apiClient.get<PendingAlert[]>(
+        "/api/v1/monitor-center/alerts/pending-tts?limit=1",
+        { signal: controller.current?.signal, context: "监控语音告警读取" },
+      );
       activeAlert = alerts[0];
       if (!activeAlert || !mounted.current) return;
       await complete(activeAlert.alert_id, "playing");

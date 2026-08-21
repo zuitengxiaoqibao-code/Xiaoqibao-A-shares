@@ -1,12 +1,8 @@
 import type { DecisionPhase, DecisionResponse } from "./types";
+import { apiClient } from "../../shared/apiClient";
 
 async function read(url: string, init?: RequestInit): Promise<DecisionResponse> {
-  const response = await fetch(url, init);
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new Error(body.detail?.message ?? body.detail?.code ?? `决策请求失败 (${response.status})`);
-  }
-  return response.json();
+  return (await apiClient.request<DecisionResponse>(url, { ...init, context: "决策" })).data;
 }
 
 export const loadCurrentDecision = () => read("/api/v1/decisions/current");

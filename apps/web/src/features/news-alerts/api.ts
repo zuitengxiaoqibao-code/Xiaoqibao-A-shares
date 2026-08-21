@@ -1,4 +1,5 @@
 import type { BreakingNewsAlertResponse } from "./types";
+import { apiClient } from "../../shared/apiClient";
 
 
 export async function loadBreakingNewsAlerts(
@@ -9,10 +10,8 @@ export async function loadBreakingNewsAlerts(
   const params = new URLSearchParams();
   if (symbol) params.set("symbol", symbol);
   params.set("limit", String(limit));
-  const response = await fetch(`/api/v1/news/alerts?${params.toString()}`, { signal });
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new Error(body.detail?.message ?? body.detail ?? `新闻提醒请求失败 (${response.status})`);
-  }
-  return response.json();
+  return apiClient.get<BreakingNewsAlertResponse>(
+    `/api/v1/news/alerts?${params.toString()}`,
+    { signal, context: "新闻提醒" },
+  );
 }

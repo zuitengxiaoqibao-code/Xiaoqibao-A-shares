@@ -7,6 +7,7 @@ import { beginnerAdviceExplanation } from "../decision-workbench/explanation";
 import { phaseExecutionCopy } from "../decision-workbench/phaseExecution";
 import { friendlyError } from "../../shared/friendlyError";
 import { loadWorkspaceState, saveWorkspaceState } from "../../shared/workspace/workspaceState";
+import { apiClient } from "../../shared/apiClient";
 
 const phaseNames: Record<DecisionPhase, string> = { premarket: "盘前研判", intraday: "盘中观察", postclose: "盘后复盘" };
 const actionNames: Record<Advice["action"], string> = { observe: "加入观察", wait: "暂不参与", avoid: "回避", invalidated: "已失效" };
@@ -29,21 +30,18 @@ export function HistoryReview({ loadCurrent, loadDate, symbol, runBacktest }: { 
   const load = useCallback(async (selected?: string) => { const current = ++request.current; setError(""); try { const next = selected && loadDate ? await loadDate(selected) : await loadCurrent(); if (current === request.current) { setData(next); setDate(next.trading_date); saveWorkspaceState({ route: "/history", menu: "history", asOf: next.trading_date, symbol }); } } catch (reason) { if (current === request.current) setError(friendlyError(reason, "历史复盘")); } }, [loadCurrent, loadDate, symbol]);
   useEffect(() => { void load(restoredDate ?? undefined); return () => { request.current += 1; }; }, [load, restoredDate]);
   useEffect(() => {
-    if (!date || typeof fetch !== "function") { setFrozen(null); return; }
+    if (!date) { setFrozen(null); return; }
     let active = true;
-    void fetch("/api/v1/operations/postclose-reports?limit=100").then(async (response) => {
-      if (!response.ok) return [];
-      return response.json() as Promise<FrozenPostclose[]>;
-    }).then((items) => { if (active) setFrozen(items.find((item) => item.trading_date === date) ?? null); }).catch(() => { if (active) setFrozen(null); });
+    void apiClient.get<FrozenPostclose[]>("/api/v1/operations/postclose-reports?limit=100", { context: "盘后冻结报告" })
+      .then((items) => { if (active) setFrozen(items.find((item) => item.trading_date === date) ?? null); })
+      .catch(() => { if (active) setFrozen(null); });
     return () => { active = false; };
   }, [date]);
   const retryDelivery = async () => {
     if (!frozen) return;
     setRetrying(true);
     try {
-      const response = await fetch(`/api/v1/operations/postclose-reports/${encodeURIComponent(frozen.report_id)}/retry`, { method: "POST" });
-      if (!response.ok) throw new Error("飞书投递重试失败");
-      const result = await response.json() as { status: string };
+      const result = await apiClient.post<{ status: string }>(`/api/v1/operations/postclose-reports/${encodeURIComponent(frozen.report_id)}/retry`, undefined, { context: "飞书投递重试" });
       setFrozen({ ...frozen, delivery: { ...frozen.delivery, feishu: { status: result.status } } });
     } catch (reason) { setError(friendlyError(reason, "飞书投递重试")); } finally { setRetrying(false); }
   };

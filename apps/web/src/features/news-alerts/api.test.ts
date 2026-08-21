@@ -16,10 +16,9 @@ describe("loadBreakingNewsAlerts", () => {
 
     await loadBreakingNewsAlerts("600519", controller.signal);
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/news/alerts?symbol=600519&limit=30",
-      { signal: controller.signal },
-    );
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/news/alerts?symbol=600519&limit=30");
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: "GET" });
+    expect(fetchMock.mock.calls[0][1]?.signal).not.toBe(controller.signal);
   });
 
   it("reports the server message when the alert stream fails", async () => {

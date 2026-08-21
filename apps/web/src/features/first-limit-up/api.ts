@@ -1,13 +1,9 @@
 import type { FirstLimitUpBoard } from "./types";
+import { apiClient } from "../../shared/apiClient";
 
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, init);
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new Error(body.detail?.message ?? body.detail ?? `首次涨停请求失败 (${response.status})`);
-  }
-  return response.json();
+  return (await apiClient.request<T>(path, { ...init, context: "首次涨停" })).data;
 }
 
 export function loadFirstLimitUp(asOf?: string): Promise<FirstLimitUpBoard> {

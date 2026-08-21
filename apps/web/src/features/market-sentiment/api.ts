@@ -1,22 +1,9 @@
-import { friendlyError } from "../../shared/friendlyError";
+import { apiClient } from "../../shared/apiClient";
 import type { MarketSentimentResponse, MarketSentimentSnapshot } from "./types";
 
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  try {
-    const response = await fetch(url, init);
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      throw new Error(
-        body.detail?.message
-        ?? body.detail?.code
-        ?? `市场情绪请求失败 (${response.status})`,
-      );
-    }
-    return response.json();
-  } catch (error) {
-    throw new Error(friendlyError(error, "A 股市场情绪"));
-  }
+  return (await apiClient.request<T>(url, { ...init, context: "A 股市场情绪" })).data;
 }
 
 export const loadCurrentMarketSentiment = () =>

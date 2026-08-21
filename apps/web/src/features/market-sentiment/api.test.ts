@@ -15,10 +15,8 @@ describe("market sentiment api", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(loadCurrentMarketSentiment()).resolves.toEqual(payload);
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/a-shares/market-sentiment/current",
-      undefined,
-    );
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/a-shares/market-sentiment/current");
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: "GET" });
   });
 
   it("uses POST for refresh and maps raw failures to a safe message", async () => {
@@ -31,13 +29,10 @@ describe("market sentiment api", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(refreshMarketSentiment()).resolves.toEqual({ snapshot_id: "sentiment-1" });
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      1,
-      "/api/v1/a-shares/market-sentiment/refresh",
-      { method: "POST" },
-    );
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/a-shares/market-sentiment/refresh");
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: "POST" });
     await expect(loadCurrentMarketSentiment()).rejects.toThrow(
-      "A 股市场情绪暂不可用，请稍后重试。",
+      "A 股市场情绪网络连接失败",
     );
   });
 });

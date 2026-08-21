@@ -46,10 +46,10 @@
 - Modify: `apps/web/src/shared/performance/requestLedger.ts`
 - Modify: `apps/web/src/features/*/api.ts`
 
-- [ ] 写失败测试：查询参数顺序规范化、相同 GET 合并、调用者独立取消、超时中文化、缓存元数据、last-good 保留和副作用请求不自动重试。
-- [ ] 实现统一 `apiClient.get/getCached/post` 契约和领域并发上限。
-- [ ] 机械迁移全部直接 `fetch()` 与零散 JSON/错误处理；保留文件下载和 SSE 的流式例外。
-- [ ] 删除已被统一客户端完全替代的重复包装器，更新请求账本统计。
+- [x] 写失败测试：查询参数顺序规范化、相同 GET 合并、调用者独立取消、超时中文化、缓存元数据、last-good 保留和副作用请求不自动重试。
+- [x] 实现统一 `apiClient.get/getCached/post` 契约和领域并发上限。
+- [x] 机械迁移全部直接 `fetch()` 与零散 JSON/错误处理；保留文件下载和 SSE 的流式例外。
+- [x] 删除已被统一客户端完全替代的重复包装器，更新请求账本统计。
 - [ ] 运行全量 Web 测试、TypeScript/Vite 构建、乱码扫描与 `git diff --check`。
 
 ## Task 3：应用级实时总线与可见性调度

@@ -1,5 +1,6 @@
 import { BellRing, CheckCircle2, Cloud, RefreshCw, Save, ShieldAlert, Volume2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { apiClient } from "../../shared/apiClient";
 
 type Alert = {
   alert_id: string;
@@ -27,9 +28,7 @@ function ruleDraft(item: Rule): RuleDraft {
 }
 
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, init);
-  if (!response.ok) throw new Error("监控中心服务请求失败");
-  return response.json() as Promise<T>;
+  return (await apiClient.request<T>(path, { ...init, context: "监控中心" })).data;
 }
 
 function deliveryLabel(channel: string, status: string): string {

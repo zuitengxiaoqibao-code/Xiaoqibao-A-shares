@@ -2,6 +2,7 @@ import type { InstrumentDirectoryResponse, InstrumentSearchResponse, StockCockpi
 import { fetchJsonWithProgress, type LoadProgressCallback } from "../../shared/fetchJsonWithProgress";
 import { coalescedFetch } from "../../shared/coalescedFetch";
 import { createInstrumentDirectory, type InstrumentDirectory } from "../../shared/instruments/instrumentDirectory";
+import { apiClient } from "../../shared/apiClient";
 
 let directoryPromise: Promise<InstrumentDirectoryResponse> | null = null;
 let localDirectory: InstrumentDirectory | null = null;
@@ -60,8 +61,9 @@ export function loadStockCockpitAI(symbol: string, asOf?: string, signal?: Abort
 }
 
 export function prepareStockData(symbol: string, signal?: AbortSignal): Promise<StockPreparation> {
-  return fetch(`/api/v1/a-shares/${symbol}/prepare`, { method: "POST", signal }).then(async (response) => {
-    if (!response.ok) throw new Error(`数据补齐失败 (${response.status})`);
-    return response.json();
-  });
+  return apiClient.post<StockPreparation>(
+    `/api/v1/a-shares/${symbol}/prepare`,
+    undefined,
+    { signal, context: "个股数据补齐" },
+  );
 }

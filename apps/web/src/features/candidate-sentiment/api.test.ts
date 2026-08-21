@@ -24,24 +24,10 @@ describe("candidate sentiment api", () => {
     await expect(loadCandidateSentiments("candidate-1")).resolves.toEqual(payload);
     await expect(refreshCandidateSentiments("candidate-1")).resolves.toEqual(payload);
 
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      1,
-      "/api/v1/a-shares/candidate-sentiment/batch",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ candidate_snapshot_id: "candidate-1" }),
-      },
-    );
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      2,
-      "/api/v1/a-shares/candidate-sentiment/batch/refresh",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ candidate_snapshot_id: "candidate-1" }),
-      },
-    );
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/a-shares/candidate-sentiment/batch");
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/v1/a-shares/candidate-sentiment/batch/refresh");
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: "POST", body: JSON.stringify({ candidate_snapshot_id: "candidate-1" }) });
+    expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("Content-Type")).toBe("application/json");
   });
 
   it("uses the API message and hides raw transport details", async () => {
@@ -54,7 +40,7 @@ describe("candidate sentiment api", () => {
 
     await expect(loadCandidateSentiments("missing")).rejects.toThrow("候选快照已失效");
     await expect(refreshCandidateSentiments("candidate-1")).rejects.toThrow(
-      "短线候选情绪暂不可用，请稍后重试。",
+      "短线候选情绪网络连接失败",
     );
   });
 });

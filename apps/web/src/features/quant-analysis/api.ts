@@ -1,6 +1,7 @@
 import type { DecisionJournalCreate, DecisionJournalEntry, IntradayTick, KronosForecastResponse, QuantCalibrationReport, QuantResearchSnapshot, QuantShadowAnalytics, QuantShadowDecisionRecord, QuantStrategyDashboard, TdxFormulaResponse, WalkForwardReport } from "./types";
 import { coalescedFetch } from "../../shared/coalescedFetch";
 import { requestLedger } from "../../shared/performance/requestLedger";
+import { apiClient } from "../../shared/apiClient";
 
 const FOCUS_TTL_SECONDS = 900;
 const FOCUS_RENEW_AFTER_MS = 5 * 60 * 1000;
@@ -22,15 +23,11 @@ async function registerFocus(symbol: string, source: FocusSource): Promise<void>
     lastAttemptAt: now,
     registeredUntil: current?.registeredUntil ?? 0,
   });
-  const response = await fetch(
+  await apiClient.post(
     `/api/v1/a-shares/${encodeURIComponent(symbol)}/intraday-focus`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ source, ttl_seconds: FOCUS_TTL_SECONDS }),
-    },
+    { source, ttl_seconds: FOCUS_TTL_SECONDS },
+    { context: "盘中监测登记" },
   );
-  if (!response.ok) throw new Error(`盘中监测登记失败 (${response.status})`);
   focusRegistrationState.set(key, {
     lastAttemptAt: now,
     registeredUntil: now + FOCUS_RENEW_AFTER_MS,
@@ -83,21 +80,14 @@ export async function loadWalkForward(
   signal?: AbortSignal,
 ): Promise<WalkForwardReport> {
   return requestLedger.run(`walk-forward:${symbol}`, async () => {
-    const response = await fetch(`/api/v1/a-shares/${encodeURIComponent(symbol)}/walk-forward`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    return apiClient.post<WalkForwardReport>(`/api/v1/a-shares/${encodeURIComponent(symbol)}/walk-forward`, {
         backtest: { strategy: "sma_cross", fast_window: 5, slow_window: 20 },
         train_bars: 120,
         validation_bars: 60,
         test_bars: 60,
         step_bars: 60,
         minimum_closed_trades: 5,
-      }),
-      signal,
-    });
-    if (!response.ok) throw new Error(`样本外验证请求失败 (${response.status})`);
-    return response.json() as Promise<WalkForwardReport>;
+      }, { context: "样本外验证", signal });
   }, { domain: "walk-forward" });
 }
 
@@ -146,13 +136,7 @@ export async function loadDecisionJournal(limit = 50): Promise<DecisionJournalEn
 }
 
 export async function createDecisionJournal(request: DecisionJournalCreate): Promise<DecisionJournalEntry> {
-  const response = await fetch("/api/v1/a-shares/quant-strategy/journal", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(request),
-  });
-  if (!response.ok) throw new Error(`个人复盘日志写入失败 (${response.status})`);
-  return response.json() as Promise<DecisionJournalEntry>;
+  return apiClient.post("/api/v1/a-shares/quant-strategy/journal", request, { context: "个人复盘日志写入" });
 }
 
 export async function loadTdxFormula(

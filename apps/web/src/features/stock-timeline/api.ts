@@ -1,5 +1,6 @@
 import type { StockTimelineResponse } from "./types";
 import { updateTaskActivity } from "../../shared/taskActivity";
+import { apiClient } from "../../shared/apiClient";
 
 
 export async function loadStockTimeline(
@@ -11,14 +12,11 @@ export async function loadStockTimeline(
   const taskId = `timeline:${symbol}:${asOf ?? "current"}`;
   updateTaskActivity({ id: taskId, label: `个股事件 K 线 ${symbol}`, stage: "正在读取日线与事件", state: "running", percent: 8 });
   try {
-    const response = await fetch(`/api/v1/a-shares/${symbol}/timeline${query}`, { signal });
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      const message = body.detail?.message ?? body.detail ?? `事件 K 线请求失败 (${response.status})`;
-      throw new Error(String(message));
-    }
     updateTaskActivity({ id: taskId, label: `个股事件 K 线 ${symbol}`, stage: "正在解析 K 线与事件", state: "running", percent: 72 });
-    const result = await response.json() as StockTimelineResponse;
+    const result = await apiClient.get<StockTimelineResponse>(
+      `/api/v1/a-shares/${symbol}/timeline${query}`,
+      { signal, context: "事件 K 线" },
+    );
     updateTaskActivity({ id: taskId, label: `个股事件 K 线 ${symbol}`, stage: "事件 K 线已完成", state: "succeeded", percent: 100 });
     return result;
   } catch (error) {

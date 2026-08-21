@@ -1,12 +1,8 @@
 import type { BackupRecord, BackupVerification, CacheCleanupResult, CleanupPreview, ObservabilitySnapshot, OperationsDiagnostics, OperationsStatus, PerformanceSummary } from "./types";
+import { apiClient } from "../../shared/apiClient";
 
 async function read<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new Error(body.detail?.message ?? body.detail ?? `运维请求失败 (${response.status})`);
-  }
-  return response.json();
+  return (await apiClient.request<T>(url, { ...init, context: "本地运维" })).data;
 }
 
 export const loadOperationsStatus = () => read<OperationsStatus>("/api/v1/operations/status");

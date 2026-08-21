@@ -2,6 +2,7 @@ import type { CompanyResearchAITaskSnapshot, CompanyResearchResponse, CompanyRes
 import { fetchJsonWithProgress, type LoadProgressCallback } from "../../shared/fetchJsonWithProgress";
 import { requestLedger } from "../../shared/performance/requestLedger";
 import { updateTaskActivity } from "../../shared/taskActivity";
+import { apiClient } from "../../shared/apiClient";
 
 export function loadCompanyResearch(symbol: string, asOf?: string, signal?: AbortSignal, onProgress?: LoadProgressCallback): Promise<CompanyResearchResponse> {
   return requestLedger.run(`company-research:${symbol}:${asOf ?? "latest"}`, async () => {
@@ -107,11 +108,13 @@ export type CompanyResearchComparison = {
 };
 
 export async function loadCompanyResearchComparison(symbols: string[], asOf?: string): Promise<CompanyResearchComparison> {
-  const response = await requestLedger.run(`company-research-compare:${[...symbols].sort().join(",")}:${asOf ?? "latest"}`, async () => fetch("/api/v1/a-shares/company-research/compare", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ symbols: [...new Set(symbols)].slice(0, 5), ...(asOf ? { as_of: asOf } : {}) }),
-  }), { domain: "company-research" });
-  if (!response.ok) throw new Error(`公司研究比较请求失败 (${response.status})`);
-  return response.json() as Promise<CompanyResearchComparison>;
+  return requestLedger.run(
+    `company-research-compare:${[...symbols].sort().join(",")}:${asOf ?? "latest"}`,
+    () => apiClient.post<CompanyResearchComparison>(
+      "/api/v1/a-shares/company-research/compare",
+      { symbols: [...new Set(symbols)].slice(0, 5), ...(asOf ? { as_of: asOf } : {}) },
+      { context: "公司研究比较" },
+    ),
+    { domain: "company-research" },
+  );
 }

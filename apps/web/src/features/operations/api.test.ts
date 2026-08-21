@@ -12,9 +12,7 @@ describe("operations api", () => {
     ));
 
     await expect(cleanupCache(72)).resolves.toEqual({ removed_count: 3, removed_bytes: 2048 });
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/operations/cache/cleanup?older_than_hours=72",
-      { method: "POST" },
-    );
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/operations/cache/cleanup?older_than_hours=72");
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: "POST" });
   });
 });

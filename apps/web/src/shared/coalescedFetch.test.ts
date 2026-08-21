@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { coalescedFetch, readCoalescedFetchStats, resetCoalescedFetchForTests } from "./coalescedFetch";
+import { coalescedFetch, readCoalescedFetchStats, resetCoalescedFetchForTests, setCoalescedFetchConcurrencyForTests } from "./coalescedFetch";
 
 afterEach(() => {
   resetCoalescedFetchForTests();
@@ -34,6 +34,20 @@ describe("coalescedFetch", () => {
     ]);
 
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("merges equivalent GET requests whose query parameters use a different order", async () => {
+    let resolveFetch!: (response: Response) => void;
+    const fetchMock = vi.fn(() => new Promise<Response>((resolve) => { resolveFetch = resolve; }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const first = coalescedFetch("/api/value?symbol=600519&limit=20");
+    const second = coalescedFetch("/api/value?limit=20&symbol=600519");
+    resolveFetch(new Response("ready"));
+
+    await expect((await first).text()).resolves.toBe("ready");
+    await expect((await second).text()).resolves.toBe("ready");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("never coalesces non-GET requests", async () => {
@@ -100,5 +114,29 @@ describe("coalescedFetch", () => {
     await expect(coalescedFetch("/api/retry")).rejects.toThrow("offline");
     await expect((await coalescedFetch("/api/retry")).text()).resolves.toBe("recovered");
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("limits concurrent network requests inside one API domain", async () => {
+    setCoalescedFetchConcurrencyForTests(2);
+    const resolvers: Array<(response: Response) => void> = [];
+    const fetchMock = vi.fn(() => new Promise<Response>((resolve) => { resolvers.push(resolve); }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const requests = [
+      coalescedFetch("/api/v1/a-shares/value-a"),
+      coalescedFetch("/api/v1/a-shares/value-b"),
+      coalescedFetch("/api/v1/a-shares/value-c"),
+    ];
+    await Promise.resolve();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    resolvers[0](new Response("a"));
+    await requests[0];
+    await Promise.resolve();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    resolvers[1](new Response("b"));
+    resolvers[2](new Response("c"));
+    await Promise.all(requests.slice(1));
   });
 });

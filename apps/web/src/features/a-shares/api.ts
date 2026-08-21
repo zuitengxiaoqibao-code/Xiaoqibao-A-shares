@@ -1,13 +1,9 @@
 import type { AShareDiagnosis, CandidateBoard, CandidateScoreBoard } from "./types";
+import { apiClient } from "../../shared/apiClient";
 
 
 async function request<T>(path: string): Promise<T> {
-  const response = await fetch(path);
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new Error(body.detail?.message ?? body.detail ?? `A 股研究请求失败 (${response.status})`);
-  }
-  return response.json();
+  return apiClient.get<T>(path, { context: "A 股研究" });
 }
 
 export function loadAShareCandidates(asOf?: string, limit = 20): Promise<CandidateBoard> {

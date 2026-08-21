@@ -3,12 +3,11 @@ import type {
   SpeechSynthesisInput,
   SpeechVoiceCatalog,
 } from "./types";
+import { apiClient } from "../../shared/apiClient";
 
 
 async function speechJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, init);
-  if (!response.ok) throw new Error(`语音服务请求失败 (${response.status})`);
-  return response.json() as Promise<T>;
+  return (await apiClient.request<T>(path, { ...init, context: "语音服务" })).data;
 }
 
 export const loadSpeechSettings = (signal?: AbortSignal) =>

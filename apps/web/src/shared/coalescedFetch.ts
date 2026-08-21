@@ -16,6 +16,21 @@ type InFlightRequest = {
 
 const inFlight = new Map<string, InFlightRequest>();
 const stats = { callers: 0, networkRequests: 0, coalescedCallers: 0 };
+const DEFAULT_DOMAIN_CONCURRENCY = 6;
+let domainConcurrency = DEFAULT_DOMAIN_CONCURRENCY;
+
+type QueuedNetworkRequest = {
+  run: () => Promise<Response>;
+  resolve: (response: Response) => void;
+  reject: (error: unknown) => void;
+};
+
+type DomainQueue = {
+  active: number;
+  pending: QueuedNetworkRequest[];
+};
+
+const domainQueues = new Map<string, DomainQueue>();
 
 function abortError(): DOMException {
   return new DOMException("Aborted", "AbortError");
@@ -34,11 +49,26 @@ function requestMethod(input: RequestInfo | URL, init?: RequestInit): string {
   return (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
 }
 
+function normalizedUrl(input: RequestInfo | URL): string {
+  const raw = input instanceof Request ? input.url : String(input);
+  try {
+    const parsed = new URL(raw, window.location.origin);
+    const entries = [...parsed.searchParams.entries()].sort(([leftKey, leftValue], [rightKey, rightValue]) => (
+      leftKey.localeCompare(rightKey) || leftValue.localeCompare(rightValue)
+    ));
+    parsed.search = "";
+    for (const [key, value] of entries) parsed.searchParams.append(key, value);
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return raw.split("#", 1)[0];
+  }
+}
+
 function requestKey(input: RequestInfo | URL, init?: RequestInit): string {
-  const url = input instanceof Request ? input.url : String(input);
   const request = input instanceof Request ? input : null;
   return JSON.stringify({
-    url,
+    url: normalizedUrl(input),
     headers: normalizedHeaders(input, init),
     credentials: init?.credentials ?? request?.credentials ?? "same-origin",
     cache: init?.cache ?? request?.cache ?? "default",
@@ -57,6 +87,46 @@ function requestDomain(input: RequestInfo | URL): string {
   } catch {
     return "http";
   }
+}
+
+function requestDomainGroup(input: RequestInfo | URL): string {
+  const url = input instanceof Request ? input.url : String(input);
+  try {
+    return new URL(url, window.location.origin).pathname.replace(/^\/api\/v1\//, "").split("/")[0] || "http";
+  } catch {
+    return "http";
+  }
+}
+
+function drainDomainQueue(domain: string): void {
+  const queue = domainQueues.get(domain);
+  if (!queue) return;
+  while (queue.active < domainConcurrency && queue.pending.length > 0) {
+    const item = queue.pending.shift();
+    if (!item) break;
+    queue.active += 1;
+    let request: Promise<Response>;
+    try {
+      request = item.run();
+    } catch (error) {
+      request = Promise.reject(error);
+    }
+    request.then(item.resolve, item.reject)
+      .finally(() => {
+        queue.active = Math.max(0, queue.active - 1);
+        if (queue.active === 0 && queue.pending.length === 0) domainQueues.delete(domain);
+        else drainDomainQueue(domain);
+      });
+  }
+}
+
+function scheduleNetworkRequest(domain: string, run: () => Promise<Response>): Promise<Response> {
+  return new Promise<Response>((resolve, reject) => {
+    const queue = domainQueues.get(domain) ?? { active: 0, pending: [] };
+    domainQueues.set(domain, queue);
+    queue.pending.push({ run, resolve, reject });
+    drainDomainQueue(domain);
+  });
 }
 
 function releaseSubscriber(entry: InFlightRequest): void {
@@ -84,7 +154,7 @@ function subscribe(entry: InFlightRequest, signal?: AbortSignal | null): Promise
       (response) => {
         if (released) return;
         release();
-        resolve(response.clone());
+        resolve(typeof response.clone === "function" ? response.clone() : response);
       },
       (error) => {
         if (released) return;
@@ -120,7 +190,10 @@ export function coalescedFetch(input: RequestInfo | URL, init?: RequestInit): Pr
     };
     const current = entry;
     const startedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
-    current.response = fetch(input, { ...init, signal: controller.signal });
+    current.response = scheduleNetworkRequest(
+      requestDomainGroup(input),
+      () => fetch(input, { ...init, signal: controller.signal }),
+    );
     current.response.then(
       (response) => {
         recordPerfEvent({
@@ -152,7 +225,16 @@ export function readCoalescedFetchStats(): CoalescedFetchStats {
 export function resetCoalescedFetchForTests(): void {
   inFlight.forEach((entry) => entry.controller.abort());
   inFlight.clear();
+  domainQueues.forEach((queue) => {
+    queue.pending.splice(0).forEach((item) => item.reject(abortError()));
+  });
+  domainQueues.clear();
+  domainConcurrency = DEFAULT_DOMAIN_CONCURRENCY;
   stats.callers = 0;
   stats.networkRequests = 0;
   stats.coalescedCallers = 0;
+}
+
+export function setCoalescedFetchConcurrencyForTests(limit: number): void {
+  domainConcurrency = Math.max(1, Math.floor(limit));
 }

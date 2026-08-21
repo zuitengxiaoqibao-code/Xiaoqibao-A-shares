@@ -17,12 +17,11 @@ describe("portfolio risk API", () => {
     await savePortfolioPosition({ symbol: "600519", shares: "100", cost_price: "1500" });
     await removePortfolioPosition("600519");
 
-    expect(fetchMock.mock.calls[0]).toEqual(["/api/v1/a-shares/portfolio-risk"]);
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/a-shares/portfolio-risk");
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: "GET" });
     expect(fetchMock.mock.calls[1][0]).toBe("/api/v1/a-shares/portfolio-risk/positions/600519");
     expect(fetchMock.mock.calls[1][1]).toMatchObject({ method: "PUT" });
-    expect(fetchMock.mock.calls[2]).toEqual([
-      "/api/v1/a-shares/portfolio-risk/positions/600519",
-      { method: "DELETE" },
-    ]);
+    expect(fetchMock.mock.calls[2][0]).toBe("/api/v1/a-shares/portfolio-risk/positions/600519");
+    expect(fetchMock.mock.calls[2][1]).toMatchObject({ method: "DELETE" });
   });
 });

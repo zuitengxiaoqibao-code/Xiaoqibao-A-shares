@@ -1,12 +1,8 @@
 import type { CorrectionInput, EventImpactReport, NewsIntelligenceBundle } from "./types";
+import { apiClient } from "../../shared/apiClient";
 
 async function read<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new Error(body.detail?.message ?? body.detail ?? `请求失败 (${response.status})`);
-  }
-  return response.json();
+  return (await apiClient.request<T>(url, { ...init, context: "新闻热点" })).data;
 }
 
 export async function loadNewsIntelligence(): Promise<NewsIntelligenceBundle> {
