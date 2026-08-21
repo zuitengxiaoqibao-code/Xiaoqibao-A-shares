@@ -33,6 +33,11 @@ from qibao_api.a_shares.quant_strategy import (
 from qibao_api.a_shares.late_session_selection_service import LateSessionSelectionService
 from qibao_api.a_shares.quant_strategy_snapshot import QuantStrategySnapshotStore
 from qibao_api.a_shares.quant_shadow_ledger import QuantShadowLedgerStore
+from qibao_api.a_shares.quant_research_intelligence import (
+    QuantResearchIntelligenceService,
+)
+from qibao_api.a_shares.quant_research_snapshot import QuantResearchSnapshotStore
+from qibao_api.a_shares.factor_hypotheses import FactorHypothesisStore
 from qibao_api.a_shares.decision_journal import DecisionJournalStore
 from qibao_api.a_shares.portfolio_risk import PortfolioRiskService, PortfolioRiskStore
 from qibao_api.a_shares.candidate_sentiment import CandidateSentimentEvaluator
@@ -160,6 +165,7 @@ from qibao_api.routes.settings import router as settings_router
 from qibao_api.routes.market_sentiment import router as market_sentiment_router
 from qibao_api.routes.market_overview import router as market_overview_router
 from qibao_api.routes.quant_strategy import router as quant_strategy_router
+from qibao_api.routes.quant_research import router as quant_research_router
 from qibao_api.routes.late_session_selection import router as late_session_selection_router
 from qibao_api.routes.walk_forward import router as walk_forward_router
 from qibao_api.routes.portfolio_risk import router as portfolio_risk_router
@@ -1387,6 +1393,18 @@ async def lifespan(application: FastAPI):
                     shared_snapshot_registry=shared_snapshot_registry,
                     realtime_snapshot_bus=realtime_snapshot_bus,
                 )
+                application.state.factor_hypothesis_store = FactorHypothesisStore(
+                    settings.data_dir / "factor-hypotheses.sqlite3"
+                )
+                application.state.quant_research_service = (
+                    QuantResearchIntelligenceService(
+                        application.state.quant_strategy_service,
+                        quant_shadow_ledger,
+                        QuantResearchSnapshotStore(
+                            portable_root / "cache" / "quant-research.json"
+                        ),
+                    )
+                )
                 application.state.late_session_selection_service = LateSessionSelectionService(
                     local_market_source=local_tdx_overview_source,
                     bar_repository=bar_repository,
@@ -1615,6 +1633,7 @@ app.include_router(settings_router)
 app.include_router(market_sentiment_router)
 app.include_router(market_overview_router)
 app.include_router(quant_strategy_router)
+app.include_router(quant_research_router)
 app.include_router(late_session_selection_router)
 app.include_router(walk_forward_router)
 app.include_router(portfolio_risk_router)

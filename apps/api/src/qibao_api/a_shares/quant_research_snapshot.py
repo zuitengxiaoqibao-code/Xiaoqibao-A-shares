@@ -17,6 +17,12 @@ class QuantResearchSnapshotStore:
         self.path = path
 
     def load(self, *, trading_date: date) -> QuantResearchSnapshot | None:
+        snapshot = self.load_latest()
+        if snapshot is None or snapshot.as_of != trading_date:
+            return None
+        return snapshot
+
+    def load_latest(self) -> QuantResearchSnapshot | None:
         if self.path is None or not self.path.is_file():
             return None
         try:
@@ -26,7 +32,7 @@ class QuantResearchSnapshotStore:
             snapshot = QuantResearchSnapshot.model_validate(payload["snapshot"])
         except (OSError, TypeError, ValueError, ValidationError, KeyError):
             return None
-        if snapshot.as_of != trading_date or snapshot.status == "error":
+        if snapshot.status == "error":
             return None
         return snapshot
 

@@ -1,8 +1,13 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from qibao_api.a_shares.quant_research_intelligence import build_pitch_cards
+from qibao_api.a_shares.quant_research_intelligence import (
+    QuantResearchIntelligenceService,
+    build_pitch_cards,
+)
+from qibao_api.a_shares.quant_research_snapshot import QuantResearchSnapshotStore
 from qibao_api.contracts.quant_research import QuantRiskContext, ShadowCohortEvidence
+from qibao_api.contracts.quant_shadow import QuantShadowAnalytics, StrategyDriftAssessment
 
 from .test_quant_strategy import NOW, board, overview
 from qibao_api.a_shares.quant_strategy import build_quant_strategy_dashboard
@@ -77,3 +82,68 @@ def test_blocked_risk_gate_excludes_pitch_instead_of_hiding_the_blocker() -> Non
     assert result[0].status == "excluded"
     assert "股票处于停牌状态" in result[0].risk_gate.blockers
 
+
+def test_service_builds_once_then_returns_fresh_last_good_snapshot(tmp_path) -> None:
+    source = dashboard()
+
+    class Strategy:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def current(self, now, *, limit=12):
+            self.calls += 1
+            assert limit == 12
+            return source
+
+    class Ledger:
+        def analytics(self, *, horizon, decision_source, opportunity_type):
+            assert horizon == 20
+            return QuantShadowAnalytics(
+                status="insufficient",
+                horizon=20,
+                decision_source=decision_source,
+                opportunity_type=opportunity_type,
+                mature_sample_count=0,
+                pending_sample_count=0,
+                drift=StrategyDriftAssessment(
+                    status="insufficient", recent_sample_count=0, baseline_sample_count=0,
+                ),
+                generated_at=NOW,
+                limitations=("成熟样本不足",),
+            )
+
+    strategy = Strategy()
+    store = QuantResearchSnapshotStore(tmp_path / "quant-research.json")
+    service = QuantResearchIntelligenceService(strategy, Ledger(), store)
+
+    computed = service.current(NOW)
+    cached = service.current(NOW + timedelta(seconds=30))
+
+    assert computed.snapshot_source == "computed"
+    assert computed.opportunities[0].symbol == "600001"
+    assert computed.module_statuses["factor_health"].status == "insufficient"
+    assert cached.snapshot_source == "cache"
+    assert strategy.calls == 1
+
+
+def test_service_isolates_shadow_failure_and_keeps_pitch_visible(tmp_path) -> None:
+    class Strategy:
+        def current(self, now, *, limit=12):
+            return dashboard()
+
+    class FailingLedger:
+        def analytics(self, **kwargs):
+            raise OSError("ledger locked")
+
+    service = QuantResearchIntelligenceService(
+        Strategy(),
+        FailingLedger(),
+        QuantResearchSnapshotStore(tmp_path / "quant-research.json"),
+    )
+
+    result = service.current(NOW)
+
+    assert result.status == "partial"
+    assert result.opportunities
+    assert result.module_statuses["shadow"].status == "error"
+    assert "影子验证读取失败" in result.module_statuses["shadow"].message

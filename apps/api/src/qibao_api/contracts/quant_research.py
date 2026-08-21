@@ -320,6 +320,13 @@ class FactorHypothesisRecord(BaseModel):
     limitations: tuple[str, ...] = ()
 
 
+class ResearchModuleStatus(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    status: ResearchStatus
+    message: str = Field(min_length=1)
+
+
 class QuantResearchSnapshot(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -336,6 +343,15 @@ class QuantResearchSnapshot(BaseModel):
     shadow_cohorts: tuple[ShadowCohortEvidence, ...] = ()
     etf_exposures: tuple[ETFExposure, ...] = ()
     hypotheses: tuple[FactorHypothesisRecord, ...] = ()
+    module_statuses: dict[
+        Literal[
+            "factor_registry", "factor_health", "risk", "opportunities", "shadow",
+            "etf", "hypotheses",
+        ],
+        ResearchModuleStatus,
+    ] = Field(default_factory=dict)
+    refresh_progress: int = Field(default=100, ge=0, le=100)
+    refresh_stage: str = "已加载最新研究快照，实时监控中"
     formula_version: Literal["quant-research-intelligence-v1"] = (
         "quant-research-intelligence-v1"
     )
