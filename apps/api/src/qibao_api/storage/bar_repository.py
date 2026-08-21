@@ -653,6 +653,18 @@ class BarRepository:
                     dirs_exist_ok=True,
                 )
 
+    def snapshot_database_to(self, target_path: Path) -> Path:
+        """Checkpoint and copy only the DuckDB file for a read-only worker."""
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._lock:
+            connection = self._connect()
+            try:
+                connection.execute("CHECKPOINT")
+            finally:
+                connection.close()
+            shutil.copy2(self.database_path, target_path)
+        return target_path
+
 
 def _database_cutoff(value: datetime | None) -> datetime | None:
     if value is None:

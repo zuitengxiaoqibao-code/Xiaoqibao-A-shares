@@ -712,7 +712,7 @@ def test_deferred_candidate_scan_coalesces_small_limits_for_the_same_day() -> No
     service.close()
 
 
-def test_deferred_candidate_scan_avoids_windows_process_pool_for_non_ascii_database_path(
+def test_deferred_candidate_scan_uses_an_ascii_snapshot_for_non_ascii_database_path(
     tmp_path,
 ) -> None:
     from pathlib import Path
@@ -733,9 +733,8 @@ def test_deferred_candidate_scan_avoids_windows_process_pool_for_non_ascii_datab
     )
 
     assert service._candidate_process_executor is not None
-    assert all(
-        str(path).isascii() for path in service._candidate_process_paths
-    )
+    assert service._candidate_process_repository is candidate_service.bar_repository
+    assert str(service._candidate_scan_snapshot_manager.root).isascii()
     service.close()
 
 

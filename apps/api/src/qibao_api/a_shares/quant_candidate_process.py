@@ -34,12 +34,10 @@ def scan_candidate_board_from_local_bars(
     can import it in a Windows child process. No network or broker calls are
     made, and the caller validates the returned Pydantic board before use.
     """
-    # The worker only reads the shared market database.  Keep DuckDB's default
-    # access mode so it matches the API connection already open in the parent
-    # process, but skip schema writes because the database was initialized by
-    # the application before this worker starts.
+    # The worker receives an immutable scan snapshot, never the formal market
+    # database. Read-only mode prevents accidental writes to that snapshot.
     repository = BarRepository(
-        Path(database_path), Path(parquet_dir), ensure_schema=False
+        Path(database_path), Path(parquet_dir), read_only=True, ensure_schema=False
     )
     requested_factor_as_of = factor_as_of
     effective_factor_as_of = repository.latest_common_trade_date(

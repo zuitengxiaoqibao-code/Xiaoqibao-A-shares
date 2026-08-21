@@ -2,20 +2,16 @@ from dataclasses import dataclass
 from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
-from pathlib import Path
 import logging
 import hashlib
 import json
-import shutil
-import subprocess
-import tempfile
 from time import perf_counter
 from threading import RLock
 from typing import Mapping
-import os
 from zoneinfo import ZoneInfo
 
 from qibao_api.a_shares.models import CandidateBoard, CandidateEntry
+from qibao_api.a_shares.quant_scan_snapshot import QuantScanSnapshotManager
 from qibao_api.contracts.market_overview import (
     MarketOverviewResponse,
     OverviewBreadth,
@@ -891,6 +887,7 @@ class QuantStrategyService:
         shadow_ledger=None,
         shared_snapshot_registry=None,
         realtime_snapshot_bus=None,
+        scan_snapshot_manager: QuantScanSnapshotManager | None = None,
     ) -> None:
         self.overview_service = overview_service
         self.candidate_service = candidate_service
@@ -920,18 +917,17 @@ class QuantStrategyService:
         bar_repository = getattr(candidate_service, "bar_repository", None)
         database_path = getattr(bar_repository, "database_path", None)
         parquet_dir = getattr(bar_repository, "parquet_dir", None)
-        self._candidate_process_paths = (
-            (str(database_path), str(parquet_dir))
+        self._candidate_process_repository = (
+            bar_repository
             if defer_initial_scan and database_path is not None and parquet_dir is not None
             else None
         )
-        self._candidate_process_alias: Path | None = None
-        self._candidate_process_paths = self._prepare_process_paths(
-            self._candidate_process_paths
+        self._candidate_scan_snapshot_manager = (
+            scan_snapshot_manager or QuantScanSnapshotManager.default()
         )
         self._candidate_process_executor = (
             ProcessPoolExecutor(max_workers=1)
-            if self._candidate_process_paths is not None else None
+            if self._candidate_process_repository is not None else None
         )
         self._candidate_scan_jobs: dict[tuple[date, int], Future] = {}
         self._candidate_scan_started: dict[tuple[date, int], datetime] = {}
@@ -968,9 +964,6 @@ class QuantStrategyService:
         self._candidate_process_executor = None
         if process_executor is not None:
             process_executor.shutdown(wait=True, cancel_futures=True)
-        if self._candidate_process_alias is not None:
-            shutil.rmtree(self._candidate_process_alias, ignore_errors=True)
-            self._candidate_process_alias = None
         for lock, future_attr, executor_attr in (
             (self._overview_lock, "_overview_future", "_overview_executor"),
         ):
@@ -991,42 +984,6 @@ class QuantStrategyService:
                     job.cancel()
                 self._evidence_jobs.clear()
             evidence_executor.shutdown(wait=False, cancel_futures=True)
-
-    def _prepare_process_paths(
-        self, paths: tuple[str, str] | None
-    ) -> tuple[str, str] | None:
-        if paths is None:
-            return None
-        if all(str(path).isascii() for path in paths):
-            return paths
-        # DuckDB's frozen Windows child runtime can fail decoding a Chinese
-        # path before opening the database.  A temporary ASCII junction keeps
-        # the same real files while preserving process isolation and speed.
-        temp_root = Path(tempfile.gettempdir())
-        if not str(temp_root).isascii():
-            return None
-        database = Path(paths[0])
-        parquet = Path(paths[1])
-        alias = temp_root / f"qibao-data-{os.getpid()}-{id(self):x}"
-        try:
-            alias.parent.mkdir(parents=True, exist_ok=True)
-            target = database.parent
-            result = subprocess.run(
-                ["cmd.exe", "/d", "/c", "mklink", "/J", str(alias), str(target)],
-                capture_output=True,
-                check=False,
-            )
-            if result.returncode != 0:
-                subprocess.run(["cmd.exe", "/d", "/c", "rmdir", str(alias)], check=False)
-                return None
-            self._candidate_process_alias = alias
-            return (
-                str(alias / database.name),
-                str(alias / parquet.relative_to(target)),
-            )
-        except (OSError, ValueError):
-            subprocess.run(["cmd.exe", "/d", "/c", "rmdir", str(alias)], check=False)
-            return None
 
     def market_overview_ready(self) -> bool:
         with self._overview_lock:
@@ -1103,21 +1060,27 @@ class QuantStrategyService:
             self._record_candidate_progress(cache_key, phase, processed, total)
         progress("loading_history")
         progress_loader = getattr(self.candidate_service, "candidates_with_progress", None)
-        if self._candidate_process_paths is not None and self._candidate_process_executor is not None:
+        if self._candidate_process_repository is not None and self._candidate_process_executor is not None:
             factor_as_of = selected_date
             candidate_as_of = getattr(self.candidate_service, "_candidate_as_of", None)
             if callable(candidate_as_of):
                 factor_as_of = candidate_as_of(selected_date, None)
+            scan_input = self._candidate_scan_snapshot_manager.prepare(
+                self._candidate_process_repository,
+                as_of=factor_as_of,
+            )
             LOGGER.info(
-                "quant candidate scan input factor_as_of=%s database=%s parquet=%s",
+                "quant candidate scan input factor_as_of=%s database=%s parquet=%s source_mtime_ns=%s",
                 factor_as_of,
-                self._candidate_process_paths[0],
-                self._candidate_process_paths[1],
+                scan_input.database_path,
+                scan_input.parquet_path,
+                scan_input.source_mtime_ns,
             )
             progress("computing_factors", 0, None)
             process_future = self._candidate_process_executor.submit(
                 scan_candidate_board_from_local_bars,
-                *self._candidate_process_paths,
+                str(scan_input.database_path),
+                str(scan_input.parquet_path),
                 factor_as_of,
                 limit,
             )
