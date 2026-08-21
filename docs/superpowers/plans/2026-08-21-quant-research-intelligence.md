@@ -39,7 +39,7 @@ def test_default_registry_contains_only_computable_factor_fields() -> None:
     snapshot = build_default_factor_registry().snapshot(as_of=NOW)
     assert {item.factor_id for item in snapshot.factors} == {
         "return_5d", "return_20d", "distance_ma20", "volume_ratio_5_20",
-        "volatility_20d", "liquidity_amount_20d", "latest_close",
+        "volatility_20d", "drawdown_60d", "liquidity_amount_20d",
     }
     assert all(item.lifecycle == "active" for item in snapshot.factors)
 ```
