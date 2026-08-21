@@ -236,6 +236,72 @@ class ETFExposure(BaseModel):
     limitations: tuple[str, ...] = ()
 
 
+class ETFExposureResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    status: ResearchStatus
+    exposures: tuple[ETFExposure, ...] = ()
+    generated_at: AwareDatetime
+    formula_version: Literal["quant-etf-exposure-v1"] = "quant-etf-exposure-v1"
+    limitations: tuple[str, ...] = ()
+
+
+class FactorHypothesisCreate(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    statement: str = Field(min_length=1)
+    expected_direction: FactorDirection
+    required_fields: tuple[str, ...] = Field(min_length=1)
+    train_start: date
+    train_end: date
+    validation_start: date
+    validation_end: date
+    test_start: date
+    test_end: date
+    success_metric: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
+    success_threshold: str = Field(min_length=1)
+    invalidation_conditions: tuple[str, ...] = Field(min_length=1)
+    leakage_checks: tuple[
+        Literal["point_in_time", "walk_forward", "transaction_cost", "fdr"], ...
+    ] = Field(min_length=4, max_length=4)
+    model: str = Field(min_length=1)
+    generated_at: AwareDatetime
+    input_evidence_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    status: str = "draft"
+
+    @model_validator(mode="after")
+    def require_deterministic_validation(self) -> "FactorHypothesisCreate":
+        if self.status != "draft":
+            raise ValueError("AI hypothesis status requires deterministic validation")
+        if not (
+            self.train_start <= self.train_end
+            < self.validation_start <= self.validation_end
+            < self.test_start <= self.test_end
+        ):
+            raise ValueError("train, validation and test periods must be ordered")
+        if len(set(self.required_fields)) != len(self.required_fields):
+            raise ValueError("required_fields must be unique")
+        if set(self.leakage_checks) != {
+            "point_in_time", "walk_forward", "transaction_cost", "fdr",
+        }:
+            raise ValueError("all deterministic leakage checks are required")
+        return self
+
+
+class FactorHypothesisValidation(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    hypothesis_id: str = Field(min_length=1)
+    status: Literal["accepted", "rejected", "insufficient", "error"]
+    checks: dict[
+        Literal["point_in_time", "walk_forward", "transaction_cost", "fdr"],
+        Literal["passed", "failed", "unavailable"],
+    ]
+    missing_fields: tuple[str, ...] = ()
+    validated_at: AwareDatetime
+    reasons: tuple[str, ...] = ()
+
+
 class FactorHypothesisRecord(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -247,6 +313,10 @@ class FactorHypothesisRecord(BaseModel):
     ]
     generated_at: AwareDatetime
     input_evidence_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    required_fields: tuple[str, ...] = ()
+    success_metric: str | None = None
+    success_threshold: str | None = None
+    validation: FactorHypothesisValidation | None = None
     limitations: tuple[str, ...] = ()
 
 
