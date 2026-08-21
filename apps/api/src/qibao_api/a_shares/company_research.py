@@ -420,7 +420,10 @@ class CompanyResearchService:
         enrichment_repository: Any | None = None,
         version_repository: Any | None = None,
         clock: Callable[[], datetime] = _utc_now,
+        source_timeout_seconds: float = 8.0,
     ) -> None:
+        if source_timeout_seconds <= 0:
+            raise ValueError("source_timeout_seconds must be positive")
         self.diagnosis_service = diagnosis_service
         self.financial_source = financial_source
         self.profile_source = profile_source
@@ -428,6 +431,7 @@ class CompanyResearchService:
         self.enrichment_repository = enrichment_repository
         self.version_repository = version_repository
         self.clock = clock
+        self.source_timeout_seconds = source_timeout_seconds
         self._enrichment_tasks: dict[str, asyncio.Task] = {}
         self._core_refresh_tasks: dict[tuple[str, date], asyncio.Task] = {}
 
@@ -478,11 +482,18 @@ class CompanyResearchService:
                 task.add_done_callback(
                     lambda _task, current_stage=stage, current_detail=detail: progress_callback(current_stage, current_detail)
                 )
+        async def bounded(task: asyncio.Task, stage: str):
+            try:
+                return await asyncio.wait_for(task, timeout=self.source_timeout_seconds)
+            except asyncio.TimeoutError:
+                if progress_callback is not None:
+                    progress_callback(stage, f"{stage} 数据源超时，已降级为不可用证据")
+                return TimeoutError(stage)
+
         diagnosis_result, financial_result, profile_result = await asyncio.gather(
-            diagnosis_task,
-            financial_task,
-            profile_task,
-            return_exceptions=True,
+            bounded(diagnosis_task, "diagnosis"),
+            bounded(financial_task, "financials"),
+            bounded(profile_task, "profile"),
         )
         if isinstance(diagnosis_result, Exception):
             latest = self.version_repository.latest(symbol) if self.version_repository is not None else None

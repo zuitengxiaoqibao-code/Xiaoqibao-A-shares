@@ -411,14 +411,35 @@ class NewsRepository:
 
     @_serialized
     def events_for_symbol(
-        self, symbol: str, *, cutoff: datetime | None = None
+        self,
+        symbol: str,
+        *,
+        cutoff: datetime | None = None,
+        since: datetime | None = None,
+        limit: int | None = None,
     ) -> list[NormalizedNewsEvent]:
         normalized_cutoff = (
             cutoff.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
             if cutoff else None
         )
+        since_value = (
+            since.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+            if since else None
+        )
+        limit_clause = " LIMIT ?" if limit is not None else ""
+        params = [
+            symbol,
+            normalized_cutoff,
+            normalized_cutoff,
+            normalized_cutoff,
+            normalized_cutoff,
+            since_value,
+            since_value,
+        ]
+        if limit is not None:
+            params.append(max(1, int(limit)))
         rows = self.connection.execute(
-            """SELECT DISTINCT news_events.* FROM news_events,
+            f"""SELECT DISTINCT news_events.* FROM news_events,
                json_each(json_extract(news_events.payload, '$.affected_instruments')) linked
                WHERE json_extract(linked.value, '$[0]') = 'a_share'
                  AND json_extract(linked.value, '$[1]') = ?
@@ -433,14 +454,11 @@ class NewsRepository:
                  AND (? IS NULL OR json_extract(
                      news_events.payload, '$.occurred_at'
                  ) <= ?)
-               ORDER BY news_events.sequence""",
-            (
-                symbol,
-                normalized_cutoff,
-                normalized_cutoff,
-                normalized_cutoff,
-                normalized_cutoff,
-            ),
+                 AND (? IS NULL OR json_extract(
+                     news_events.payload, '$.occurred_at'
+                 ) >= ?)
+               ORDER BY news_events.sequence{limit_clause}""",
+            params,
         ).fetchall()
         events = []
         for row in rows:

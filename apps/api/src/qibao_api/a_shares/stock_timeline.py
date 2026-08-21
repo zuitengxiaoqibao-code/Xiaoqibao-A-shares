@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, time
 from zoneinfo import ZoneInfo
 
 from qibao_api.contracts.market import AssetKind
@@ -52,8 +52,11 @@ class StockTimelineService:
         trade_dates = {item.trade_date for item in bars}
         candidates = [
             event
-            for event in self.news_repository.effective_events_for_symbol(
-                symbol, cutoff=cutoff,
+            for event in self.news_repository.events_for_symbol(
+                symbol,
+                cutoff=cutoff,
+                since=datetime.combine(first_date, time.min, tzinfo=CHINA_TZ),
+                limit=max(1, limit * 4),
             )
             if self._eligible_event(event, symbol, first_date, as_of, cutoff)
         ]
@@ -62,6 +65,7 @@ class StockTimelineService:
             cutoff,
             symbol=symbol,
             limit=max(limit, len(candidates)),
+            events=candidates,
         )
         alerts = {item.event_id: item for item in alert_response.alerts}
         candidates = [event for event in candidates if event.event_id in alerts]

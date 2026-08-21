@@ -123,3 +123,26 @@ async def test_company_research_allows_retry_after_a_failed_same_key_task() -> N
             break
         await asyncio.sleep(0.001)
     assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_company_research_task_ends_with_chinese_timeout_stage() -> None:
+    class Research:
+        async def get(self, symbol, as_of, progress_callback=None):
+            progress_callback("financials", "正在等待财务来源")
+            await asyncio.Event().wait()
+
+    registry = TaskProgressRegistry()
+    service = CompanyResearchTaskService(Research(), registry, task_timeout_seconds=0.01)
+    started = service.start("600519", date(2026, 8, 12))
+    for _ in range(100):
+        current = service.snapshot(started.progress.task_id)
+        if current is not None and current.progress.status == "failed":
+            break
+        await asyncio.sleep(0.001)
+
+    failed = service.snapshot(started.progress.task_id)
+    assert failed is not None
+    assert failed.progress.status == "failed"
+    assert failed.progress.stage == "financials"
+    assert failed.progress.detail == "研究任务超时：财务数据来源长时间无响应"

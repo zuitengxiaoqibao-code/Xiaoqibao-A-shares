@@ -137,14 +137,18 @@ class News:
             ),
         }
 
-    def effective_events_for_symbol(self, symbol, *, cutoff=None):
+    def events_for_symbol(self, symbol, *, cutoff=None, since=None, limit=None):
         assert symbol == "600519"
         assert cutoff == CUTOFF
+        assert since == datetime(2026, 7, 24, 0, 0, tzinfo=CHINA_TZ)
+        assert limit == 480
         return list(self.events)
 
+    def effective_events_for_symbol(self, symbol, *, cutoff=None):
+        raise AssertionError("timeline must use the bounded symbol query")
+
     def effective_events(self, *, cutoff=None):
-        assert cutoff == CUTOFF
-        return list(self.events)
+        raise AssertionError("timeline must not scan all effective news after symbol filtering")
 
     def latest_interpretations_by_event(self, event_ids, cutoff):
         values = self.interpretations_for_events(
@@ -182,6 +186,14 @@ class News:
                 "negative", "0.99",
             ),
         ]
+
+
+def test_timeline_reuses_symbol_candidates_without_global_alert_scan() -> None:
+    result = StockTimelineService(Bars(), News()).get(
+        "600519", date(2026, 7, 28), CUTOFF
+    )
+
+    assert [item.event_id for item in result.events] == ["weekend", "intraday", "announcement"]
 
 
 def test_timeline_uses_real_bars_and_only_verified_timestamped_stock_news() -> None:
@@ -222,7 +234,7 @@ class NoBars:
 
 
 class UnusedNews:
-    def effective_events_for_symbol(self, symbol, *, cutoff=None):
+    def events_for_symbol(self, symbol, *, cutoff=None, since=None, limit=None):
         raise AssertionError("news must not be queried without a chart range")
 
 

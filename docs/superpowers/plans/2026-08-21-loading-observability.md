@@ -24,10 +24,10 @@
 - Modify: `apps/web/src/app/theme.css`
 - Test: `apps/web/src/shared/TaskActivityStatus.test.tsx`
 
-- [ ] 写测试：展示 AI 未配置、处理中任务、失败任务和真实百分比；无任务不发起轮询。
-- [ ] 运行 Vitest 聚焦测试确认失败。
-- [ ] 实现活动任务注册/更新/完成/失败 API 和导航下方状态面板。
-- [ ] 运行聚焦测试确认通过。
+- [x] 写测试：展示 AI 未配置、处理中任务、失败任务和真实百分比；无任务不发起轮询。
+- [x] 运行 Vitest 聚焦测试确认失败。
+- [x] 实现活动任务注册/更新/完成/失败 API 和导航下方状态面板。
+- [x] 运行聚焦测试确认通过。
 
 ### Task 2: 事件 K 线分层加载
 
@@ -38,10 +38,10 @@
 - Test: `apps/api/tests/a_shares/test_stock_timeline.py`
 - Test: `apps/web/src/features/stock-timeline/StockEventKline.test.tsx`
 
-- [ ] 写测试：已有缓存时首次渲染不清空，后端事件查询使用有界日期/数量，增量刷新合并而非替换。
-- [ ] 运行聚焦测试确认失败。
-- [ ] 实现缓存首屏、任务阶段上报、增量合并和有界事件读取。
-- [ ] 运行聚焦测试确认通过。
+- [x] 写测试：已有缓存时首次渲染不清空，后端事件查询使用有界日期/数量，增量刷新合并而非替换。
+- [x] 运行聚焦测试确认失败。
+- [x] 实现缓存首屏、任务阶段上报、增量合并和有界事件读取。
+- [x] 运行聚焦测试确认通过。
 
 ### Task 3: 公司研究超时隔离
 
@@ -53,10 +53,10 @@
 - Test: `apps/api/tests/a_shares/test_company_research_tasks.py`
 - Test: `apps/web/src/features/company-research/api.test.ts`
 
-- [ ] 写测试：单源超时转 partial、总任务超时结束、前端停滞轮询给出中文阶段原因并保留缓存。
-- [ ] 运行聚焦测试确认失败。
-- [ ] 实现单源超时、总时限、前端停滞检测和任务活动状态接入。
-- [ ] 运行聚焦测试确认通过。
+- [x] 写测试：单源超时转 partial、总任务超时结束、前端停滞轮询给出中文阶段原因并保留缓存。
+- [x] 运行聚焦测试确认失败。
+- [x] 实现单源超时、总时限、前端停滞检测和任务活动状态接入。
+- [x] 运行聚焦测试确认通过。
 
 ### Task 4: 全量验收与 EXE
 
@@ -64,7 +64,7 @@
 - Create: `docs/verification/2026-08-21-loading-observability.md`
 - Modify: `docs/superpowers/plans/2026-08-21-loading-observability.md`
 
-- [ ] 运行 API/Web 全量、Ruff、生产构建和乱码扫描。
-- [ ] 运行 `scripts/build-portable.ps1`，保留八个持久目录。
-- [ ] 运行 `scripts/run-portable-smoke.ps1 -UseReleaseData`、恢复演练和发布质量门禁。
-- [ ] 记录真实耗时、状态和 EXE 哈希，提交文档。
+- [x] 运行 API/Web 全量、Ruff、生产构建和乱码扫描。
+- [x] 运行 `scripts/build-portable.ps1 -SkipTests`，保留八个持久目录。
+- [x] 运行 `scripts/run-portable-smoke.ps1 -UseReleaseData`、恢复演练和发布质量门禁。
+- [x] 记录真实耗时、状态和 EXE 哈希，提交文档。

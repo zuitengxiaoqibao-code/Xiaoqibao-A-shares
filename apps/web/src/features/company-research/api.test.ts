@@ -1,9 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { loadCompanyResearch, loadCompanyResearchComparison } from "./api";
+import { readTaskActivities, resetTaskActivityForTests } from "../../shared/taskActivity";
 
 describe("company research api", () => {
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    resetTaskActivityForTests();
+  });
 
   it("requests the stable company research route with the optional date", async () => {
     const result = { symbol: "600519" };
@@ -45,6 +50,25 @@ describe("company research api", () => {
 
     expect(updates).toContain(50);
     expect(updates.at(-1)).toBe(100);
+  });
+
+  it("ends a stalled research poll with a Chinese stage error", async () => {
+    vi.useFakeTimers();
+    const running = { progress: { task_id: "task-stalled", status: "running", stage: "financials", processed: 2, total: 6, percent: 33.33, detail: "正在等待财务来源", error: null }, result: null };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(running), { status: 200 })));
+
+    const pending = loadCompanyResearch("600519");
+    await vi.advanceTimersByTimeAsync(1);
+    const assertion = expect(pending).rejects.toThrow("公司研究停滞：正在等待财务来源超过10秒无进展");
+    await vi.advanceTimersByTimeAsync(11_000);
+    await assertion;
+
+    expect(readTaskActivities()[0]).toMatchObject({
+      id: "company-research:600519:latest",
+      state: "failed",
+      stage: "公司研究失败",
+      error: "公司研究停滞：正在等待财务来源超过10秒无进展",
+    });
   });
 
   it("posts a bounded set of verified symbols for comparison", async () => {

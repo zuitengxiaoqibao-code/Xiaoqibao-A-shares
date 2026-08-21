@@ -63,6 +63,7 @@ import type {
   PreparationLoader,
   SourceHealthLoader,
 } from "../data-settings/types";
+import type { AISettingsView } from "../data-settings/types";
 
 const loadConvertibleBondModule = () => import("../convertible-bonds/ConvertibleBondView");
 const loadNewsIntelligenceModule = () => import("../news-intelligence/NewsIntelligenceView");
@@ -323,6 +324,7 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, an
   const [state, setState] = useState<ViewState>({ kind: "idle" });
   const [symbol, setSymbol] = useState("600000");
   const [dataState, setDataState] = useState<DataStatusState>({ kind: "idle" });
+  const [aiStatus, setAiStatus] = useState<AISettingsView | null>(null);
   const [activeView, setActiveView] = useState<ActiveView>(() => {
     if (window.location.pathname === "/") {
       const restored = loadWorkspaceState();
@@ -334,6 +336,12 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, an
   const [latestCockpit, setLatestCockpit] = useState<StockCockpitSnapshot | null>(null);
   const [candidateSentiments, setCandidateSentiments] = useState<CandidateSentimentBatch | null>(null);
   const selectedSymbol = selectedInstrument?.symbol ?? selectedInstrument?.lastSymbol ?? null;
+  useEffect(() => {
+    if (!loadAISettings) return;
+    const controller = new AbortController();
+    void loadAISettings(controller.signal).then(setAiStatus).catch(() => setAiStatus({ configured: false, state: "unconfigured", message: "AI 配置读取失败", base_url: null, model: null, api_key_hint: null }));
+    return () => controller.abort();
+  }, [loadAISettings]);
   const selectedCandidateSentiment = candidateSentimentForSymbol(
     candidateSentiments,
     selectedSymbol,
@@ -426,7 +434,7 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, an
 
   return (
     <div className="app-shell">
-      <BeginnerNavigation active={activeView} onNavigate={navigate} />
+      <BeginnerNavigation active={activeView} onNavigate={navigate} ai={aiStatus} />
 
       {activeView === "market_overview" && loadMarketOverview && <MarketOverviewView load={loadMarketOverview} loadAlerts={loadBreakingNewsAlerts} onOpenAShare={openOverviewStock} onOpenCompanyResearch={openCompanyResearch} onOpenQuantAnalysis={openQuantAnalysis} synthesizeSpeech={synthesizeSpeech} loadIntervalReview={loadMarketIntervalReview} />}
       {activeView === "market_overview" && !loadMarketOverview && <main className="market-overview-page"><header className="overview-titlebar"><div><p>A-SHARE MARKET TERMINAL</p><h1>信息总览</h1></div></header><div className="overview-error"><ShieldAlert size={15} />信息总览服务暂不可用，请检查本地 API。</div></main>}

@@ -359,7 +359,7 @@ describe("Dashboard beginner shell", () => {
 
     for (const name of ["今日研判", "个股观察", "首次涨停", "量化分析", "新闻热点", "风险提醒", "历史复盘", "数据设置"]) {
       fireEvent.click(screen.getByRole("button", { name }));
-      if (name === "数据设置") await waitFor(() => expect(loadAISettings).toHaveBeenCalled());
+      if (name === "数据设置") await screen.findByText(/密钥已保存/);
       expect(container.innerHTML).not.toMatch(/模拟账户|模拟委托|模拟操作计划|纸面账户|纸面订单/);
     }
 

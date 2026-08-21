@@ -15,10 +15,16 @@ class BreakingNewsAlertService:
         *,
         symbol: str | None = None,
         limit: int = 30,
+        events: list | tuple | None = None,
     ) -> BreakingNewsAlertResponse:
         normalized_cutoff = cutoff.astimezone(timezone.utc)
+        source_events = (
+            events
+            if events is not None
+            else self.repository.effective_events(cutoff=normalized_cutoff)
+        )
         events = [
-            event for event in self.repository.effective_events(cutoff=normalized_cutoff)
+            event for event in source_events
             if event.occurred_at.astimezone(timezone.utc) <= normalized_cutoff
             and event.normalized_at.astimezone(timezone.utc) <= normalized_cutoff
             and event.review_state != "rejected"
