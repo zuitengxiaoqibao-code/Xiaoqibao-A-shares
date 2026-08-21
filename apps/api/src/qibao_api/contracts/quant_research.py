@@ -116,6 +116,71 @@ class FactorHealth(BaseModel):
     limitations: tuple[str, ...] = ()
 
 
+RiskGateStatus = Literal["pass", "warn", "block", "unavailable"]
+
+
+class QuantRiskContext(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    suspended: bool | None = None
+    limit_untradeable: bool | None = None
+    average_amount_20d: Decimal | None = Field(default=None, ge=0)
+    beneish_components: dict[str, Decimal] | None = None
+    sector_exposure_percent: Decimal | None = Field(default=None, ge=0, le=100)
+    theme_exposure_percent: Decimal | None = Field(default=None, ge=0, le=100)
+    source_snapshot_ids: tuple[str, ...] = ()
+
+
+class RiskGateCheck(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    key: Literal[
+        "evidence", "tradability", "financial_anomaly", "signal_conflict",
+        "concentration",
+    ]
+    label: str = Field(min_length=1)
+    status: RiskGateStatus
+    reason: str = Field(min_length=1)
+    metric_value: Decimal | None = None
+    threshold: Decimal | None = None
+    source_snapshot_ids: tuple[str, ...] = ()
+
+
+class QuantRiskGateSummary(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    symbol: str = Field(pattern=r"^\d{6}$")
+    overall_status: Literal["pass", "warn", "block"]
+    checks: tuple[RiskGateCheck, ...]
+    blockers: tuple[str, ...] = ()
+    formula_version: Literal["quant-risk-gates-v1"] = "quant-risk-gates-v1"
+
+    @model_validator(mode="after")
+    def require_all_unique_gates(self) -> "QuantRiskGateSummary":
+        keys = tuple(item.key for item in self.checks)
+        if len(keys) != len(set(keys)):
+            raise ValueError("risk gate keys must be unique")
+        if self.overall_status == "block" and not self.blockers:
+            raise ValueError("blocked risk summary requires blockers")
+        return self
+
+
+class OpportunityDefinition(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    opportunity_id: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
+    name: str = Field(min_length=1)
+    applicable_regimes: tuple[str, ...] = Field(min_length=1)
+    required_evidence: tuple[str, ...] = Field(min_length=1)
+    score_components: tuple[str, ...] = Field(min_length=1)
+    trigger_rules: tuple[str, ...] = Field(min_length=1)
+    invalidation_rules: tuple[str, ...] = Field(min_length=1)
+    unavailable_when: tuple[str, ...] = Field(min_length=1)
+    formula_version: Literal["quant-opportunity-registry-v1"] = (
+        "quant-opportunity-registry-v1"
+    )
+
+
 def utc_now() -> datetime:
     """Clock seam for registry construction; callers should inject their own time in tests."""
     from datetime import timezone
