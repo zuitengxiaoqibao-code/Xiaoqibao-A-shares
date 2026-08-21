@@ -22,16 +22,27 @@ function Fixture({
   loader,
   intervalMs = 1000,
   external,
+  cacheKey,
+  initialDelayMs = 0,
 }: {
   loader: () => Promise<{ value: string }>;
   intervalMs?: number;
   external?: { value: string };
+  cacheKey?: string;
+  initialDelayMs?: number;
 }) {
   const state = useQuantLiveResource({
     loader,
     intervalMs,
     enabled: true,
     errorMessage: "加载失败",
+    initialDelayMs,
+    cache: cacheKey ? {
+      key: cacheKey,
+      validate: (value: unknown): value is { value: string } => (
+        typeof value === "object" && value !== null && typeof (value as { value?: unknown }).value === "string"
+      ),
+    } : undefined,
   });
   return <div>
     <span data-testid="value">{state.data?.value ?? "empty"}</span>
@@ -44,6 +55,7 @@ function Fixture({
 describe("useQuantLiveResource", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    localStorage.clear();
     setDocumentHidden(false);
   });
 
@@ -141,5 +153,36 @@ describe("useQuantLiveResource", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
 
     expect(loader).toHaveBeenCalledTimes(1);
+  });
+
+  it("restores a validated same-day last-good snapshot before the next request finishes", async () => {
+    const first = render(<Fixture loader={vi.fn(async () => ({ value: "cached" }))} cacheKey="tick:600519" />);
+    await flushPromises();
+    expect(screen.getByTestId("value")).toHaveTextContent("cached");
+    first.unmount();
+
+    const pending = vi.fn(() => new Promise<{ value: string }>(() => undefined));
+    render(<Fixture loader={pending} cacheKey="tick:600519" />);
+
+    expect(screen.getByTestId("value")).toHaveTextContent("cached");
+    expect(screen.getByTestId("status")).toHaveTextContent("delayed");
+    await flushPromises();
+    expect(pending).toHaveBeenCalledTimes(1);
+  });
+
+  it("delays low-priority initial work without delaying cached content", async () => {
+    const loader = vi.fn(async () => ({ value: "fresh" }));
+    render(<Fixture loader={loader} initialDelayMs={800} />);
+
+    await flushPromises();
+    expect(loader).not.toHaveBeenCalled();
+    expect(screen.getByTestId("status")).toHaveTextContent("loading");
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(799); });
+    expect(loader).not.toHaveBeenCalled();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    await flushPromises();
+    expect(loader).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("value")).toHaveTextContent("fresh");
   });
 });

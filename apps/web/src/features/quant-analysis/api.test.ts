@@ -1,6 +1,34 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { loadKronosForecast, loadQuantCalibration, loadQuantStrategy, loadTdxFormula } from "./api";
+import {
+  loadKronosForecast, loadQuantCalibration, loadQuantStrategy, loadQuantTicks, loadTdxFormula,
+} from "./api";
+
+describe("loadQuantTicks", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it("registers a selected stock for real monitoring before reading its archive", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-21T06:30:00Z"));
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      return new Response(JSON.stringify(url.endsWith("/intraday-focus") ? {
+        status: "ready", symbol: "600519",
+      } : []), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await loadQuantTicks("600519");
+    await loadQuantTicks("600519");
+
+    const calls = fetchMock.mock.calls.map(([input]) => String(input));
+    expect(calls.filter((url) => url.endsWith("/600519/intraday-focus"))).toHaveLength(1);
+    expect(calls.filter((url) => url.endsWith("/600519/intraday-ticks"))).toHaveLength(2);
+  });
+});
 
 describe("loadKronosForecast", () => {
   afterEach(() => vi.unstubAllGlobals());

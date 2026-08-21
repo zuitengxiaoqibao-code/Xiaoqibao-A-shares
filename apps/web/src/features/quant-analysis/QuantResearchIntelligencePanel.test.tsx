@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { QuantResearchIntelligencePanel } from "./QuantResearchIntelligencePanel";
 import type { QuantResearchSnapshot, QuantResearchStatus } from "./types";
@@ -30,13 +30,23 @@ const snapshot: QuantResearchSnapshot = {
     }],
   },
   factor_health: [],
-  risk_summaries: [{
-    symbol: "600001", overall_status: "warn", blockers: [], formula_version: "quant-risk-gates-v1",
-    checks: [
-      { key: "evidence", label: "证据完整性", status: "pass", reason: "证据完整", metric_value: "90", threshold: "80", source_snapshot_ids: [] },
-      { key: "financial_anomaly", label: "财务异常", status: "unavailable", reason: "财务字段不完整", metric_value: null, threshold: null, source_snapshot_ids: [] },
-    ],
-  }],
+  risk_summaries: [
+    {
+      symbol: "600001", overall_status: "warn", blockers: [], formula_version: "quant-risk-gates-v1",
+      checks: [
+        { key: "evidence", label: "证据完整性", status: "pass", reason: "证据完整", metric_value: "90", threshold: "80", source_snapshot_ids: ["snapshot-1"] },
+        { key: "financial_anomaly", label: "财务异常", status: "unavailable", reason: "财务字段不完整", metric_value: null, threshold: null, source_snapshot_ids: [] },
+      ],
+    },
+    {
+      symbol: "600002", overall_status: "block", blockers: ["涨停日不可买入"], formula_version: "quant-risk-gates-v1",
+      checks: [
+        { key: "tradability", label: "可交易性", status: "block", reason: "涨停日不可买入", metric_value: "10.00", threshold: "9.90", source_snapshot_ids: ["snapshot-2"] },
+        { key: "signal_conflict", label: "信号冲突", status: "warn", reason: "量价信号方向不一致，需等待盘中确认后再观察", metric_value: "2", threshold: "1", source_snapshot_ids: ["snapshot-2"] },
+        { key: "evidence", label: "证据完整性", status: "pass", reason: "证据完整", metric_value: "88", threshold: "80", source_snapshot_ids: ["snapshot-2"] },
+      ],
+    },
+  ],
   opportunities: [
     {
       symbol: "600001", name: "样本股份", opportunity_type: "trend_continuation", opportunity_name: "趋势延续",
@@ -71,10 +81,14 @@ const snapshot: QuantResearchSnapshot = {
 
 
 describe("QuantResearchIntelligencePanel", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
   it("shows module truth states, readable pitches and rounded values", async () => {
     render(<QuantResearchIntelligencePanel load={vi.fn(async () => snapshot)} />);
 
-    expect(await screen.findByText("研究智能")).toBeInTheDocument();
+    expect(await screen.findByText("研究智能", {}, { timeout: 2_500 })).toBeInTheDocument();
     expect(screen.getByText("已加载最新研究快照，实时监控中")).toBeInTheDocument();
     expect(screen.getAllByText("ETF 映射暂不可用").length).toBeGreaterThan(0);
     expect(screen.getByText("82.13")).toBeInTheDocument();
@@ -84,19 +98,70 @@ describe("QuantResearchIntelligencePanel", () => {
 
   it("filters pitch cards by opportunity type without hiding module evidence", async () => {
     render(<QuantResearchIntelligencePanel load={vi.fn(async () => snapshot)} />);
-    await screen.findByText("样本股份");
+    await screen.findByText("研究智能", {}, { timeout: 2_500 });
+    const opportunityRegion = screen.getByRole("region", { name: "机会候选卡" });
+    expect(within(opportunityRegion).getByText("样本股份")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "放量突破" }));
 
-    expect(screen.queryByText("样本股份")).not.toBeInTheDocument();
-    expect(screen.getByText("突破股份")).toBeInTheDocument();
+    expect(within(opportunityRegion).queryByText("样本股份")).not.toBeInTheDocument();
+    expect(within(opportunityRegion).getByText("突破股份")).toBeInTheDocument();
     expect(screen.getAllByText("点时横截面样本正在积累").length).toBeGreaterThan(0);
   });
 
   it("uses a clear Chinese failure state", async () => {
     render(<QuantResearchIntelligencePanel load={vi.fn(async () => { throw new Error("down"); })} />);
 
-    expect(await screen.findByText("量化研究快照加载失败")).toBeInTheDocument();
+    expect(await screen.findByText("量化研究快照加载失败", {}, { timeout: 2_500 })).toBeInTheDocument();
     expect(screen.getByText("请检查本地数据状态后重试；其他量化模块不受影响。")).toBeInTheDocument();
+  });
+
+  it("starts research intelligence after the primary quant panels", async () => {
+    vi.useFakeTimers();
+    const load = vi.fn(async () => snapshot);
+    const view = render(<QuantResearchIntelligencePanel load={load} />);
+    try {
+      await act(async () => { await Promise.resolve(); });
+      expect(load).not.toHaveBeenCalled();
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_399); });
+      expect(load).not.toHaveBeenCalled();
+      await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+      expect(load).toHaveBeenCalledTimes(1);
+      expect(screen.getByText("研究智能")).toBeInTheDocument();
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it("groups risk gates into one readable card per stock with status counts", async () => {
+    render(<QuantResearchIntelligencePanel load={vi.fn(async () => snapshot)} />);
+    await screen.findByText("研究智能", {}, { timeout: 2_500 });
+
+    const riskRegion = screen.getByRole("region", { name: "风险闸门" });
+    const cards = within(riskRegion).getAllByRole("article");
+    expect(cards).toHaveLength(2);
+    expect(within(cards[0]).getByText("样本股份")).toBeInTheDocument();
+    expect(cards[0]).toHaveTextContent("通过 1");
+    expect(cards[0]).toHaveTextContent("缺证据 1");
+    expect(within(cards[1]).getByText("突破股份")).toBeInTheDocument();
+    expect(cards[1]).toHaveTextContent("阻断 1");
+    expect(cards[1]).toHaveTextContent("警告 1");
+  });
+
+  it("prioritizes blockers and warnings while keeping audit values in details", async () => {
+    render(<QuantResearchIntelligencePanel load={vi.fn(async () => snapshot)} />);
+    await screen.findByText("研究智能", {}, { timeout: 2_500 });
+
+    const card = screen.getByTestId("quant-risk-card-600002");
+    const reasons = card.querySelector(".quant-risk-reasons");
+    expect(reasons?.children[0]).toHaveTextContent("涨停日不可买入");
+    expect(reasons?.children[1]).toHaveTextContent("量价信号方向不一致，需等待盘中确认后再观察");
+    expect(card).not.toHaveTextContent("量价信号方向不一致，需等待盘中确认后再观…");
+
+    fireEvent.click(within(card).getByText("查看审计指标与来源"));
+    expect(card).toHaveTextContent("指标 10.00");
+    expect(card).toHaveTextContent("阈值 9.90");
+    expect(card).toHaveTextContent("snapshot-2");
   });
 });

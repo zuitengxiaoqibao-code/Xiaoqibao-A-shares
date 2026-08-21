@@ -2,10 +2,43 @@ import type { DecisionJournalCreate, DecisionJournalEntry, IntradayTick, KronosF
 import { coalescedFetch } from "../../shared/coalescedFetch";
 import { requestLedger } from "../../shared/performance/requestLedger";
 
+const FOCUS_TTL_SECONDS = 900;
+const FOCUS_RENEW_AFTER_MS = 5 * 60 * 1000;
+const FOCUS_RETRY_AFTER_MS = 30 * 1000;
+const focusRegistrationState = new Map<string, {
+  lastAttemptAt: number;
+  registeredUntil: number;
+}>();
+
+export async function registerQuantFocus(symbol: string): Promise<void> {
+  const now = Date.now();
+  const current = focusRegistrationState.get(symbol);
+  if (current?.registeredUntil && current.registeredUntil > now) return;
+  if (current && now - current.lastAttemptAt < FOCUS_RETRY_AFTER_MS) return;
+  focusRegistrationState.set(symbol, {
+    lastAttemptAt: now,
+    registeredUntil: current?.registeredUntil ?? 0,
+  });
+  const response = await fetch(
+    `/api/v1/a-shares/${encodeURIComponent(symbol)}/intraday-focus`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: "quant_analysis", ttl_seconds: FOCUS_TTL_SECONDS }),
+    },
+  );
+  if (!response.ok) throw new Error(`盘中监测登记失败 (${response.status})`);
+  focusRegistrationState.set(symbol, {
+    lastAttemptAt: now,
+    registeredUntil: now + FOCUS_RENEW_AFTER_MS,
+  });
+}
+
 export async function loadQuantTicks(
   symbol: string,
   tradingDate?: string,
 ): Promise<IntradayTick[]> {
+  await registerQuantFocus(symbol).catch(() => undefined);
   const query = tradingDate
     ? `?trading_date=${encodeURIComponent(tradingDate)}`
     : "";

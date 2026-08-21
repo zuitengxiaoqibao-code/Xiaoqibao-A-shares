@@ -165,17 +165,60 @@ function candidatesFrom(board: FirstLimitUpBoard | null): FirstLimitUpCandidate[
   });
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isBoardSnapshot(value: unknown): value is FirstLimitUpBoard {
+  return isRecord(value)
+    && typeof value.as_of === "string"
+    && Array.isArray(value.today)
+    && Array.isArray(value.pool);
+}
+
+function isTickSnapshot(value: unknown, symbol: string | null): value is IntradayTick[] {
+  return Array.isArray(value) && value.every((item) => (
+    isRecord(item)
+    && typeof item.symbol === "string"
+    && (!symbol || item.symbol === symbol)
+    && typeof item.observed_at === "string"
+  ));
+}
+
+function hasMatchingSymbol(value: unknown, symbol: string | null): value is Record<string, unknown> {
+  return Boolean(symbol) && isRecord(value) && value.symbol === symbol;
+}
+
+function isStrategySnapshot(value: unknown): value is Awaited<ReturnType<QuantStrategyLoader>> {
+  return isRecord(value)
+    && value.formula_version === "a-share-short-strategy-v2.0"
+    && typeof value.as_of === "string"
+    && Array.isArray(value.candidates);
+}
+
+function isShadowRecords(value: unknown): value is Awaited<ReturnType<QuantShadowLoader>> {
+  return Array.isArray(value) && value.every((item) => (
+    isRecord(item)
+    && typeof item.decision_id === "string"
+    && typeof item.symbol === "string"
+    && typeof item.frozen_at === "string"
+    && Array.isArray(item.outcomes)
+  ));
+}
+
+function isDecisionJournal(value: unknown): value is Awaited<ReturnType<DecisionJournalLoader>> {
+  return Array.isArray(value) && value.every((item) => (
+    isRecord(item)
+    && typeof item.entry_id === "string"
+    && typeof item.symbol === "string"
+    && typeof item.action === "string"
+    && typeof item.recorded_at === "string"
+  ));
+}
+
 export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, runBacktest, loadKronosForecast, loadQuantStrategy, loadQuantResearch, loadQuantShadowDecisions, loadQuantShadowAnalytics, loadQuantCalibration, loadDecisionJournal, createDecisionJournal, loadTdxFormula, loadTimeline, loadWalkForward, selectedSymbol, searchInstruments, onSelectSymbol }: Props) {
   const [selected, setSelected] = useState<string | null>(selectedSymbol ?? null);
   const [selectedIdentity, setSelectedIdentity] = useState<AShareInstrument | null>(null);
-  const [backtest, setBacktest] = useState<BacktestResult | null>(null);
-  const [backtestError, setBacktestError] = useState("");
-  const [walkForward, setWalkForward] = useState<Awaited<ReturnType<QuantWalkForwardLoader>> | null>(null);
-  const [walkForwardLoading, setWalkForwardLoading] = useState(false);
-  const [walkForwardError, setWalkForwardError] = useState("");
-  const [forecast, setForecast] = useState<KronosForecastResponse | null>(null);
-  const [forecastLoading, setForecastLoading] = useState(false);
-  const [forecastError, setForecastError] = useState("");
   const emptyRefreshAttempted = useRef(false);
   const boardLoader = useCallback(async () => {
     let value = await loadBoard();
@@ -193,6 +236,7 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     loader: boardLoader,
     intervalMs: 30_000,
     errorMessage: "首次涨停候选数据暂不可用",
+    cache: { key: "quant-board", validate: isBoardSnapshot },
   });
   const board = boardResource.data;
 
@@ -238,6 +282,10 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     intervalMs: 1_000,
     enabled: Boolean(selected),
     errorMessage: "盘中 TICK 归档暂不可用",
+    cache: {
+      key: `quant-ticks:${selected ?? "none"}`,
+      validate: (value): value is IntradayTick[] => isTickSnapshot(value, selected),
+    },
   });
   const ticks = useMemo(
     () => (tickResource.data ?? []).filter((item) => item.symbol === selected),
@@ -258,6 +306,8 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     enabled: Boolean(loadQuantStrategy),
     errorMessage: "短线策略数据暂不可用",
     mergeData: retainReadyStrategySnapshot,
+    initialDelayMs: 250,
+    cache: { key: "quant-strategy:12", validate: isStrategySnapshot },
   });
   const strategyDashboard = strategyResource.data;
   const strategyRef = useRef(strategyDashboard);
@@ -308,6 +358,8 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     intervalMs: 60_000,
     enabled: Boolean(loadQuantShadowDecisions),
     errorMessage: "策略影子账本暂不可用",
+    initialDelayMs: 1_800,
+    cache: { key: "quant-shadow:50", validate: isShadowRecords },
   });
   const shadowAnalyticsLoader = useCallback(
     () => loadQuantShadowAnalytics ? loadQuantShadowAnalytics(5) : Promise.reject(new Error("shadow analytics disabled")),
@@ -318,6 +370,13 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     intervalMs: 60_000,
     enabled: Boolean(loadQuantShadowAnalytics),
     errorMessage: "评分校准统计暂不可用",
+    initialDelayMs: 2_200,
+    cache: {
+      key: "quant-shadow-analytics:5",
+      validate: (value): value is Awaited<ReturnType<QuantShadowAnalyticsLoader>> => (
+        isRecord(value) && typeof value.generated_at === "string" && Array.isArray(value.buckets)
+      ),
+    },
   });
   const calibrationLoader = useCallback(
     () => loadQuantCalibration ? loadQuantCalibration(5) : Promise.reject(new Error("quant calibration disabled")),
@@ -328,6 +387,13 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     intervalMs: 300_000,
     enabled: Boolean(loadQuantCalibration),
     errorMessage: "量化走样校准报告暂不可用",
+    initialDelayMs: 2_600,
+    cache: {
+      key: "quant-calibration:5",
+      validate: (value): value is Awaited<ReturnType<QuantCalibrationLoader>> => (
+        isRecord(value) && typeof value.generated_at === "string" && Array.isArray(value.splits)
+      ),
+    },
   });
   const decisionJournalLoader = useCallback(
     () => loadDecisionJournal ? loadDecisionJournal(50) : Promise.resolve([]),
@@ -338,6 +404,8 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     intervalMs: 60_000,
     enabled: Boolean(loadDecisionJournal),
     errorMessage: "个人复盘日志暂不可用",
+    initialDelayMs: 1_800,
+    cache: { key: "quant-decision-journal:50", validate: isDecisionJournal },
   });
   const refreshDecisionJournal = decisionJournalResource.refreshNow;
   const appendDecisionJournal = useCallback(async (request: Parameters<DecisionJournalCreator>[0]) => {
@@ -346,71 +414,63 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     await refreshDecisionJournal();
   }, [createDecisionJournal, refreshDecisionJournal]);
   const boardAsOf = board?.as_of;
-
-  useEffect(() => {
-    if (!selected || !boardAsOf) return;
-    let active = true;
-    const controller = new AbortController();
-    setBacktest(null);
-    setBacktestError("");
-    void runBacktest(selected, controller.signal)
-      .then((value) => { if (active) setBacktest(value); })
-      .catch((reason) => {
-        if (active && !(reason instanceof DOMException && reason.name === "AbortError")) {
-          setBacktestError("历史回测暂不可用");
-        }
-    });
-    return () => { active = false; controller.abort(); };
-  }, [boardAsOf, runBacktest, selected]);
-
-  useEffect(() => {
-    if (!selected || !boardAsOf || !loadWalkForward) {
-      setWalkForward(null);
-      setWalkForwardLoading(false);
-      setWalkForwardError("");
-      return;
-    }
-    let active = true;
-    const controller = new AbortController();
-    setWalkForward(null);
-    setWalkForwardLoading(true);
-    setWalkForwardError("");
-    void loadWalkForward(selected, controller.signal)
-      .then((value) => { if (active && value.symbol === selected) setWalkForward(value); })
-      .catch((reason) => {
-        if (active && !(reason instanceof DOMException && reason.name === "AbortError")) {
-          setWalkForwardError("样本外验证暂不可用");
-        }
-      })
-      .finally(() => { if (active) setWalkForwardLoading(false); });
-    return () => { active = false; controller.abort(); };
-  }, [boardAsOf, loadWalkForward, selected]);
-
-  useEffect(() => {
-    if (!selected || !boardAsOf || !loadKronosForecast) {
-      setForecast(null);
-      setForecastLoading(false);
-      setForecastError("");
-      return;
-    }
-    let active = true;
-    setForecast(null);
-    setForecastLoading(true);
-    setForecastError("");
-    void loadKronosForecast(selected, boardAsOf, 20)
-      .then((value) => { if (active) setForecast(value); })
-      .catch(() => { if (active) setForecastError("价格路径预测暂不可用"); })
-      .finally(() => { if (active) setForecastLoading(false); });
-    return () => { active = false; };
-  }, [boardAsOf, loadKronosForecast, selected]);
+  const backtestLoader = useCallback(
+    () => selected && boardAsOf ? runBacktest(selected, undefined) : Promise.reject(new Error("backtest target unavailable")),
+    [boardAsOf, runBacktest, selected],
+  );
+  const backtestResource = useQuantLiveResource({
+    loader: backtestLoader,
+    intervalMs: 300_000,
+    enabled: Boolean(selected && boardAsOf),
+    errorMessage: "历史回测暂不可用",
+    initialDelayMs: 600,
+    cache: {
+      key: `quant-backtest:${selected ?? "none"}:${boardAsOf ?? "none"}`,
+      validate: (value): value is BacktestResult => hasMatchingSymbol(value, selected),
+    },
+  });
+  const walkForwardLoader = useCallback(
+    () => selected && loadWalkForward
+      ? loadWalkForward(selected, undefined)
+      : Promise.reject(new Error("walk-forward target unavailable")),
+    [loadWalkForward, selected],
+  );
+  const walkForwardResource = useQuantLiveResource({
+    loader: walkForwardLoader,
+    intervalMs: 300_000,
+    enabled: Boolean(selected && boardAsOf && loadWalkForward),
+    errorMessage: "样本外验证暂不可用",
+    initialDelayMs: 850,
+    cache: {
+      key: `quant-walk-forward:${selected ?? "none"}:${boardAsOf ?? "none"}`,
+      validate: (value): value is Awaited<ReturnType<QuantWalkForwardLoader>> => hasMatchingSymbol(value, selected),
+    },
+  });
+  const forecastLoader = useCallback(
+    () => selected && boardAsOf && loadKronosForecast
+      ? loadKronosForecast(selected, boardAsOf, 20)
+      : Promise.reject(new Error("forecast target unavailable")),
+    [boardAsOf, loadKronosForecast, selected],
+  );
+  const forecastResource = useQuantLiveResource({
+    loader: forecastLoader,
+    intervalMs: 300_000,
+    enabled: Boolean(selected && boardAsOf && loadKronosForecast),
+    errorMessage: "价格路径预测暂不可用",
+    initialDelayMs: 1_100,
+    cache: {
+      key: `quant-kronos:${selected ?? "none"}:${boardAsOf ?? "none"}`,
+      validate: (value): value is KronosForecastResponse => hasMatchingSymbol(value, selected),
+    },
+  });
 
   const latestTick = ticks.at(-1) ?? null;
   const latestPrice = finiteNumber(latestTick?.price);
   const latestChangePercent = finiteNumber(latestTick?.change_percent);
   const candidatePe = finiteNumber(candidate?.pe_ttm);
   const candidatePullback = finiteNumber(candidate?.pullback_pct);
-  const selectedBacktest = backtest?.symbol === selected ? backtest : null;
-  const selectedForecast = forecast?.symbol === selected ? forecast : null;
+  const selectedBacktest = backtestResource.data?.symbol === selected ? backtestResource.data : null;
+  const selectedForecast = forecastResource.data?.symbol === selected ? forecastResource.data : null;
   const tickEmptyMessage = !candidate
     ? selected ? tickResource.status === "loading" ? "正在读取盘中 TICK" : tickResource.error || "暂无已归档盘中 TICK" : "等待分析标的"
     : tickResource.status === "loading"
@@ -486,16 +546,16 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
 
       <section className="quant-panel quant-backtest-panel" role="region" aria-label="回测风险收益">
         <header><div><span>Q4 / RISK RETURN</span><h2>回测风险收益</h2></div>{selectedBacktest && <small>{selectedBacktest.metrics.closed_trade_count} 笔闭合交易</small>}</header>
-        {selectedBacktest && equity.length > 0 ? <><QuantChart option={backtestOption(selectedBacktest)} ariaLabel={`${selectedName ?? selected ?? "当前股票"}历史回测权益和回撤`} /><div className="quant-backtest-stats"><span>总收益<b data-state={finiteNumber(selectedBacktest.total_return) === null ? "unavailable" : "ready"}>{percentText(selectedBacktest.total_return)}</b></span><span>最大回撤<b data-state={finiteNumber(selectedBacktest.max_drawdown) === null ? "unavailable" : "ready"}>{percentText(selectedBacktest.max_drawdown)}</b></span><span>样本状态<b>{backtestSampleLabel(selectedBacktest)}</b></span></div></> : <div className="quant-empty"><AlertTriangle size={24} /><b>{backtestError || "等待历史回测"}</b><p>需要完整日线和闭合交易样本，胜率、赔率与 EV 才会显示。</p></div>}
+        {selectedBacktest && equity.length > 0 ? <><QuantChart option={backtestOption(selectedBacktest)} ariaLabel={`${selectedName ?? selected ?? "当前股票"}历史回测权益和回撤`} /><div className="quant-backtest-stats"><span>总收益<b data-state={finiteNumber(selectedBacktest.total_return) === null ? "unavailable" : "ready"}>{percentText(selectedBacktest.total_return)}</b></span><span>最大回撤<b data-state={finiteNumber(selectedBacktest.max_drawdown) === null ? "unavailable" : "ready"}>{percentText(selectedBacktest.max_drawdown)}</b></span><span>样本状态<b>{backtestSampleLabel(selectedBacktest)}</b></span></div></> : <div className="quant-empty"><AlertTriangle size={24} /><b>{backtestResource.error || "等待历史回测"}</b><p>需要完整日线和闭合交易样本，胜率、赔率与 EV 才会显示。</p></div>}
       </section>
 
-      <KronosForecastPanel forecast={selectedForecast} loading={forecastLoading} error={forecastError} />
+      <KronosForecastPanel forecast={selectedForecast} loading={forecastResource.status === "loading" && !selectedForecast} error={forecastResource.error} />
     </div>
 
     {loadWalkForward && <WalkForwardEvidenceStrip
-      report={walkForward?.symbol === selected ? walkForward : null}
-      loading={walkForwardLoading}
-      error={walkForwardError}
+      report={walkForwardResource.data?.symbol === selected ? walkForwardResource.data : null}
+      loading={walkForwardResource.status === "loading" && !walkForwardResource.data}
+      error={walkForwardResource.error}
     />}
 
     {loadQuantStrategy && <ShortTermStrategyWorkbench

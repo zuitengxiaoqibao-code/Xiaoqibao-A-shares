@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { BacktestResult } from "../backtest/types";
 import type { FirstLimitUpBoard, FirstLimitUpCandidate } from "../first-limit-up/types";
@@ -145,6 +145,10 @@ function unavailableForecast(symbol: string): KronosForecastResponse {
 }
 
 describe("QuantAnalysisDashboard", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
   it("prefers the previously selected global stock over the first-limit-up priority", async () => {
     render(<QuantAnalysisDashboard
       loadBoard={async () => board}
@@ -226,7 +230,7 @@ describe("QuantAnalysisDashboard", () => {
     await waitFor(() => expect(backtestPanel).toHaveTextContent("等待历史回测"));
     expect(backtestPanel).not.toHaveTextContent("999.0%");
     const kronosPanel = screen.getByRole("region", { name: "Kronos 价格路径预测" });
-    expect(kronosPanel).toHaveTextContent("等待预测状态");
+    await waitFor(() => expect(kronosPanel).toHaveTextContent("等待预测状态"), { timeout: 2_000 });
     expect(kronosPanel).not.toHaveTextContent("Kronos 模型未启用");
   });
 
@@ -384,6 +388,7 @@ describe("QuantAnalysisDashboard", () => {
         await Promise.resolve();
         await Promise.resolve();
       });
+      await act(async () => { await vi.advanceTimersByTimeAsync(250); });
       expect(screen.getByRole("region", { name: "市场风格评分" })).toHaveTextContent("76.0");
 
       await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
@@ -431,12 +436,12 @@ describe("QuantAnalysisDashboard", () => {
     render(<QuantAnalysisDashboard loadBoard={async () => board} loadTicks={loadTicks} runBacktest={runBacktest} />);
 
     await waitFor(() => expect(loadTicks).toHaveBeenCalledWith("600001"));
-    expect(runBacktest).toHaveBeenCalledWith("600001", expect.any(AbortSignal));
+    await waitFor(() => expect(runBacktest).toHaveBeenCalledWith("600001", undefined));
 
     fireEvent.change(screen.getByRole("combobox", { name: "量化分析股票" }), { target: { value: "000001" } });
 
     await waitFor(() => expect(loadTicks).toHaveBeenCalledWith("000001"));
-    expect(runBacktest).toHaveBeenCalledWith("000001", expect.any(AbortSignal));
+    await waitFor(() => expect(runBacktest).toHaveBeenCalledWith("000001", undefined));
     expect(await screen.findByRole("img", { name: "样本二盘中价格和成交量" })).toBeInTheDocument();
   });
 
@@ -505,11 +510,11 @@ describe("QuantAnalysisDashboard", () => {
       loadKronosForecast={loadKronosForecast}
     />);
 
-    await waitFor(() => expect(loadKronosForecast).toHaveBeenCalledWith("600001", "2026-07-24", 20));
+    await waitFor(() => expect(loadKronosForecast).toHaveBeenCalledWith("600001", "2026-07-24", 20), { timeout: 2_000 });
     expect(screen.getByRole("region", { name: "Kronos 价格路径预测" })).toHaveTextContent("模型未启用");
 
     fireEvent.change(screen.getByRole("combobox", { name: "量化分析股票" }), { target: { value: "000001" } });
-    await waitFor(() => expect(loadKronosForecast).toHaveBeenCalledWith("000001", "2026-07-24", 20));
+    await waitFor(() => expect(loadKronosForecast).toHaveBeenCalledWith("000001", "2026-07-24", 20), { timeout: 2_000 });
   });
 
   it("polls real data layers at separate frequencies while the page is visible", async () => {
@@ -517,10 +522,11 @@ describe("QuantAnalysisDashboard", () => {
     const loadBoard = vi.fn(async () => board);
     const loadTicks = vi.fn(async (symbol: string) => ticks(symbol));
     const loadQuantStrategy = vi.fn(async () => strategyDashboard);
+    const runBacktest = vi.fn(async (symbol: string) => backtest(symbol));
     const view = render(<QuantAnalysisDashboard
       loadBoard={loadBoard}
       loadTicks={loadTicks}
-      runBacktest={async (symbol) => backtest(symbol)}
+      runBacktest={runBacktest}
       loadQuantStrategy={loadQuantStrategy}
     />);
     try {
@@ -530,12 +536,20 @@ describe("QuantAnalysisDashboard", () => {
         await Promise.resolve();
       });
       expect(loadBoard).toHaveBeenCalledTimes(1);
-      expect(loadQuantStrategy).toHaveBeenCalledTimes(1);
+      expect(loadQuantStrategy).not.toHaveBeenCalled();
+      expect(runBacktest).not.toHaveBeenCalled();
       expect(loadTicks).toHaveBeenCalledWith("600001");
       expect(screen.getByRole("region", { name: "量化实时数据状态" }))
         .toHaveTextContent("TICK 1秒");
 
-      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+      expect(loadQuantStrategy).toHaveBeenCalledTimes(1);
+      expect(runBacktest).not.toHaveBeenCalled();
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(350); });
+      expect(runBacktest).toHaveBeenCalledWith("600001", undefined);
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(400); });
       expect(loadTicks).toHaveBeenCalledTimes(2);
 
       await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
@@ -543,6 +557,10 @@ describe("QuantAnalysisDashboard", () => {
       expect(loadTicks).toHaveBeenCalledTimes(6);
 
       await act(async () => { await vi.advanceTimersByTimeAsync(26000); });
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
       expect(loadQuantStrategy).toHaveBeenCalledTimes(2);
       expect(loadBoard).toHaveBeenCalledTimes(2);
     } finally {

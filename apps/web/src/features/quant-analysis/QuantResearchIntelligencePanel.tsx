@@ -4,7 +4,9 @@ import {
   Network, ShieldCheck,
 } from "lucide-react";
 
-import type { QuantResearchLoader, QuantResearchStatus } from "./types";
+import type {
+  QuantResearchLoader, QuantResearchSnapshot, QuantResearchStatus, QuantRiskGateCheck,
+} from "./types";
 import { useQuantLiveResource } from "./useQuantLiveRefresh";
 
 
@@ -34,12 +36,33 @@ function pitchState(status: string): string {
   return "等待触发";
 }
 
+function isResearchSnapshot(value: unknown): value is QuantResearchSnapshot {
+  if (typeof value !== "object" || value === null) return false;
+  const snapshot = value as Partial<QuantResearchSnapshot>;
+  return snapshot.formula_version === "quant-research-intelligence-v1"
+    && typeof snapshot.as_of === "string"
+    && Array.isArray(snapshot.risk_summaries)
+    && Array.isArray(snapshot.opportunities)
+    && typeof snapshot.module_statuses === "object"
+    && snapshot.module_statuses !== null;
+}
+
+const RISK_STATUS_COPY: Record<QuantRiskGateCheck["status"], string> = {
+  pass: "通过", warn: "警告", block: "阻断", unavailable: "缺证据",
+};
+
+const RISK_PRIORITY: Record<QuantRiskGateCheck["status"], number> = {
+  block: 0, warn: 1, unavailable: 2, pass: 3,
+};
+
 export function QuantResearchIntelligencePanel({ load }: Props) {
   const loader = useCallback(() => load(), [load]);
   const resource = useQuantLiveResource({
     loader,
     intervalMs: 60_000,
     errorMessage: "量化研究快照加载失败",
+    initialDelayMs: 1_400,
+    cache: { key: "quant-research-intelligence", validate: isResearchSnapshot },
   });
   const [filter, setFilter] = useState("all");
   const snapshot = resource.data;
@@ -53,6 +76,11 @@ export function QuantResearchIntelligencePanel({ load }: Props) {
     () => snapshot?.opportunities.filter((item) => filter === "all" || item.opportunity_type === filter) ?? [],
     [filter, snapshot],
   );
+  const opportunityNames = useMemo(() => {
+    const names = new Map<string, string>();
+    snapshot?.opportunities.forEach((item) => names.set(item.symbol, item.name));
+    return names;
+  }, [snapshot]);
 
   if (!snapshot && resource.status === "error") {
     return <section className="quant-research-band quant-research-error" aria-label="量化研究智能">
@@ -105,9 +133,45 @@ export function QuantResearchIntelligencePanel({ load }: Props) {
       <section className="quant-research-section" aria-label="风险闸门">
         <header><div><ShieldCheck size={17} /><h3>风险闸门</h3></div><span>{snapshot.risk_summaries.length} 只候选</span></header>
         <div className="quant-risk-gate-list">
-          {snapshot.risk_summaries.flatMap((summary) => summary.checks.map((check) => <div key={`${summary.symbol}-${check.key}`} data-status={check.status}>
-            <span>{summary.symbol}</span><b>{check.label}</b><strong>{check.status === "pass" ? "通过" : check.status === "block" ? "阻断" : check.status === "warn" ? "警告" : "缺证据"}</strong><small>{check.reason}</small>
-          </div>))}
+          {snapshot.risk_summaries.map((summary) => {
+            const counts = { pass: 0, warn: 0, block: 0, unavailable: 0 };
+            summary.checks.forEach((check) => { counts[check.status] += 1; });
+            const priorityChecks = [...summary.checks]
+              .filter((check) => check.status !== "pass")
+              .sort((left, right) => RISK_PRIORITY[left.status] - RISK_PRIORITY[right.status]);
+            return <article
+              key={summary.symbol}
+              data-testid={`quant-risk-card-${summary.symbol}`}
+              data-status={summary.overall_status}
+              aria-label={`${opportunityNames.get(summary.symbol) ?? summary.symbol} ${summary.symbol} 风险闸门`}
+            >
+              <header>
+                <div><b>{opportunityNames.get(summary.symbol) ?? summary.symbol}</b><span>{summary.symbol}</span></div>
+                <strong>{summary.overall_status === "pass" ? "可观察" : summary.overall_status === "warn" ? "需确认" : "已阻断"}</strong>
+              </header>
+              <div className="quant-risk-counts">
+                {(Object.keys(counts) as QuantRiskGateCheck["status"][]).map((status) => (
+                  <span key={status} data-status={status}>{RISK_STATUS_COPY[status]} {counts[status]}</span>
+                ))}
+              </div>
+              <div className="quant-risk-reasons">
+                {priorityChecks.length ? priorityChecks.map((check) => <p key={check.key} data-status={check.status}>
+                  <b>{check.label}</b><span>{check.reason}</span>
+                </p>) : <p data-status="pass"><b>当前结论</b><span>已返回的风险检查均通过。</span></p>}
+              </div>
+              <details>
+                <summary>查看审计指标与来源</summary>
+                <div className="quant-risk-audit-list">
+                  {summary.checks.map((check) => <div key={check.key} data-status={check.status}>
+                    <header><b>{check.label}</b><span>{RISK_STATUS_COPY[check.status]}</span></header>
+                    <p>{check.reason}</p>
+                    <small>指标 {check.metric_value ?? "--"} · 阈值 {check.threshold ?? "--"}</small>
+                    <small>来源 {check.source_snapshot_ids.length ? check.source_snapshot_ids.join("、") : "暂无快照编号"}</small>
+                  </div>)}
+                </div>
+              </details>
+            </article>;
+          })}
           {!snapshot.risk_summaries.length && <p className="quant-research-note">{snapshot.module_statuses.risk.message}</p>}
         </div>
       </section>

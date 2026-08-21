@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { shanghaiDay } from "../../shared/tradingDayContext";
+
 export type QuantLiveStatus = "loading" | "live" | "delayed" | "paused" | "error";
 
 type Options<T> = {
@@ -8,6 +10,11 @@ type Options<T> = {
   enabled?: boolean;
   errorMessage: string;
   mergeData?: (previous: T | null, incoming: T) => T;
+  initialDelayMs?: number;
+  cache?: {
+    key: string;
+    validate: (value: unknown) => value is T;
+  };
 };
 
 export type QuantLiveResource<T> = {
@@ -21,27 +28,96 @@ export type QuantLiveResource<T> = {
   acceptExternal: (value: T) => void;
 };
 
+type QuantCacheEnvelope<T> = {
+  schemaVersion: 1;
+  day: string;
+  cachedAt: string;
+  value: T;
+};
+
+const QUANT_CACHE_PREFIX = "qibao.quant-live.v1";
+
+function quantCachePrefix(key: string): string {
+  return `${QUANT_CACHE_PREFIX}.${encodeURIComponent(key)}.`;
+}
+
+function quantCacheKey(key: string, day: string): string {
+  return `${quantCachePrefix(key)}${day}`;
+}
+
+function readQuantCache<T>(cache: Options<T>["cache"], now = new Date()): { value: T; cachedAt: Date } | null {
+  if (!cache) return null;
+  const day = shanghaiDay(now);
+  const prefix = quantCachePrefix(cache.key);
+  try {
+    for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+      const key = localStorage.key(index);
+      if (key?.startsWith(prefix) && key !== quantCacheKey(cache.key, day)) localStorage.removeItem(key);
+    }
+    const key = quantCacheKey(cache.key, day);
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as QuantCacheEnvelope<unknown>;
+    const cachedAt = new Date(parsed.cachedAt);
+    if (
+      parsed.schemaVersion !== 1
+      || parsed.day !== day
+      || Number.isNaN(cachedAt.getTime())
+      || !cache.validate(parsed.value)
+    ) {
+      localStorage.removeItem(key);
+      return null;
+    }
+    return { value: parsed.value, cachedAt };
+  } catch {
+    localStorage.removeItem(quantCacheKey(cache.key, day));
+    return null;
+  }
+}
+
+function writeQuantCache<T>(cache: Options<T>["cache"], value: T, now = new Date()): void {
+  if (!cache || !cache.validate(value)) return;
+  const day = shanghaiDay(now);
+  try {
+    localStorage.setItem(quantCacheKey(cache.key, day), JSON.stringify({
+      schemaVersion: 1,
+      day,
+      cachedAt: now.toISOString(),
+      value,
+    } satisfies QuantCacheEnvelope<T>));
+  } catch {
+    // A cache write must never make verified live data unavailable.
+  }
+}
+
 export function useQuantLiveResource<T>({
   loader,
   intervalMs,
   enabled = true,
   errorMessage,
   mergeData,
+  initialDelayMs = 0,
+  cache,
 }: Options<T>): QuantLiveResource<T> {
-  const [data, setData] = useState<T | null>(null);
+  const initialCacheRef = useRef<{ value: T; cachedAt: Date } | null | undefined>(undefined);
+  if (initialCacheRef.current === undefined) initialCacheRef.current = readQuantCache(cache);
+  const initialCache = initialCacheRef.current;
+  const [data, setData] = useState<T | null>(initialCache?.value ?? null);
   const [status, setStatus] = useState<QuantLiveStatus>(
-    enabled && !document.hidden ? "loading" : "paused",
+    enabled && !document.hidden ? initialCache ? "delayed" : "loading" : "paused",
   );
   const [error, setError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [lastAttemptAt, setLastAttemptAt] = useState<Date | null>(null);
-  const [lastSuccessAt, setLastSuccessAt] = useState<Date | null>(null);
+  const [lastSuccessAt, setLastSuccessAt] = useState<Date | null>(initialCache?.cachedAt ?? null);
   const loaderRef = useRef(loader);
   const previousLoaderRef = useRef(loader);
   const loaderVersionRef = useRef(0);
   const errorMessageRef = useRef(errorMessage);
   const mergeDataRef = useRef(mergeData);
-  const dataRef = useRef<T | null>(null);
+  const cacheRef = useRef(cache);
+  const cacheKeyRef = useRef(cache?.key);
+  const dataRef = useRef<T | null>(initialCache?.value ?? null);
   const inFlightRef = useRef<{
     version: number;
     token: symbol;
@@ -56,6 +132,7 @@ export function useQuantLiveResource<T>({
   loaderRef.current = loader;
   errorMessageRef.current = errorMessage;
   mergeDataRef.current = mergeData;
+  cacheRef.current = cache;
 
   useEffect(() => () => {
     mountedRef.current = false;
@@ -80,6 +157,7 @@ export function useQuantLiveResource<T>({
         }
         dataRef.current = resolvedValue;
         setData(resolvedValue);
+        writeQuantCache(cacheRef.current, resolvedValue);
         setError("");
         setLastSuccessAt(new Date());
         setStatus(document.hidden ? "paused" : "live");
@@ -104,10 +182,22 @@ export function useQuantLiveResource<T>({
     if (resolvedValue === null || resolvedValue === undefined) return;
     dataRef.current = resolvedValue;
     setData(resolvedValue);
+    writeQuantCache(cacheRef.current, resolvedValue);
     setError("");
     setLastSuccessAt(new Date());
     setStatus(document.hidden ? "paused" : "live");
   }, []);
+
+  useEffect(() => {
+    if (cacheKeyRef.current === cache?.key) return;
+    cacheKeyRef.current = cache?.key;
+    const restored = readQuantCache(cache);
+    dataRef.current = restored?.value ?? null;
+    setData(restored?.value ?? null);
+    setLastSuccessAt(restored?.cachedAt ?? null);
+    setError("");
+    setStatus(document.hidden ? "paused" : restored ? "delayed" : enabled ? "loading" : "paused");
+  }, [cache?.key, enabled]);
 
   useEffect(() => {
     if (!enabled) {
@@ -115,15 +205,27 @@ export function useQuantLiveResource<T>({
       return undefined;
     }
     let timer: number | undefined;
+    let initialTimer: number | undefined;
     const stopTimer = () => {
       if (timer !== undefined) window.clearInterval(timer);
       timer = undefined;
+      if (initialTimer !== undefined) window.clearTimeout(initialTimer);
+      initialTimer = undefined;
     };
     const startTimer = () => {
       stopTimer();
       if (!document.hidden) {
         timer = window.setInterval(() => { void refreshNow(); }, intervalMs);
       }
+    };
+    const startInitial = () => {
+      const begin = () => {
+        initialTimer = undefined;
+        void refreshNow();
+        startTimer();
+      };
+      if (initialDelayMs > 0) initialTimer = window.setTimeout(begin, initialDelayMs);
+      else begin();
     };
     const handleVisibility = () => {
       if (document.hidden) {
@@ -140,14 +242,13 @@ export function useQuantLiveResource<T>({
     if (document.hidden) {
       setStatus("paused");
     } else {
-      void refreshNow();
-      startTimer();
+      startInitial();
     }
     return () => {
       stopTimer();
       document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, [enabled, intervalMs, loader, refreshNow]);
+  }, [enabled, initialDelayMs, intervalMs, loader, refreshNow]);
 
   return {
     data,

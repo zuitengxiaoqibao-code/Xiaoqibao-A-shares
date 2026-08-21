@@ -653,6 +653,39 @@ def test_intraday_ticks_return_archived_points_for_requested_beijing_date() -> N
     assert repository.calls == [("600000", date(2026, 7, 15), SEARCH_NOW)]
 
 
+class IntradayFocusRepository:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def register_focus_symbol(self, symbol, *, source, registered_at, expires_at):
+        self.calls.append((symbol, source, registered_at, expires_at))
+
+
+def test_intraday_focus_registration_keeps_selected_stock_in_monitor_scope() -> None:
+    repository = IntradayFocusRepository()
+    application = FastAPI()
+    application.include_router(research_router)
+    application.state.poll_state_repository = repository
+    application.dependency_overrides[get_server_time] = lambda: SEARCH_NOW
+
+    response = TestClient(application).post(
+        "/api/v1/a-shares/600519/intraday-focus",
+        json={"source": "quant_analysis", "ttl_seconds": 900},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ready",
+        "symbol": "600519",
+        "source": "quant_analysis",
+        "registered_at": SEARCH_NOW.isoformat().replace("+00:00", "Z"),
+        "expires_at": (SEARCH_NOW + timedelta(seconds=900)).isoformat().replace("+00:00", "Z"),
+    }
+    assert repository.calls == [(
+        "600519", "quant_analysis", SEARCH_NOW, SEARCH_NOW + timedelta(seconds=900),
+    )]
+
+
 class TimelineService:
     def __init__(self) -> None:
         self.calls = []

@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import asyncio
 from decimal import DecimalException
 from typing import Annotated, Literal
@@ -92,6 +92,23 @@ class CandidateSentimentBatchRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     candidate_snapshot_id: str = Field(min_length=1)
+
+
+class IntradayFocusRequest(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    source: str = Field(default="quant_analysis", min_length=1, max_length=64)
+    ttl_seconds: int = Field(default=900, ge=60, le=3600)
+
+
+class IntradayFocusResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    status: Literal["ready"] = "ready"
+    symbol: str
+    source: str
+    registered_at: datetime
+    expires_at: datetime
 
 
 def _quote_observed_at(value: datetime) -> datetime:
@@ -397,6 +414,36 @@ def intraday_ticks(
     selected_date = _research_date_at(trading_date, server_time)
     return repository.intraday_snapshots(
         symbol, selected_date, cutoff=server_time,
+    )
+
+
+@router.post("/{symbol}/intraday-focus", response_model=IntradayFocusResponse)
+def register_intraday_focus(
+    symbol: Annotated[AShareCode, Path()],
+    request: IntradayFocusRequest,
+    repository: Annotated[object | None, Depends(get_poll_state_repository)],
+    server_time: Annotated[datetime, Depends(get_server_time)],
+) -> IntradayFocusResponse:
+    if repository is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "intraday_monitor_unavailable",
+                "message": "盘中监测服务暂不可用",
+            },
+        )
+    expires_at = server_time + timedelta(seconds=request.ttl_seconds)
+    repository.register_focus_symbol(
+        symbol,
+        source=request.source,
+        registered_at=server_time,
+        expires_at=expires_at,
+    )
+    return IntradayFocusResponse(
+        symbol=symbol,
+        source=request.source,
+        registered_at=server_time,
+        expires_at=expires_at,
     )
 
 

@@ -13,7 +13,7 @@ from qibao_api.gongbu.market_feed import MarketFeedSnapshot
 from qibao_api.shangshu.decision_runtime import DeterministicIntradayEvaluator
 from qibao_api.shangshu.intraday_monitor import (
     AdviceChangeDetector, IntradayEvaluationResult, IntradayMonitor,
-    PollState, PollStateRepository,
+    PollState, PollStateRepository, RegisteredFocusSymbolSource,
 )
 from qibao_api.shangshu.decision_repository import DecisionRepository
 from qibao_api.zhongshu.decision_ai import DecisionAIResult
@@ -61,6 +61,51 @@ def test_initial_due_schedule_and_restart_recovery(tmp_path) -> None:
     assert first.due(NOW + timedelta(seconds=180)) == frozenset({"focus", "universe"})
     restarted = monitor(tmp_path)
     assert restarted.due(NOW + timedelta(seconds=60)) == frozenset({"focus"})
+
+
+def test_registered_focus_symbols_are_deduplicated_and_expire(tmp_path) -> None:
+    repository = PollStateRepository(tmp_path / "focus-registration.sqlite3")
+    repository.register_focus_symbol(
+        "600519", source="quant_analysis", registered_at=NOW,
+        expires_at=NOW + timedelta(minutes=15),
+    )
+    repository.register_focus_symbol(
+        "600519", source="quant_analysis", registered_at=NOW + timedelta(minutes=5),
+        expires_at=NOW + timedelta(minutes=20),
+    )
+    repository.register_focus_symbol(
+        "000001", source="stock_cockpit", registered_at=NOW,
+        expires_at=NOW + timedelta(minutes=10),
+    )
+
+    assert repository.registered_focus_symbols(NOW + timedelta(minutes=9)) == (
+        "000001", "600519",
+    )
+    assert repository.registered_focus_symbols(NOW + timedelta(minutes=16)) == ("600519",)
+    assert repository.registered_focus_symbols(NOW + timedelta(minutes=21)) == ()
+
+
+def test_registered_focus_symbol_rejects_non_a_share_code(tmp_path) -> None:
+    repository = PollStateRepository(tmp_path / "invalid-focus-registration.sqlite3")
+
+    with pytest.raises(ValueError, match="invalid A-share code"):
+        repository.register_focus_symbol(
+            "123001", source="quant_analysis", registered_at=NOW,
+            expires_at=NOW + timedelta(minutes=15),
+        )
+
+
+def test_registered_focus_source_merges_primary_and_user_selected_symbols(tmp_path) -> None:
+    repository = PollStateRepository(tmp_path / "merged-focus-registration.sqlite3")
+    repository.register_focus_symbol(
+        "600519", source="quant_analysis", registered_at=NOW,
+        expires_at=NOW + timedelta(minutes=15),
+    )
+    source = RegisteredFocusSymbolSource(
+        lambda _now: ("000001", "600519"), repository,
+    )
+
+    assert source(NOW) == ("000001", "600519")
 
 
 def test_failure_backoff_caps_and_success_resets(tmp_path) -> None:

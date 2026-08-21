@@ -172,6 +172,13 @@ class PollStateRepository:
         CREATE TABLE IF NOT EXISTS intraday_poll_batches (
           batch_id TEXT PRIMARY KEY, scope TEXT NOT NULL, occurred_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS intraday_focus_symbol_events (
+          sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+          symbol TEXT NOT NULL, source TEXT NOT NULL,
+          registered_at TEXT NOT NULL, expires_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS ix_intraday_focus_symbol_expiry
+        ON intraday_focus_symbol_events(expires_at, symbol, sequence);
         CREATE TRIGGER IF NOT EXISTS reject_update_intraday_poll_state
         BEFORE UPDATE ON intraday_poll_state_events
         BEGIN SELECT RAISE(ABORT, 'append-only intraday poll state'); END;
@@ -184,6 +191,12 @@ class PollStateRepository:
         CREATE TRIGGER IF NOT EXISTS reject_delete_intraday_market_snapshot
         BEFORE DELETE ON intraday_market_snapshot_events
         BEGIN SELECT RAISE(ABORT, 'append-only intraday market snapshots'); END;
+        CREATE TRIGGER IF NOT EXISTS reject_update_intraday_focus_symbol
+        BEFORE UPDATE ON intraday_focus_symbol_events
+        BEGIN SELECT RAISE(ABORT, 'append-only intraday focus symbols'); END;
+        CREATE TRIGGER IF NOT EXISTS reject_delete_intraday_focus_symbol
+        BEFORE DELETE ON intraday_focus_symbol_events
+        BEGIN SELECT RAISE(ABORT, 'append-only intraday focus symbols'); END;
         """)
         columns = {
             row["name"] for row in self.connection.execute(
@@ -217,6 +230,44 @@ class PollStateRepository:
                 "INSERT INTO intraday_poll_state_events(occurred_at,payload) VALUES(?,?)",
                 (occurred_at.isoformat(), payload),
             )
+
+    def register_focus_symbol(
+        self, symbol: str, *, source: str, registered_at: datetime, expires_at: datetime,
+    ) -> None:
+        try:
+            validated_symbol = validate_a_share_code(symbol)
+        except ValueError as error:
+            raise ValueError("invalid A-share code") from error
+        if registered_at.tzinfo is None or registered_at.utcoffset() is None:
+            raise ValueError("registered_at must be timezone-aware")
+        if expires_at.tzinfo is None or expires_at.utcoffset() is None:
+            raise ValueError("expires_at must be timezone-aware")
+        if expires_at <= registered_at:
+            raise ValueError("expires_at must be later than registered_at")
+        normalized_source = source.strip()
+        if not normalized_source:
+            raise ValueError("focus source is required")
+        with self._lock, self.connection:
+            self.connection.execute(
+                """INSERT INTO intraday_focus_symbol_events(
+                symbol,source,registered_at,expires_at) VALUES(?,?,?,?)""",
+                (
+                    validated_symbol, normalized_source,
+                    registered_at.astimezone(timezone.utc).isoformat(),
+                    expires_at.astimezone(timezone.utc).isoformat(),
+                ),
+            )
+
+    def registered_focus_symbols(self, now: datetime) -> tuple[str, ...]:
+        if now.tzinfo is None or now.utcoffset() is None:
+            raise ValueError("now must be timezone-aware")
+        with self._lock:
+            rows = self.connection.execute(
+                """SELECT DISTINCT symbol FROM intraday_focus_symbol_events
+                WHERE expires_at > ? ORDER BY symbol""",
+                (now.astimezone(timezone.utc).isoformat(),),
+            ).fetchall()
+        return tuple(row["symbol"] for row in rows)
 
     def append_snapshots(self, scope: Scope, snapshots) -> None:
         rows = [(
@@ -381,6 +432,22 @@ class PollStateRepository:
                 results.append(state)
             previous = value
         return results
+
+
+class RegisteredFocusSymbolSource:
+    def __init__(self, primary, repository: PollStateRepository) -> None:
+        self.primary = primary
+        self.repository = repository
+
+    def __call__(self, now: datetime) -> tuple[str, ...]:
+        registered = self.repository.registered_focus_symbols(now)
+        try:
+            primary = tuple(self.primary(now))
+        except Exception:
+            if not registered:
+                raise
+            primary = ()
+        return tuple(dict.fromkeys((*primary, *registered)))
 
 
 class IntradayMonitor:

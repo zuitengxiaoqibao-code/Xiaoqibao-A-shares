@@ -235,7 +235,9 @@ from qibao_api.shangshu.decision_runtime import (
     RepositoryRiskSource,
     TencentPollingMarketFeed,
 )
-from qibao_api.shangshu.intraday_monitor import IntradayMonitor, PollStateRepository
+from qibao_api.shangshu.intraday_monitor import (
+    IntradayMonitor, PollStateRepository, RegisteredFocusSymbolSource,
+)
 from qibao_api.zhongshu.decision_ai import ReloadableDecisionAIGateway
 from qibao_api.zhongshu.premarket_decision import PremarketDecisionService
 from qibao_api.zhongshu.postclose_review import PostcloseReviewService
@@ -1004,12 +1006,15 @@ async def lifespan(application: FastAPI):
                 decision_repository,
                 decision_candidate_source,
             )
+            focus_symbols = RegisteredFocusSymbolSource(
+                decision_symbols, poll_state_repository,
+            )
 
             intraday_monitor = IntradayMonitor(
                 feed=decision_market_feed,
                 calendar=application.state.decision_calendar,
                 state_repository=poll_state_repository,
-                focus_symbols=decision_symbols,
+                focus_symbols=focus_symbols,
                 universe_symbols=decision_symbols,
                 decision_repository=decision_repository,
                 evaluator=decision_evaluator,
