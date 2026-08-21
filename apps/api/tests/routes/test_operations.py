@@ -327,6 +327,8 @@ def test_operations_storage_requires_preview_confirmation_and_exposes_performanc
     assert rejected.status_code == 409
     assert cleaned.json()["removed_count"] == 1
     assert metrics.json()["metrics"][0]["p50_ms"] == 12
+    assert metrics.json()["current_release"] == performance.release_id
+    assert metrics.json()["metrics"][0]["release_id"] == performance.release_id
     assert metrics.json()["snapshots"][0]["kind"] == "market_cross_section"
     assert metrics.json()["snapshots"][0]["duplicate_compute_count"] == 1
     assert freshness.json()["policies"]["intraday_quote"]["live_seconds"] == 120

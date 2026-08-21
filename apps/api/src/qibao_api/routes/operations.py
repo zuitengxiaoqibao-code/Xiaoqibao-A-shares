@@ -423,10 +423,12 @@ def cleanup_rebuildable(
 @router.get("/performance")
 def performance_summary(
     store: Annotated[object, Depends(get_performance_store)],
+    include_historical: Annotated[bool, Query()] = False,
 ):
     return {
         "generated_at": datetime.now(timezone.utc),
-        "metrics": store.summary(),
+        "current_release": store.release_id,
+        "metrics": store.summary(include_historical=include_historical),
         "snapshots": store.snapshot_summary(),
     }
 

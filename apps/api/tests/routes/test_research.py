@@ -7,7 +7,7 @@ import sqlite3
 
 import pytest
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.testclient import TestClient
 
 from qibao_api.contracts.market import AssetKind, DataQuality
@@ -614,6 +614,47 @@ async def test_all_read_only_requests_do_not_wait_for_runtime_write() -> None:
         application.state.write_gate.release()
 
     assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_runtime_performance_uses_route_template_and_truthful_response_metadata() -> None:
+    class Recorder:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def record(self, *args, **kwargs) -> None:
+            self.calls.append((args, kwargs))
+
+    recorder = Recorder()
+    application = FastAPI()
+    application.middleware("http")(serialize_runtime_access)
+    application.state.write_gate = asyncio.Lock()
+    application.state.performance_store = recorder
+
+    @application.get("/api/v1/a-shares/{symbol}/probe")
+    async def probe(symbol: str, response: Response):
+        response.headers["X-Qibao-Cache"] = "hit"
+        response.headers["X-Qibao-Source"] = "last-good-cache"
+        response.headers["X-Qibao-State"] = "partial"
+        return {"symbol": symbol}
+
+    transport = httpx.ASGITransport(app=application)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/v1/a-shares/600519/probe?refresh=true")
+        for _ in range(20):
+            if recorder.calls:
+                break
+            await asyncio.sleep(0.01)
+
+    assert response.status_code == 200
+    assert recorder.calls[0][0][:2] == (
+        "api",
+        "/api/v1/a-shares/{symbol}/probe",
+    )
+    assert recorder.calls[0][1]["cache_hit"] is True
+    assert recorder.calls[0][1]["status_code"] == 200
+    assert recorder.calls[0][1]["response_source"] == "last-good-cache"
+    assert recorder.calls[0][1]["outcome"] == "partial"
 
 
 SEARCH_NOW = datetime(2026, 7, 15, 2, 0, tzinfo=timezone.utc)

@@ -1658,15 +1658,21 @@ async def serialize_runtime_access(request: Request, call_next):
         if store is not None and path.startswith("/api/") and path != "/api/v1/operations/performance":
             latency_ms = round((time.perf_counter() - request_started) * 1000)
             success = response is not None and response.status_code < 500
+            matched_route = request.scope.get("route")
+            route_name = getattr(matched_route, "path", None) or path
+            cache_header = response.headers.get("X-Qibao-Cache") if response is not None else None
             async def persist_performance_sample() -> None:
                 try:
                     await asyncio.to_thread(
                         store.record,
                         "api",
-                        path,
+                        route_name,
                         latency_ms=latency_ms,
                         success=success,
-                        cache_hit=(response.headers.get("X-Qibao-Cache") == "hit") if response is not None else None,
+                        cache_hit=(cache_header == "hit") if cache_header is not None else None,
+                        status_code=response.status_code if response is not None else None,
+                        response_source=response.headers.get("X-Qibao-Source") if response is not None else None,
+                        outcome=response.headers.get("X-Qibao-State") if response is not None else None,
                     )
                 except Exception:
                     logger.debug("performance sample write failed", exc_info=True)

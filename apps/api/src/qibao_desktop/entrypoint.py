@@ -201,6 +201,16 @@ def _prepare_runtime(portable_root: Path | None):
     os.environ["QIBAO_PORTABLE_ROOT"] = str(layout.root)
     os.environ["QIBAO_DATA_DIR"] = str(layout.data_dir)
     os.environ["QIBAO_WEB_DIR"] = str(layout.web_dir)
+    release_id = "development"
+    manifest_path = layout.root / "release-manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        commit = manifest.get("commit") if isinstance(manifest, dict) else None
+        if isinstance(commit, str) and commit.strip():
+            release_id = commit.strip()
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        pass
+    os.environ["QIBAO_RELEASE_ID"] = release_id
     return layout
 
 

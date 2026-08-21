@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import logging
 from types import SimpleNamespace
 
@@ -88,6 +89,21 @@ def test_entrypoint_sets_portable_paths_and_stops_after_window(
     assert entrypoint.os.environ["QIBAO_WEB_DIR"] == str(tmp_path / "web")
     assert (tmp_path / "data" / "market.sqlite3").read_text(encoding="utf-8") == "previous"
     assert not previous_data.exists()
+
+
+def test_prepare_runtime_uses_release_manifest_commit_for_performance_generation(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / "release-manifest.json").write_text(
+        json.dumps({"commit": "a1b2c3d4e5f6"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(entrypoint, "configure_desktop_logging", lambda _path: None)
+    monkeypatch.setattr(entrypoint, "apply_migrations", lambda _root, version: version)
+
+    entrypoint._prepare_runtime(tmp_path)
+
+    assert entrypoint.os.environ["QIBAO_RELEASE_ID"] == "a1b2c3d4e5f6"
 
 
 def test_entrypoint_applies_current_data_migrations_before_api_start(tmp_path: Path, monkeypatch) -> None:
