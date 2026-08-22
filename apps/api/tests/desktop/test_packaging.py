@@ -55,6 +55,13 @@ def test_portable_spec_keeps_python_modules_in_the_cold_start_archive() -> None:
     assert noarchive.value is False
 
 
+def test_portable_build_limits_web_test_workers_for_stable_release_verification() -> None:
+    build_path = _project_root() / "scripts" / "build-portable.ps1"
+    script = build_path.read_text(encoding="utf-8")
+
+    assert 'test -- --maxWorkers=4' in script
+
+
 def test_portable_smoke_waits_for_lifespan_before_http_probe() -> None:
     smoke_path = _project_root() / "scripts" / "run-portable-smoke.ps1"
     script = smoke_path.read_text(encoding="utf-8")

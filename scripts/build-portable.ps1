@@ -105,7 +105,7 @@ if (-not $SkipTests) {
         }
     }
 
-    & pnpm.cmd --dir $Root --filter "@qibao/web" test
+    & pnpm.cmd --dir $Root --filter "@qibao/web" test -- --maxWorkers=4
     if ($LASTEXITCODE -ne 0) { throw "Web tests failed" }
 }
 

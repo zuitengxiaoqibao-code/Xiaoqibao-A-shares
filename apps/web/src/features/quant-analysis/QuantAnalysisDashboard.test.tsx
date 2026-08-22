@@ -329,8 +329,8 @@ describe("QuantAnalysisDashboard", () => {
     />);
 
     await waitFor(() => expect(loadQuantStrategy).toHaveBeenCalledWith(12));
-    expect(screen.getByText(/候选扫描：刚刚采集/)).toBeInTheDocument();
-    expect(screen.getByText(/触发证据：刚刚采集/)).toBeInTheDocument();
+    expect(await screen.findByText(/候选扫描：刚刚采集/)).toBeInTheDocument();
+    expect(await screen.findByText(/触发证据：刚刚采集/)).toBeInTheDocument();
     const strategyHeading = await screen.findByRole("heading", { name: "短线风格与策略" });
     const kronosPanel = screen.getByRole("region", { name: "Kronos 价格路径预测" });
     expect(kronosPanel.compareDocumentPosition(strategyHeading))
