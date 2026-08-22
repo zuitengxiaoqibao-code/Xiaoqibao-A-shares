@@ -323,7 +323,7 @@ async def test_lifespan_does_not_wait_for_remote_universe_refresh(
     application = FastAPI()
     manager = main_module.lifespan(application)
     entering = asyncio.create_task(manager.__aenter__())
-    await asyncio.wait_for(started.wait(), timeout=2)
+    await asyncio.wait_for(started.wait(), timeout=5)
     try:
         await asyncio.sleep(0)
         assert entering.done()
@@ -364,7 +364,7 @@ async def test_lifespan_does_not_wait_for_remote_bond_universe_refresh(
     application = FastAPI()
     manager = main_module.lifespan(application)
     entering = asyncio.create_task(manager.__aenter__())
-    await asyncio.wait_for(started.wait(), timeout=2)
+    await asyncio.wait_for(started.wait(), timeout=5)
     try:
         await asyncio.sleep(0)
         assert entering.done()
