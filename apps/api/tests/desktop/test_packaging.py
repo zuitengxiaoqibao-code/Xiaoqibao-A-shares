@@ -59,7 +59,7 @@ def test_portable_build_limits_web_test_workers_for_stable_release_verification(
     build_path = _project_root() / "scripts" / "build-portable.ps1"
     script = build_path.read_text(encoding="utf-8")
 
-    assert 'test -- --maxWorkers=4' in script
+    assert 'test -- --maxWorkers=2' in script
 
 
 def test_portable_smoke_waits_for_lifespan_before_http_probe() -> None:
