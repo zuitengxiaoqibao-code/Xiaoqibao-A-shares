@@ -4,7 +4,7 @@ from decimal import DecimalException
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -511,12 +511,31 @@ async def cockpit(
 
 @router.get("/{symbol}/company-research", response_model=CompanyResearchResponse)
 async def company_research(
+    request: Request,
     symbol: Annotated[AShareCode, Path()],
     service: Annotated[object, Depends(get_company_research_service)],
     as_of: date | None = None,
 ) -> CompanyResearchResponse:
+    selected_date = _research_date(as_of)
+    repository = getattr(request.app.state, "company_research_version_repository", None)
+    if repository is not None:
+        try:
+            latest = await asyncio.to_thread(repository.latest, symbol)
+        except Exception:
+            latest = None
+        if latest is not None and latest.as_of <= selected_date:
+            _schedule_company_research_refresh(request, service, symbol, selected_date)
+            cache_kind = "本地研究缓存" if latest.as_of == selected_date else "历史研究缓存"
+            cache_reason = (
+                f"已展示{cache_kind}（研究截止日 {latest.as_of.isoformat()}），"
+                "后台正在刷新最新真实数据。"
+            )
+            return latest.model_copy(update={
+                "status": latest.status if latest.as_of == selected_date else "partial",
+                "reasons": tuple(dict.fromkeys((*latest.reasons, cache_reason))),
+            })
     try:
-        return await service.get(symbol, _research_date(as_of))
+        return await service.get(symbol, selected_date)
     except (OSError, httpx.HTTPError, ValueError) as error:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -525,6 +544,38 @@ async def company_research(
                 "message": "公司研究数据暂不可用，请稍后重试",
             },
         ) from error
+
+
+def _schedule_company_research_refresh(
+    request: Request,
+    service: object,
+    symbol: str,
+    selected_date: date,
+) -> None:
+    tasks = getattr(request.app.state, "company_research_route_refresh_tasks", None)
+    if tasks is None:
+        tasks = {}
+        request.app.state.company_research_route_refresh_tasks = tasks
+    key = (symbol, selected_date)
+    existing = tasks.get(key)
+    if existing is not None and not existing.done():
+        return
+
+    async def refresh() -> None:
+        try:
+            await service.get(symbol, selected_date, cache_first=False)
+        except (OSError, httpx.HTTPError, ValueError):
+            return
+
+    task = asyncio.create_task(refresh())
+    tasks[key] = task
+
+    def remove(completed: asyncio.Task) -> None:
+        tasks.pop(key, None)
+        if not completed.cancelled():
+            completed.exception()
+
+    task.add_done_callback(remove)
 
 
 @router.post("/company-research/compare", response_model=ResearchCompareResponse)

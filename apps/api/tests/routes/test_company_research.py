@@ -1,3 +1,4 @@
+import asyncio
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
@@ -103,6 +104,31 @@ def test_company_research_route_translates_service_failure() -> None:
 
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "company_research_unavailable"
+
+
+def test_company_research_route_returns_frozen_cache_without_waiting_for_lazy_refresh() -> None:
+    started = asyncio.Event()
+
+    class SlowRefresh:
+        async def get(self, symbol, as_of=None, *, cache_first=True):
+            started.set()
+            await asyncio.Event().wait()
+
+    class Versions:
+        def latest(self, symbol):
+            assert symbol == "600519"
+            return sample_response()
+
+    app = application(SlowRefresh())
+    app.state.company_research_version_repository = Versions()
+
+    response = TestClient(app).get(
+        "/api/v1/a-shares/600519/company-research?as_of=2026-08-03"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "贵州茅台"
+    assert any("本地研究缓存" in reason for reason in response.json()["reasons"])
 
 
 def test_company_research_ai_task_routes_start_and_read_independent_supplement() -> None:
