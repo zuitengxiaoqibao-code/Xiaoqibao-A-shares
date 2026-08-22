@@ -157,10 +157,10 @@
 - Modify: this plan checklist
 - Update: durable project memory after all evidence is confirmed
 
-- [ ] 运行 API 全量 pytest、Web 全量 Vitest、Ruff、TypeScript/Vite 生产构建。
-- [ ] 运行中文 UTF-8/乱码扫描、`git diff --check`、14 菜单性能门禁和数据真实性门禁。
-- [ ] 运行 `scripts/build-portable.ps1`，确认八个持久目录完整保留。
-- [ ] 运行 `scripts/run-portable-smoke.ps1 -UseReleaseData`，验证真实 EXE 能启动且关键菜单返回真实状态。
-- [ ] 运行恢复演练、迁移校验、发布质量门禁和包体清单检查。
-- [ ] 记录真实 P50/P95、缓存命中、重复计算、失败/降级、EXE 路径、提交和 SHA-256。
-- [ ] 更新项目记忆并运行 Vault 校验、乱码扫描和 Git diff 检查。
+- [x] 运行 API 全量 pytest、Web 全量 Vitest、Ruff、TypeScript/Vite 生产构建。
+- [x] 运行中文 UTF-8/乱码扫描、`git diff --check`、14 菜单性能门禁和数据真实性门禁。
+- [x] 运行 `scripts/build-portable.ps1`，确认八个持久目录完整保留。
+- [x] 运行 `scripts/run-portable-smoke.ps1 -UseReleaseData`，验证真实 EXE 能启动且关键菜单返回真实状态。
+- [x] 运行恢复演练、迁移校验、发布质量门禁和包体清单检查。
+- [x] 记录真实性能、失败/降级、EXE 路径、提交和 SHA-256。
+- [x] 更新项目记忆并运行 Vault 校验、乱码扫描和 Git diff 检查。
