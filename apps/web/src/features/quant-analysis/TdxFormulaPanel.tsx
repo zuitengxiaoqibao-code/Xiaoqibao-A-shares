@@ -1,16 +1,20 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { TdxFormulaLoader, TdxFormulaResponse } from "./types";
+import { useRealtimeFallbackTick, useRealtimeSubscription } from "../../shared/realtime/RealtimeProvider";
 
 type Props = { symbol: string | null; load?: TdxFormulaLoader };
 
 export function TdxFormulaPanel({ symbol, load }: Props) {
   const [response, setResponse] = useState<TdxFormulaResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const fallbackTick = useRealtimeFallbackTick();
+  const refreshRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     if (!symbol || !load) {
       setResponse(null);
       setLoading(false);
+      refreshRef.current = null;
       return;
     }
     let active = true;
@@ -21,10 +25,21 @@ export function TdxFormulaPanel({ symbol, load }: Props) {
         .catch(() => { if (active) setResponse(null); })
         .finally(() => { if (active) setLoading(false); });
     };
+    refreshRef.current = refresh;
     refresh();
-    const timer = window.setInterval(refresh, 15_000);
-    return () => { active = false; window.clearInterval(timer); };
+    return () => { active = false; if (refreshRef.current === refresh) refreshRef.current = null; };
   }, [load, symbol]);
+  useRealtimeSubscription("market_overview", () => {
+    if (document.visibilityState !== "hidden") refreshRef.current?.();
+  }, { fallbackToNetwork: false });
+  useEffect(() => {
+    const refreshIfVisible = () => {
+      if (document.visibilityState === "visible") refreshRef.current?.();
+    };
+    document.addEventListener("visibilitychange", refreshIfVisible);
+    if (fallbackTick > 0) refreshIfVisible();
+    return () => document.removeEventListener("visibilitychange", refreshIfVisible);
+  }, [fallbackTick]);
   if (!load) return null;
   const point = response?.points.find((item) => item.symbol === symbol);
   const values = point ? Object.entries(point.values) : [];

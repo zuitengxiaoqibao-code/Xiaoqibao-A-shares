@@ -91,7 +91,6 @@ export function LateSessionSelectionView({ load, analyze = loadLateSessionAIAnal
 
   useEffect(() => {
     let disposed = false;
-    let timer: number | undefined;
     const refresh = async (foreground: boolean) => {
       if (foreground) { setLoading(true); setLoadProgress(null); }
       try {
@@ -108,7 +107,7 @@ export function LateSessionSelectionView({ load, analyze = loadLateSessionAIAnal
       }
     };
     void refresh(true);
-    return () => { disposed = true; if (timer) window.clearTimeout(timer); };
+    return () => { disposed = true; };
   }, [load, activeSettings]);
 
   useEffect(() => {

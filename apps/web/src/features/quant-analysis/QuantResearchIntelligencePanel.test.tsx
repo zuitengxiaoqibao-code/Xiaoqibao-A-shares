@@ -128,6 +128,8 @@ describe("QuantResearchIntelligencePanel", () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(1); });
       expect(load).toHaveBeenCalledTimes(1);
       expect(screen.getByText("研究智能")).toBeInTheDocument();
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+      expect(load).toHaveBeenCalledTimes(1);
     } finally {
       view.unmount();
       vi.useRealTimers();

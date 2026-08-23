@@ -259,8 +259,27 @@ class CompanyResearchVersionRepository:
             raise CompanyResearchVersionStoreError("company research version read failed") from error
 
     def latest(self, symbol: str) -> CompanyResearchResponse | None:
-        history = self.history(symbol, limit=1)
-        return history[0] if history else None
+        try:
+            with self._lock:
+                rows = self.connection.execute(
+                    "SELECT * FROM company_research_versions WHERE symbol=? ORDER BY version_number DESC LIMIT 20",
+                    (symbol,),
+                ).fetchall()
+                last_integrity_error: CompanyResearchVersionIntegrityError | None = None
+                for row in rows:
+                    try:
+                        return self._verified(row)
+                    except CompanyResearchVersionIntegrityError as error:
+                        # A malformed newest append must not hide an older,
+                        # independently verified cache from the first screen.
+                        last_integrity_error = error
+                if last_integrity_error is not None:
+                    raise last_integrity_error
+                return None
+        except CompanyResearchVersionIntegrityError:
+            raise
+        except (sqlite3.DatabaseError, ValidationError, ValueError) as error:
+            raise CompanyResearchVersionStoreError("company research latest read failed") from error
 
     def get(self, snapshot_id: str) -> CompanyResearchResponse | None:
         try:

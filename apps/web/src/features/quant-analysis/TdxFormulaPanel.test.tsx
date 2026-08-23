@@ -40,7 +40,7 @@ describe("TdxFormulaPanel", () => {
     expect(screen.getByText("接口不可用")).toBeInTheDocument();
   });
 
-  it("refreshes the current symbol on the live interval", async () => {
+  it("does not start a duplicate polling loop after the initial load", async () => {
     vi.useFakeTimers();
     try {
       const load = vi.fn(async () => ({
@@ -54,7 +54,7 @@ describe("TdxFormulaPanel", () => {
       await act(async () => { await Promise.resolve(); });
       expect(load).toHaveBeenCalledTimes(1);
       await act(async () => { vi.advanceTimersByTime(15_000); });
-      expect(load).toHaveBeenCalledTimes(2);
+      expect(load).toHaveBeenCalledTimes(1);
       view.unmount();
     } finally {
       vi.useRealTimers();

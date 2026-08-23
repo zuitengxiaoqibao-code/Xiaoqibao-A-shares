@@ -7,7 +7,7 @@ import { EvidenceLedger } from "../../shared/evidence/EvidenceLedger";
 import { FieldEvidenceDetails } from "../../shared/evidence/FieldEvidenceDetails";
 import { DataWatermarkStrip } from "../../shared/evidence/DataWatermarkStrip";
 import { RealtimeAIInsight, type RealtimeAIInsightPayload } from "../../shared/RealtimeAIInsight";
-import { useRealtimeState, useRealtimeSubscription } from "../../shared/realtime/RealtimeProvider";
+import { useRealtimeFallbackTick, useRealtimeState, useRealtimeSubscription } from "../../shared/realtime/RealtimeProvider";
 import { readDailySnapshot, writeDailySnapshot } from "../../shared/dailySnapshotCache";
 import { friendlyError } from "../../shared/friendlyError";
 import { resolveSnapshotState, type RuntimeSnapshot } from "../../shared/snapshotState";
@@ -310,6 +310,7 @@ export function CompanyResearchView({ load, search, selectedSymbol, onSelectSymb
   const [comparison, setComparison] = useState<CompanyResearchComparison | null>(null);
   const [searching, setSearching] = useState(false);
   const researchStreamState = useRealtimeState();
+  const realtimeFallbackTick = useRealtimeFallbackTick();
   const [realtimeAIInsight, setRealtimeAIInsight] = useState<RealtimeAIInsightPayload | null>(null);
   const controllers = useRef(new Map<string, AbortController>());
   const initialized = useRef(false);
@@ -436,19 +437,16 @@ export function CompanyResearchView({ load, search, selectedSymbol, onSelectSymb
   }, [activeSymbol, onSelectSymbol, selectedSymbol]);
 
   useEffect(() => {
-    if (!activeSymbol) return;
     const refreshIfVisible = () => {
-      if (document.visibilityState === "visible" && entriesRef.current.some((item) => item.symbol === activeSymbol)) {
+      if (document.visibilityState !== "visible" || !activeSymbol) return;
+      if (entriesRef.current.some((item) => item.symbol === activeSymbol)) {
         void refreshEntryRef.current?.(activeSymbol);
       }
     };
-    const interval = window.setInterval(refreshIfVisible, 300_000);
     document.addEventListener("visibilitychange", refreshIfVisible);
-    return () => {
-      window.clearInterval(interval);
-      document.removeEventListener("visibilitychange", refreshIfVisible);
-    };
-  }, [activeSymbol]);
+    if (realtimeFallbackTick > 0) refreshIfVisible();
+    return () => document.removeEventListener("visibilitychange", refreshIfVisible);
+  }, [activeSymbol, realtimeFallbackTick]);
 
   useEffect(() => {
     const symbols = entries.filter((item) => item.value).map((item) => item.symbol);

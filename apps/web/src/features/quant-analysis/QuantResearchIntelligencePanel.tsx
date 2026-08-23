@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity, AlertTriangle, BarChart3, BrainCircuit, Database, FlaskConical,
   Network, ShieldCheck,
@@ -9,6 +9,7 @@ import type {
 } from "./types";
 import { useQuantLiveResource } from "./useQuantLiveRefresh";
 import { shanghaiDay } from "../../shared/tradingDayContext";
+import { useRealtimeFallbackTick, useRealtimeSubscription } from "../../shared/realtime/RealtimeProvider";
 
 
 type Props = { load: QuantResearchLoader };
@@ -58,17 +59,26 @@ const RISK_PRIORITY: Record<QuantRiskGateCheck["status"], number> = {
 
 export function QuantResearchIntelligencePanel({ load }: Props) {
   const loader = useCallback(() => load(), [load]);
+  const fallbackTick = useRealtimeFallbackTick();
   const resource = useQuantLiveResource({
     loader,
     intervalMs: 60_000,
     errorMessage: "量化研究快照加载失败",
     initialDelayMs: 1_400,
+    polling: false,
     cache: {
       key: "quant-research-intelligence",
       day: shanghaiDay(new Date()),
       validate: isResearchSnapshot,
     },
   });
+  useRealtimeSubscription("quant_strategy", () => {
+    if (document.visibilityState !== "hidden") void resource.refreshNow();
+  }, { fallbackToNetwork: false });
+  useEffect(() => {
+    if (fallbackTick === 0 || document.visibilityState === "hidden") return;
+    void resource.refreshNow();
+  }, [fallbackTick, resource.refreshNow]);
   const [filter, setFilter] = useState("all");
   const snapshot = resource.data;
   const types = useMemo(() => {

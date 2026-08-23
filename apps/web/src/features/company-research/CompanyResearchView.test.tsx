@@ -281,7 +281,7 @@ describe("CompanyResearchView", () => {
     expect(screen.queryByText("不应覆盖的部分结果")).not.toBeInTheDocument();
   });
 
-  it("refreshes the active company research entry periodically while the page is visible", async () => {
+  it("does not start a duplicate periodic refresh loop", async () => {
     vi.useFakeTimers();
     try {
       const load = vi.fn(async () => research);
@@ -293,13 +293,13 @@ describe("CompanyResearchView", () => {
       await act(async () => { await Promise.resolve(); await Promise.resolve(); });
       expect(load).toHaveBeenCalledTimes(1);
       await act(async () => { await vi.advanceTimersByTimeAsync(300_000); });
-      expect(load).toHaveBeenCalledTimes(2);
+      expect(load).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("does not replace an in-flight company research request during periodic refresh", async () => {
+  it("keeps an in-flight company research request isolated from timer ticks", async () => {
     vi.useFakeTimers();
     try {
       let requestSignal: AbortSignal | undefined;

@@ -230,3 +230,33 @@ def test_company_research_versions_accept_legacy_provenance_semantics(tmp_path) 
 
     assert repository.latest("600519") == stored
     repository.close()
+
+
+def test_latest_skips_a_corrupt_newest_row_and_returns_previous_verified_cache(tmp_path) -> None:
+    repository = CompanyResearchVersionRepository(tmp_path / "company-research-versions.sqlite3")
+    value = sample_response().model_copy(update={
+        "as_of": date(2026, 8, 14),
+        "generated_at": datetime(2026, 8, 14, 7, 36, tzinfo=timezone.utc),
+        "research_sections": sections("主营高端白酒"),
+    })
+    stored = repository.append(value)
+    payload = stored.model_dump_json()
+    canonical_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    with repository.connection:
+        repository.connection.execute(
+            """INSERT INTO company_research_versions(
+            snapshot_id,symbol,version_number,content_hash,canonical_hash,payload,generated_at
+            ) VALUES(?,?,?,?,?,?,?)""",
+            (
+                "company-research-600519-corrupt",
+                "600519",
+                2,
+                "corrupt-semantic-hash",
+                canonical_hash,
+                payload,
+                value.generated_at.isoformat(),
+            ),
+        )
+
+    assert repository.latest("600519") == stored
+    repository.close()
