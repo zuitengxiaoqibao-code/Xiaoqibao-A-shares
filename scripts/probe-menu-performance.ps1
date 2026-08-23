@@ -16,7 +16,6 @@ $script:MenuDisplayNames = @{
     operations = "本地运维"
     bonds = "可转债"
 }
-
 function Invoke-MenuPerformanceProbe {
     param(
         [Parameter(Mandatory = $true)][string]$BaseUri,
@@ -68,4 +67,3 @@ function Invoke-MenuPerformanceProbe {
         -MaxResultMs $MaxResultMs `
         -MaxCacheFrameMs $MaxCacheFrameMs
 }
-
