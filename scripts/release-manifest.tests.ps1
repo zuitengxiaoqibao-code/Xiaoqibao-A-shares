@@ -19,6 +19,12 @@ Describe "release manifest runtime evidence" {
         . "$PSScriptRoot\release-manifest.ps1"
     }
 
+    It "loads the Windows hashing module before the long portable build" {
+        $buildScript = Get-Content -Raw -LiteralPath "$PSScriptRoot\build-portable.ps1"
+
+        $buildScript | Should Match "Import-Module Microsoft\.PowerShell\.Utility"
+    }
+
     It "refreshes database hashes and runtime size evidence after smoke" {
         Add-Content -LiteralPath (Join-Path $script:fixture "data\runtime.sqlite3") -Value "new" -NoNewline
 
