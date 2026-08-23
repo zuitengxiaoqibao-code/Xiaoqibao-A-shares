@@ -158,7 +158,7 @@ describe("QuantAnalysisDashboard", () => {
     />);
 
     expect(await screen.findByText("000001", { selector: ".quant-selected-symbol" })).toBeInTheDocument();
-    expect(screen.getByText("样本二", { selector: ".quant-selected-name" })).toBeInTheDocument();
+    expect(await screen.findByText("样本二", { selector: ".quant-selected-name" })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "量化分析股票" })).toHaveValue("000001");
   });
 
