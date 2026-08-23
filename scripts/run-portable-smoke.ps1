@@ -20,6 +20,7 @@ $ReleaseRoot = if ($ReleaseRootOverride) {
 $Exe = Join-Path $ReleaseRoot "xiaoqibao.exe"
 $PersistentNames = @("config", "data", "news", "cache", "logs", "models", "exports", "backups")
 . "$PSScriptRoot\release-manifest.ps1"
+. "$PSScriptRoot\probe-menu-performance.ps1"
 
 if ($UseReleaseData -and $PortableRootOverride) {
     throw "UseReleaseData and PortableRootOverride cannot be used together"
@@ -198,6 +199,14 @@ try {
         throw "Portable health check timed out"
     }
     $ApiReadyMs = $HealthReadyMs
+    $MenuPerformance = Invoke-MenuPerformanceProbe `
+        -BaseUri "http://127.0.0.1:$Port" `
+        -TimeoutSec 10 `
+        -MaxResultMs 10000 `
+        -MaxCacheFrameMs 1000
+    if ($MenuPerformance.state -ne "pass") {
+        throw ("Portable fourteen-menu performance gate failed: {0}" -f ($MenuPerformance.failures -join ","))
+    }
     if ($UseReleaseData) {
         $ReleaseManifestPath = Join-Path $ReleaseRoot "release-manifest.json"
         if (Test-Path -LiteralPath $ReleaseManifestPath) {
@@ -535,6 +544,7 @@ try {
                     audit_database = "data/late-session-audit.sqlite3"
                     observed_at = (Get-Date).ToUniversalTime().ToString("o")
                 }
+                menu_performance = $MenuPerformance
             }
             if ($ReleaseManifest.PSObject.Properties.Name -contains "quality_gates") {
                 $ReleaseManifest.quality_gates = $QualityGateSummary
@@ -568,6 +578,7 @@ try {
     [IO.File]::WriteAllText($StartupEvidencePath, $StartupEvidence, [Text.UTF8Encoding]::new($false))
     $CoverageDisplay = if ($null -eq $CoveragePercent) { "--" } else { $CoveragePercent }
     Write-Host ("Quality gates: {0}; data coverage={1}% (partial is warning, never fabricated as ready)" -f $QualityGateState, $CoverageDisplay)
+    Write-Host ("Fourteen-menu performance: {0}; checked={1}/{2}; max_result=10s; max_cache_frame=1s" -f $MenuPerformance.state, $MenuPerformance.checked_count, $MenuPerformance.required_count)
     Write-Host ("Portable smoke passed; window visible in {0}ms; API ready in {1}ms; verification completed in {2}ms; requests home={3}ms overview={4}ms quant={5}ms portfolio={6}ms research={7}ms professional={8}ms; overview {9} coverage={10}%; source health {11}; quant strategy {12} ({13}); portfolio risk {14} ({15}); company research {16} ({17}); tdx professional {18} ({19})" -f `
         $WindowVisibleMs, $HealthReadyMs, $StartedAt.ElapsedMilliseconds, $HomeRequestMs, $OverviewRequestMs, $QuantStrategyRequestMs, $PortfolioRiskRequestMs, $CompanyResearchRequestMs, $ProfessionalRequestMs, $Overview.status, $CoverageDisplay, $SourceHealthStatus, $QuantStrategyStatus, $QuantDetail, $PortfolioRisk.status, $PortfolioRiskDetail, $CompanyResearchStatus, $CompanyResearchDetail, $ProfessionalStatus, "$ProfessionalSummary; $ProfessionalDetail")
 } finally {

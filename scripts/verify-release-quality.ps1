@@ -9,6 +9,7 @@ $ResolvedRoot = (Resolve-Path -LiteralPath $ReleaseRoot).Path
 $Exe = Join-Path $ResolvedRoot "xiaoqibao.exe"
 $ManifestPath = Join-Path $ResolvedRoot "release-manifest.json"
 $RequiredDirs = @("config", "data", "news", "cache", "logs", "models", "exports", "backups")
+. "$PSScriptRoot\verify-menu-performance.ps1"
 
 if (-not (Test-Path -LiteralPath $Exe -PathType Leaf)) {
     throw "Release executable is missing: $Exe"
@@ -119,6 +120,23 @@ if ([int]$RealtimeMetrics.late_session_request_ms -gt [int]$RealtimeMetrics.late
 }
 if ([string]$RealtimeMetrics.state -ne "pass" -or [string]$RealtimeMetrics.traceability_status -ne "pass") {
     throw "Release realtime pipeline or traceability smoke did not pass"
+}
+
+$MenuPerformance = $Manifest.quality_gates.menu_performance
+if ($null -eq $MenuPerformance) {
+    throw "Release manifest omits fourteen-menu runtime evidence"
+}
+$RecomputedMenuPerformance = Test-MenuPerformance `
+    -Samples @($MenuPerformance.menus) `
+    -MaxResultMs 10000 `
+    -MaxCacheFrameMs 1000
+if (
+    [string]$MenuPerformance.state -ne "pass" -or
+    [int]$MenuPerformance.checked_count -ne 14 -or
+    [int]$MenuPerformance.required_count -ne 14 -or
+    [string]$RecomputedMenuPerformance.state -ne "pass"
+) {
+    throw "Release fourteen-menu runtime evidence did not pass"
 }
 $AuditPath = Join-Path $ResolvedRoot ([string]$RealtimeMetrics.audit_database).Replace('/', '\')
 if (-not (Test-Path -LiteralPath $AuditPath -PathType Leaf)) {

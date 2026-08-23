@@ -45,6 +45,31 @@ Describe "verify-release-quality" {
                     audit_database = "data/late-session-audit.sqlite3"
                     observed_at = "2026-08-18T00:00:00Z"
                 }
+                menu_performance = [ordered]@{
+                    state = "pass"
+                    checked_count = 14
+                    required_count = 14
+                    max_result_ms = 10000
+                    max_cache_frame_ms = 1000
+                    failures = @()
+                    menus = @(
+                        @(
+                            "market_overview", "today_decision", "stock_observation", "company_research",
+                            "first_limit_up", "late_session_selection", "quant_analysis", "monitor_center",
+                            "news", "risk", "history", "settings", "operations", "bonds"
+                        ) | ForEach-Object {
+                            [ordered]@{
+                                menu = $_
+                                state = "ready"
+                                latency_ms = 100
+                                cache_frame_ms = 50
+                                usable_content = $true
+                                reason = ""
+                            }
+                        }
+                    )
+                    observed_at = "2026-08-23T00:00:00Z"
+                }
             }
         } | ConvertTo-Json -Depth 10
         [IO.File]::WriteAllText(
@@ -99,6 +124,19 @@ Describe "verify-release-quality" {
         $manifest.PSObject.Properties.Remove("manifest_signature")
         [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
         & "$PSScriptRoot\sign-release-manifest.ps1" -ReleaseRoot $script:fixture
+        $failed = $false
+        try { & "$PSScriptRoot\verify-release-quality.ps1" -ReleaseRoot $script:fixture } catch { $failed = $true }
+        $failed | Should Be $true
+    }
+
+    It "rejects a release without fourteen-menu runtime evidence" {
+        $manifestPath = Join-Path $script:fixture "release-manifest.json"
+        $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
+        $manifest.quality_gates.PSObject.Properties.Remove("menu_performance")
+        $manifest.PSObject.Properties.Remove("manifest_signature")
+        [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
+        & "$PSScriptRoot\sign-release-manifest.ps1" -ReleaseRoot $script:fixture
+
         $failed = $false
         try { & "$PSScriptRoot\verify-release-quality.ps1" -ReleaseRoot $script:fixture } catch { $failed = $true }
         $failed | Should Be $true

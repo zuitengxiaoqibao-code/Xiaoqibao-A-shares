@@ -12,7 +12,7 @@
 - `reason`：没有可用内容时必须填写具体数据源和失败阶段。
 - `observed_at / trade_date / source / coverage`：数据时间、交易日、来源和覆盖率。
 
-发布时由 `scripts/verify-menu-performance.ps1` 验证十四项完整性、十秒结果上限、一秒缓存首帧上限和空结果原因。长期目标仍是菜单切换缓存首帧 300 毫秒，本轮发布硬门禁先采用 1000 毫秒以覆盖低配置测试机。
+发布时由 `scripts/probe-menu-performance.ps1` 从真实便携 EXE 逐项采集十四菜单，再由 `scripts/verify-menu-performance.ps1` 验证十四项完整性、十秒结果上限、一秒缓存首帧上限和空结果原因。结果写入签名发布清单，`scripts/verify-release-quality.ps1` 会重新计算并阻断缺失或失败的证据。长期目标仍是菜单切换缓存首帧 300 毫秒，发布硬门禁采用 1000 毫秒以覆盖低配置测试机。
 
 ## 菜单、首屏与依赖
 
