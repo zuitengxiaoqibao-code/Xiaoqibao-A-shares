@@ -1,6 +1,10 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { MonitorCenterView } from "./MonitorCenterView";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+const themeCss = readFileSync(resolve(process.cwd(), "src/app/theme.css"), "utf8");
 
 describe("MonitorCenterView", () => {
   it("shows beginner templates with readable Chinese explanations", async () => {
@@ -282,6 +286,12 @@ describe("MonitorCenterView", () => {
     fireEvent.click(screen.getByRole("button", { name: "停止并删除" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/v1/monitor-center/rules/r1", expect.objectContaining({ method: "DELETE" })));
     vi.unstubAllGlobals();
+  });
+
+  it("keeps the rule selector CSS from affecting lifecycle action buttons", () => {
+    expect(themeCss).not.toContain(".monitor-rule-list button {");
+    expect(themeCss).toContain(".monitor-rule-list .monitor-rule-select {");
+    expect(themeCss).toContain(".monitor-rule-actions > button");
   });
 
   it("deletes added conditions but keeps the final condition as a protected row", async () => {

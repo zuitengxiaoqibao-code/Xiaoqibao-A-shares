@@ -979,13 +979,14 @@ body { font-size: 14px; }
 .monitor-channel-toggles label { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 10px; border: 1px solid var(--line); background: #0b1115; color: var(--text-soft); font-size: 13px; }
 .monitor-channel-toggles input { width: 17px; height: 17px; accent-color: var(--status-live); }
 .monitor-rule-list { display: grid; gap: 8px; margin-top: 14px; }
-.monitor-rule-list button { display: grid; gap: 3px; width: 100%; padding: 10px 12px; border: 1px solid var(--line); background: #0b1115; color: var(--text); text-align: left; }
+.monitor-rule-list .monitor-rule-select { display: grid; gap: 3px; width: 100%; padding: 10px 12px; border: 1px solid var(--line); background: #0b1115; color: var(--text); text-align: left; }
 .monitor-rule-list small { color: var(--muted); overflow-wrap: anywhere; }
 .monitor-rule-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; min-height: 74px; padding: 10px 12px; border: 1px solid var(--line); background: #0b1115; }
 .monitor-rule-select { display: grid; gap: 3px; min-width: 0; padding: 0; border: 0; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
 .monitor-rule-select strong { overflow-wrap: anywhere; }
 .monitor-rule-select small { color: var(--muted); overflow-wrap: anywhere; }
 .monitor-rule-actions, .monitor-template-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; align-self: end; min-height: 40px; }
+.monitor-rule-actions > button, .monitor-template-actions > button { display: inline-flex; align-items: center; justify-content: center; text-align: center; }
 .monitor-rule-actions .settings-action, .monitor-template-actions .settings-action, .monitor-rule-actions .monitor-delete-button, .monitor-template-actions .monitor-delete-button { width: auto; margin: 0; white-space: nowrap; }
 .monitor-delete-button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 34px; padding: 0 10px; border: 1px solid rgba(239, 100, 100, .45); background: rgba(110, 25, 31, .18); color: #ff9e9e; cursor: pointer; }
 .monitor-delete-button:disabled, .monitor-condition-remove:disabled { cursor: not-allowed; opacity: .45; }
