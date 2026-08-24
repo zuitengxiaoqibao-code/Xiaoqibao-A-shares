@@ -859,6 +859,23 @@ describe("DistinctMarketWorkspace", () => {
     expect(chain).not.toHaveTextContent("未关联传闻");
   });
 
+  it("collapses an evidence map when no news-to-theme-to-stock edge is verifiable", () => {
+    const noEdges = {
+      ...overview,
+      anomalies: [],
+      live_feed: [{ event_id: "orphan", occurred_at: "2026-07-29T10:25:00+08:00", headline: "未关联信息", summary: "无股票代码", themes: ["未关联题材"], symbols: [], source: "未知来源", review_state: "pending" }],
+      sectors: [],
+      sector_stocks: {},
+    } as unknown as MarketOverviewResponse;
+
+    render(<DistinctMarketWorkspace feature="热点解读" data={noEdges} />);
+
+    const chain = screen.getByRole("region", { name: "热点证据链" });
+    expect(chain).toHaveTextContent("当前没有可验证记录");
+    expect(chain).toHaveTextContent("没有同时具备资讯、题材和 A 股关联");
+    expect(chain.querySelector(".evidence-map")).toBeNull();
+  });
+
   it("shows local, evidence-first gates for AI selection and Wencai instead of the generic market checklist", () => {
     const { rerender } = render(<DistinctMarketWorkspace feature="AI+选股" data={overview} />);
     const aiGates = screen.getByRole("region", { name: "AI 选股证据闸门" });

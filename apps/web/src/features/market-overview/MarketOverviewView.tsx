@@ -28,6 +28,7 @@ import { SectorHeatmapPanel } from "../../shared/visualization/SectorHeatmapPane
 import { featureDisplayLabel, featureMeta } from "./featureCatalog";
 import { appendUniqueEntities, mergeEntitySnapshot, resolveIncrementalResponse } from "../../shared/incrementalResource";
 import { loadWorkspaceState, updateWorkspaceFilter } from "../../shared/workspace/workspaceState";
+import { SectionRefreshState } from "../../shared/SectionRefreshState";
 import { useRealtimeFallback, useRealtimeFallbackTick, useRealtimeProviderAvailable, useRealtimeState, useRealtimeSubscription } from "../../shared/realtime/RealtimeProvider";
 import "./overview.css";
 
@@ -391,7 +392,9 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, onOpenCompa
     />
     <div className="overview-sr-only" role="status">{statusLabel}</div>
 
-    {error && <div className="overview-error"><AlertTriangle size={15} /><span>{error}</span>{data && <small>保留上一次成功快照</small>}</div>}
+    {error && data
+      ? <SectionRefreshState state="stale" phase="信息总览最新数据刷新" error={error} onRetry={() => void refresh()} />
+      : error && <div className="overview-error"><AlertTriangle size={15} /><span>{error}</span></div>}
 
     <section className="overview-market-strip" aria-label="A 股市场情绪与核心指数">
       <MarketTemperatureGauge sentiment={data?.sentiment ?? { score: null, band: "等待数据", coverage_percent: "0", quality: "unavailable", observed_at: new Date().toISOString() }} />

@@ -856,8 +856,11 @@ function EvidenceMap({ model, variant, onOpenAShare }: { model: WorkspaceMarketM
       : ["theme-link", "source-count", "full-chain"].includes(variant)
         ? model.themes.filter((item) => item.symbols.length > 0)
         : model.themes;
-  if (!news.length && !themes.length) return <Empty>没有满足本功能关联条件的新闻、题材与股票证据。</Empty>;
-  return <div className="evidence-map"><div className="evidence-column"><small>原始资讯</small>{news.slice(0, 5).map((item) => <span key={item.event_id}>{item.headline}</span>)}</div><Network size={28} /><div className="evidence-column"><small>题材归因</small>{themes.slice(0, 6).map((theme) => <span key={theme.name}>{theme.name}</span>)}</div><Network size={28} /><div className="evidence-column evidence-stock-column"><small>关联 A 股</small>{[...new Set(news.flatMap((item) => item.symbols))].slice(0, 8).map((symbol) => { const name = stockNameForSymbol(model, symbol); return onOpenAShare ? <button type="button" key={symbol} aria-label={`查看 ${symbol} ${name}`} onClick={() => onOpenAShare(symbol)}>{name}<small>{symbol}</small></button> : <span key={symbol}>{name}<small>{symbol}</small></span>; })}</div></div>;
+  const linkedSymbols = [...new Set(news.flatMap((item) => item.symbols))];
+  const hasEvidenceEdges = news.some((item) => item.symbols.length > 0 && item.themes.length > 0)
+    && themes.some((theme) => theme.symbols.length > 0);
+  if (!hasEvidenceEdges) return <Empty>当前筛选没有同时具备资讯、题材和 A 股关联的可验证证据，已收紧为空态。</Empty>;
+  return <div className="evidence-map"><div className="evidence-column"><small>原始资讯</small>{news.slice(0, 5).map((item) => <span key={item.event_id}>{item.headline}</span>)}</div><Network size={28} /><div className="evidence-column"><small>题材归因</small>{themes.slice(0, 6).map((theme) => <span key={theme.name}>{theme.name}</span>)}</div><Network size={28} /><div className="evidence-column evidence-stock-column"><small>关联 A 股</small>{linkedSymbols.slice(0, 8).map((symbol) => { const name = stockNameForSymbol(model, symbol); return onOpenAShare ? <button type="button" key={symbol} aria-label={`查看 ${symbol} ${name}`} onClick={() => onOpenAShare(symbol)}>{name}<small>{symbol}</small></button> : <span key={symbol}>{name}<small>{symbol}</small></span>; })}</div></div>;
 }
 
 function flowAmount(value: string): string {

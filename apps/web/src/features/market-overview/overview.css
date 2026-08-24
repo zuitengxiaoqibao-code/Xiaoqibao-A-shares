@@ -888,6 +888,42 @@
 .distinct-news-wire footer > button small,
 .distinct-news-wire footer > span small { color: #5baac7; }
 
+/* Dense workspaces: content determines height, never an unrelated sibling. */
+.section-refresh-state { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 4px 10px; border: 1px solid color-mix(in srgb, var(--overview-gold) 55%, var(--overview-line)); background: color-mix(in srgb, var(--overview-gold) 8%, var(--overview-panel)); color: var(--overview-gold); font-size: 12px; }
+.section-refresh-state.state-error, .section-refresh-state.state-unavailable { border-color: color-mix(in srgb, var(--overview-down) 55%, var(--overview-line)); background: color-mix(in srgb, var(--overview-down) 8%, var(--overview-panel)); color: var(--overview-down); }
+.section-refresh-copy { min-width: 0; display: grid; gap: 2px; }
+.section-refresh-copy b, .section-refresh-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.section-refresh-copy b { color: inherit; font-size: 12px; }
+.section-refresh-copy small { color: var(--overview-muted); }
+.section-refresh-state button { display: inline-flex; align-items: center; gap: 5px; min-height: 26px; margin-left: auto; padding: 0 8px; border: 1px solid currentColor; background: transparent; color: inherit; cursor: pointer; white-space: nowrap; }
+.section-refresh-state button:hover { background: color-mix(in srgb, currentColor 12%, transparent); }
+.overview-workspace { min-height: 0; }
+.overview-chart-shell { flex-basis: 300px; min-height: 300px; }
+.overview-anomaly-list, .overview-feed-list { height: auto; max-height: 360px; }
+.distinct-block-grid { grid-auto-rows: min-content; align-items: start; gap: 2px; }
+.distinct-block { height: auto; align-self: start; }
+.distinct-empty { min-height: 92px; padding-block: 14px; }
+.distinct-metric-deck { min-height: 0; }
+.distinct-metric-deck article { min-height: 78px; padding: 10px 12px; }
+.evidence-map { min-height: 220px; padding: 14px; }
+
+@media (max-width: 1280px) {
+  .overview-anomaly-list, .overview-feed-list { max-height: 300px; }
+}
+
+@media (max-width: 900px) {
+  .overview-chart-shell { flex-basis: 280px; min-height: 280px; }
+  .distinct-block.size-half, .distinct-block.size-tall { grid-column: span 12; }
+  .distinct-block.size-third { grid-column: span 6; }
+}
+
+@media (max-width: 600px) {
+  .section-refresh-state { align-items: flex-start; }
+  .section-refresh-copy small { white-space: normal; }
+  .distinct-block.size-third { grid-column: span 12; }
+  .overview-chart-shell { flex-basis: 260px; min-height: 260px; }
+}
+
 @media (max-width: 650px) {
   .metric-drilldown-stocks { grid-template-columns: 1fr; }
 }
