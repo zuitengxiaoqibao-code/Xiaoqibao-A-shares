@@ -1,5 +1,4 @@
 import type { DecisionJournalCreate, DecisionJournalEntry, IntradayTick, KronosForecastResponse, QuantCalibrationReport, QuantResearchSnapshot, QuantShadowAnalytics, QuantShadowDecisionRecord, QuantStrategyDashboard, TdxFormulaResponse, WalkForwardReport } from "./types";
-import { coalescedFetch } from "../../shared/coalescedFetch";
 import { requestLedger } from "../../shared/performance/requestLedger";
 import { apiClient } from "../../shared/apiClient";
 
@@ -50,13 +49,10 @@ export async function loadQuantTicks(
   const query = tradingDate
     ? `?trading_date=${encodeURIComponent(tradingDate)}`
     : "";
-  const response = await coalescedFetch(
+  return apiClient.get<IntradayTick[]>(
     `/api/v1/a-shares/${encodeURIComponent(symbol)}/intraday-ticks${query}`,
+    { context: "盘中 TICK" },
   );
-  if (!response.ok) {
-    throw new Error(`盘中 TICK 请求失败 (${response.status})`);
-  }
-  return response.json() as Promise<IntradayTick[]>;
 }
 
 export async function loadKronosForecast(
@@ -66,13 +62,10 @@ export async function loadKronosForecast(
 ): Promise<KronosForecastResponse> {
   const params = new URLSearchParams({ symbol, horizon: String(horizon) });
   if (asOf) params.set("as_of", asOf);
-  const response = await coalescedFetch(
+  return apiClient.get<KronosForecastResponse>(
     `/api/v1/a-shares/first-limit-up/quant-forecast?${params.toString()}`,
+    { context: "Kronos 价格路径预测" },
   );
-  if (!response.ok) {
-    throw new Error(`Kronos 预测请求失败 (${response.status})`);
-  }
-  return response.json() as Promise<KronosForecastResponse>;
 }
 
 export async function loadWalkForward(
@@ -93,46 +86,45 @@ export async function loadWalkForward(
 
 export async function loadQuantStrategy(limit = 12): Promise<QuantStrategyDashboard> {
   return requestLedger.run(`quant-strategy:${limit}`, async () => {
-    const response = await coalescedFetch(
+    return apiClient.get<QuantStrategyDashboard>(
       `/api/v1/a-shares/quant-strategy?limit=${encodeURIComponent(String(limit))}`,
+      { context: "短线策略" },
     );
-    if (!response.ok) {
-      throw new Error(`短线策略请求失败 (${response.status})`);
-    }
-    return response.json() as Promise<QuantStrategyDashboard>;
   }, { domain: "quant-strategy" });
 }
 
 export async function loadQuantResearch(): Promise<QuantResearchSnapshot> {
   return requestLedger.run("quant-research", async () => {
-    const response = await coalescedFetch("/api/v1/a-shares/quant-research");
-    if (!response.ok) throw new Error(`量化研究快照请求失败 (${response.status})`);
-    return response.json() as Promise<QuantResearchSnapshot>;
+    return apiClient.get<QuantResearchSnapshot>("/api/v1/a-shares/quant-research", { context: "量化研究快照" });
   }, { domain: "quant-research" });
 }
 
 export async function loadQuantShadowDecisions(limit = 50): Promise<QuantShadowDecisionRecord[]> {
-  const response = await coalescedFetch(`/api/v1/a-shares/quant-strategy/shadow?limit=${encodeURIComponent(String(limit))}`);
-  if (!response.ok) throw new Error(`策略影子账本请求失败 (${response.status})`);
-  return response.json() as Promise<QuantShadowDecisionRecord[]>;
+  return apiClient.get<QuantShadowDecisionRecord[]>(
+    `/api/v1/a-shares/quant-strategy/shadow?limit=${encodeURIComponent(String(limit))}`,
+    { context: "策略影子账本" },
+  );
 }
 
 export async function loadQuantShadowAnalytics(horizon: 1 | 3 | 5 | 10 | 20 | 60 = 5): Promise<QuantShadowAnalytics> {
-  const response = await coalescedFetch(`/api/v1/a-shares/quant-strategy/shadow/analytics?horizon=${horizon}`);
-  if (!response.ok) throw new Error(`策略校准统计请求失败 (${response.status})`);
-  return response.json() as Promise<QuantShadowAnalytics>;
+  return apiClient.get<QuantShadowAnalytics>(
+    `/api/v1/a-shares/quant-strategy/shadow/analytics?horizon=${horizon}`,
+    { context: "策略校准统计" },
+  );
 }
 
 export async function loadQuantCalibration(horizon: 1 | 3 | 5 | 10 | 20 | 60 = 5): Promise<QuantCalibrationReport> {
-  const response = await coalescedFetch(`/api/v1/a-shares/quant-strategy/shadow/calibration?horizon=${horizon}`);
-  if (!response.ok) throw new Error(`量化校准报告请求失败 (${response.status})`);
-  return response.json() as Promise<QuantCalibrationReport>;
+  return apiClient.get<QuantCalibrationReport>(
+    `/api/v1/a-shares/quant-strategy/shadow/calibration?horizon=${horizon}`,
+    { context: "量化校准报告" },
+  );
 }
 
 export async function loadDecisionJournal(limit = 50): Promise<DecisionJournalEntry[]> {
-  const response = await coalescedFetch(`/api/v1/a-shares/quant-strategy/journal?limit=${encodeURIComponent(String(limit))}`);
-  if (!response.ok) throw new Error(`个人复盘日志请求失败 (${response.status})`);
-  return response.json() as Promise<DecisionJournalEntry[]>;
+  return apiClient.get<DecisionJournalEntry[]>(
+    `/api/v1/a-shares/quant-strategy/journal?limit=${encodeURIComponent(String(limit))}`,
+    { context: "个人复盘日志" },
+  );
 }
 
 export async function createDecisionJournal(request: DecisionJournalCreate): Promise<DecisionJournalEntry> {
@@ -145,7 +137,5 @@ export async function loadTdxFormula(
 ): Promise<TdxFormulaResponse> {
   const params = new URLSearchParams({ formula_name: formulaName });
   stockCodes.forEach((code) => params.append("stock_codes", code));
-  const response = await coalescedFetch(`/api/v1/tdx/local/formula?${params.toString()}`);
-  if (!response.ok) throw new Error(`通达信公式请求失败 (${response.status})`);
-  return response.json() as Promise<TdxFormulaResponse>;
+  return apiClient.get<TdxFormulaResponse>(`/api/v1/tdx/local/formula?${params.toString()}`, { context: "通达信公式" });
 }

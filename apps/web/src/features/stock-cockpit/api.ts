@@ -1,6 +1,5 @@
 import type { InstrumentDirectoryResponse, InstrumentSearchResponse, StockCockpitSnapshot, StockPreparation } from "./types";
 import { fetchJsonWithProgress, type LoadProgressCallback } from "../../shared/fetchJsonWithProgress";
-import { coalescedFetch } from "../../shared/coalescedFetch";
 import { createInstrumentDirectory, type InstrumentDirectory } from "../../shared/instruments/instrumentDirectory";
 import { apiClient } from "../../shared/apiClient";
 
@@ -8,12 +7,7 @@ let directoryPromise: Promise<InstrumentDirectoryResponse> | null = null;
 let localDirectory: InstrumentDirectory | null = null;
 
 async function request<T>(path: string): Promise<T> {
-  const response = await coalescedFetch(path);
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new Error(body.detail?.message ?? body.detail ?? `A 股请求失败 (${response.status})`);
-  }
-  return response.json();
+  return apiClient.get<T>(path, { context: "A 股数据" });
 }
 
 export function searchAShareInstruments(query: string): Promise<InstrumentSearchResponse> {

@@ -515,6 +515,7 @@ async def company_research(
     symbol: Annotated[AShareCode, Path()],
     service: Annotated[object, Depends(get_company_research_service)],
     as_of: date | None = None,
+    cache_only: bool = False,
 ) -> CompanyResearchResponse:
     selected_date = _research_date(as_of)
     repository = getattr(request.app.state, "company_research_version_repository", None)
@@ -534,6 +535,22 @@ async def company_research(
                 "status": latest.status if latest.as_of == selected_date else "partial",
                 "reasons": tuple(dict.fromkeys((*latest.reasons, cache_reason))),
             })
+        if cache_only:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "code": "company_research_cache_miss",
+                    "message": "当前没有可直接展示的公司研究缓存。",
+                },
+            )
+    elif cache_only:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": "company_research_cache_miss",
+                "message": "当前没有可直接展示的公司研究缓存。",
+            },
+        )
     try:
         return await service.get(symbol, selected_date)
     except (OSError, httpx.HTTPError, ValueError) as error:

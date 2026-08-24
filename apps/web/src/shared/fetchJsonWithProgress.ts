@@ -13,6 +13,11 @@ export type LoadProgress = {
 
 export type LoadProgressCallback = (progress: LoadProgress) => void;
 
+// A stalled local endpoint must release the page from its loading state. Long
+// work is already represented by the company-research task polling contract;
+// each individual HTTP exchange should therefore have a bounded wait.
+export const DEFAULT_FETCH_TIMEOUT_MS = 10_000;
+
 function apiMessage(text: string, fallback: string): string {
   try {
     const body = JSON.parse(text) as { detail?: string | { message?: string } };
@@ -101,10 +106,25 @@ export async function fetchJsonWithProgress<T>(
       detail: `本地服务正在准备数据 · 已等待 ${(elapsedMs / 1_000).toFixed(1)} 秒 · 阶段估算`,
     });
   }, 250);
+  const callerSignal = init?.signal;
+  const requestController = new AbortController();
+  let timedOut = false;
+  const abortFromCaller = () => requestController.abort(callerSignal?.reason);
+  if (callerSignal?.aborted) abortFromCaller();
+  else callerSignal?.addEventListener("abort", abortFromCaller, { once: true });
+  const timeout = window.setTimeout(() => {
+    timedOut = true;
+    requestController.abort(new DOMException("Timed out", "TimeoutError"));
+  }, DEFAULT_FETCH_TIMEOUT_MS);
   let response: Response;
   try {
-    response = await coalescedFetch(input, init);
+    response = await coalescedFetch(input, { ...init, signal: requestController.signal });
+  } catch (error) {
+    if (timedOut) throw new Error("请求超时，请稍后重试。");
+    throw error;
   } finally {
+    window.clearTimeout(timeout);
+    callerSignal?.removeEventListener("abort", abortFromCaller);
     window.clearInterval(estimateTimer);
   }
   emit({

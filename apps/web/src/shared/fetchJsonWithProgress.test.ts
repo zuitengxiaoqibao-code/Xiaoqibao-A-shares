@@ -93,4 +93,32 @@ describe("fetchJsonWithProgress", () => {
     )).rejects.toThrow("数据源暂不可用");
     expect(updates.at(-1)?.stage).not.toBe("complete");
   });
+
+  it("ends a stalled request with a visible timeout instead of leaving the page loading forever", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", vi.fn((_input: RequestInfo | URL, init?: RequestInit) => (
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+      })
+    )));
+
+    const request = fetchJsonWithProgress("/api/stalled");
+    const assertion = expect(request).rejects.toThrow("请求超时，请稍后重试");
+    await vi.advanceTimersByTimeAsync(10_000);
+    await assertion;
+  });
+
+  it("keeps caller cancellation distinct from a timeout", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", vi.fn((_input: RequestInfo | URL, init?: RequestInit) => (
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+      })
+    )));
+    const controller = new AbortController();
+    const request = fetchJsonWithProgress("/api/cancelled", { signal: controller.signal });
+    const assertion = expect(request).rejects.toMatchObject({ name: "AbortError" });
+    controller.abort();
+    await assertion;
+  });
 });

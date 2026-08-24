@@ -1,4 +1,4 @@
-import { coalescedFetch } from "../../shared/coalescedFetch";
+import { apiClient } from "../../shared/apiClient";
 import { fetchJsonWithProgress, type LoadProgressCallback } from "../../shared/fetchJsonWithProgress";
 import type { LateSessionAIAnalysis, LateSessionRuleSettings, LateSessionSelectionResponse } from "./types";
 
@@ -12,11 +12,9 @@ export async function loadLateSessionSelection(settings?: LateSessionRuleSetting
 }
 
 export async function loadLateSessionAIAnalysis(selection: LateSessionSelectionResponse): Promise<LateSessionAIAnalysis> {
-  const response = await coalescedFetch("/api/v1/a-shares/late-session-selection/ai-analysis", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(selection),
-  });
-  if (!response.ok) throw new Error(`尾盘选股 AI 分析请求失败 (${response.status})`);
-  return response.json() as Promise<LateSessionAIAnalysis>;
+  return apiClient.post<LateSessionAIAnalysis>(
+    "/api/v1/a-shares/late-session-selection/ai-analysis",
+    selection,
+    { context: "尾盘选股 AI 分析" },
+  );
 }

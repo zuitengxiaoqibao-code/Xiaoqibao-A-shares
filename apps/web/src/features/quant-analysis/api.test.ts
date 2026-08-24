@@ -51,7 +51,7 @@ describe("loadKronosForecast", () => {
   it("rejects a non-success response instead of returning fabricated evidence", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("down", { status: 503 })));
 
-    await expect(loadKronosForecast("600000")).rejects.toThrow("Kronos 预测请求失败 (503)");
+    await expect(loadKronosForecast("600000")).rejects.toThrow("Kronos 价格路径预测服务暂不可用");
   });
 });
 

@@ -13,6 +13,7 @@ describe("company research api", () => {
   it("requests the stable company research route with the optional date", async () => {
     const result = { symbol: "600519" };
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "暂无缓存" }), { status: 404 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ progress: { task_id: "task-1", status: "queued", stage: "queued", processed: 0, total: 6, percent: 0, detail: "等待", error: null }, result: null }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ progress: { task_id: "task-1", status: "succeeded", stage: "complete", processed: 6, total: 6, percent: 100, detail: "完成", error: null }, result }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
@@ -21,12 +22,16 @@ describe("company research api", () => {
     await loadCompanyResearch("600519", "2026-08-01", controller.signal);
 
     expect(fetchMock).toHaveBeenNthCalledWith(1,
-      "/api/v1/a-shares/600519/company-research/tasks?as_of=2026-08-01",
-      { signal: controller.signal, method: "POST" },
+      "/api/v1/a-shares/600519/company-research?as_of=2026-08-01&cache_only=true",
+      expect.objectContaining({ method: "GET", signal: expect.any(AbortSignal) }),
     );
     expect(fetchMock).toHaveBeenNthCalledWith(2,
+      "/api/v1/a-shares/600519/company-research/tasks?as_of=2026-08-01",
+      expect.objectContaining({ signal: expect.any(AbortSignal), method: "POST" }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(3,
       "/api/v1/a-shares/company-research/tasks/task-1",
-      { signal: controller.signal },
+      { signal: expect.any(AbortSignal) },
     );
   });
 
@@ -37,6 +42,7 @@ describe("company research api", () => {
 
   it("forwards response progress to the research loading status", async () => {
     vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "暂无缓存" }), { status: 404 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ progress: { task_id: "task-1", status: "running", stage: "financials", processed: 3, total: 6, percent: 50, detail: "财务完成", error: null }, result: null }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ progress: { task_id: "task-1", status: "succeeded", stage: "complete", processed: 6, total: 6, percent: 100, detail: "完成", error: null }, result: { symbol: "600519" } }), { status: 200 })));
     const updates: number[] = [];
@@ -55,7 +61,9 @@ describe("company research api", () => {
   it("ends a stalled research poll with a Chinese stage error", async () => {
     vi.useFakeTimers();
     const running = { progress: { task_id: "task-stalled", status: "running", stage: "financials", processed: 2, total: 6, percent: 33.33, detail: "正在等待财务来源", error: null }, result: null };
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(running), { status: 200 })));
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "暂无缓存" }), { status: 404 }))
+      .mockImplementation(async () => new Response(JSON.stringify(running), { status: 200 })));
 
     const pending = loadCompanyResearch("600519");
     await vi.advanceTimersByTimeAsync(1);

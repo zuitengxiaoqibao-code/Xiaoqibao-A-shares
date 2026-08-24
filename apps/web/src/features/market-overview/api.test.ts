@@ -17,7 +17,7 @@ describe("market overview api", () => {
     await expect(loadMarketOverview(controller.signal)).resolves.toEqual(payload);
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/a-shares/market-overview",
-      { signal: controller.signal },
+      { method: "GET", signal: expect.any(AbortSignal) },
     );
   });
 
@@ -45,7 +45,7 @@ describe("market overview api", () => {
     await expect(loadMarketIntervalReview("2026-07-01", "2026-07-29", controller.signal)).resolves.toEqual(payload);
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/a-shares/market-overview/interval?start_date=2026-07-01&end_date=2026-07-29",
-      { signal: controller.signal },
+      { method: "GET", signal: expect.any(AbortSignal) },
     );
   });
 });

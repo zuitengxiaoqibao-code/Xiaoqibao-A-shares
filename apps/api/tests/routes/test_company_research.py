@@ -131,6 +131,17 @@ def test_company_research_route_returns_frozen_cache_without_waiting_for_lazy_re
     assert any("本地研究缓存" in reason for reason in response.json()["reasons"])
 
 
+def test_company_research_route_supports_a_cache_only_probe() -> None:
+    service = Service()
+    response = TestClient(application(service)).get(
+        "/api/v1/a-shares/600519/company-research?cache_only=true"
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "company_research_cache_miss"
+    assert service.calls == []
+
+
 def test_company_research_ai_task_routes_start_and_read_independent_supplement() -> None:
     progress = TaskProgress(
         task_id="ai-task-1", kind="company-research-ai", status="succeeded",

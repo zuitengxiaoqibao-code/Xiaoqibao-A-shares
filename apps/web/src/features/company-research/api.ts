@@ -4,6 +4,19 @@ import { requestLedger } from "../../shared/performance/requestLedger";
 import { updateTaskActivity } from "../../shared/taskActivity";
 import { apiClient } from "../../shared/apiClient";
 
+function isResearchCache(value: unknown): value is CompanyResearchResponse {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<CompanyResearchResponse>;
+  return typeof candidate.symbol === "string"
+    && typeof candidate.name === "string"
+    && typeof candidate.as_of === "string"
+    && Array.isArray(candidate.dimensions)
+    && typeof candidate.financial_history === "object"
+    && candidate.financial_history !== null
+    && typeof candidate.valuation === "object"
+    && candidate.valuation !== null;
+}
+
 export function loadCompanyResearch(symbol: string, asOf?: string, signal?: AbortSignal, onProgress?: LoadProgressCallback): Promise<CompanyResearchResponse> {
   return requestLedger.run(`company-research:${symbol}:${asOf ?? "latest"}`, async () => {
     const taskId = `company-research:${symbol}:${asOf ?? "latest"}`;
@@ -13,6 +26,18 @@ export function loadCompanyResearch(symbol: string, asOf?: string, signal?: Abor
     let lastSignature = "";
     try {
       const query = asOf ? `?as_of=${encodeURIComponent(asOf)}` : "";
+      // Serve an existing verified snapshot before starting heavyweight
+      // enrichment. A cache miss falls through to the progress task below.
+      onProgress?.({ percent: 8, stage: "connecting", detail: "正在检查本地公司研究缓存", mode: "estimated" });
+      const cached = await apiClient.getOptional<CompanyResearchResponse>(
+        `/api/v1/a-shares/${encodeURIComponent(symbol)}/company-research${query}${query ? "&" : "?"}cache_only=true`,
+        { signal, context: "公司研究缓存" },
+      );
+      if (isResearchCache(cached)) {
+        updateTaskActivity({ id: taskId, label: `公司研究 ${symbol}`, stage: "已展示缓存，后台刷新最新数据", state: "succeeded", percent: 100 });
+        onProgress?.({ percent: 100, stage: "complete", detail: "已展示有效研究缓存，后台正在刷新", mode: "verified" });
+        return cached;
+      }
       let snapshot = await fetchJsonWithProgress<CompanyResearchTaskSnapshot>(
         `/api/v1/a-shares/${encodeURIComponent(symbol)}/company-research/tasks${query}`,
         { signal, method: "POST" }, undefined,
