@@ -31,6 +31,9 @@ class AlertDeliveryQueue:
 
 
 class MonitorCenterService:
+    SUPPORTED_OPERATORS = frozenset({"eq", "gt", "gte", "lt", "lte"})
+    SUPPORTED_LOGIC = frozenset({"all", "any", "n_of"})
+
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -38,7 +41,7 @@ class MonitorCenterService:
         self._state = self._load()
 
     def _load(self) -> dict[str, Any]:
-        default = {"rules": [], "alerts": [], "active_conditions": {}}
+        default = {"rules": [], "alerts": [], "active_conditions": {}, "condition_states": {}}
         if not self.path.exists():
             return default
         try:
@@ -50,6 +53,14 @@ class MonitorCenterService:
         state.setdefault("rules", [])
         state.setdefault("alerts", [])
         state.setdefault("active_conditions", {})
+        state.setdefault("condition_states", {})
+        normalized_rules = []
+        for rule in state["rules"]:
+            try:
+                normalized_rules.append(self.validate_rule(rule))
+            except ValueError:
+                normalized_rules.append(rule)
+        state["rules"] = normalized_rules
         for alert in state["alerts"]:
             self._normalize_alert(alert)
             if alert.get("state") == "active":
@@ -69,6 +80,16 @@ class MonitorCenterService:
     @staticmethod
     def _condition_key(rule_id: str | None, symbol: str | None, topic: str | None) -> str:
         return "|".join((str(rule_id or ""), str(symbol or ""), str(topic or "")))
+
+    @staticmethod
+    def _parse_timestamp(value: Any) -> datetime | None:
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(str(value))
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo is not None else None
 
     @staticmethod
     def _normalize_alert(alert: dict[str, Any]) -> dict[str, Any]:
@@ -92,15 +113,139 @@ class MonitorCenterService:
         temporary.write_text(json.dumps(self._state, ensure_ascii=False, indent=2), encoding="utf-8")
         temporary.replace(self.path)
 
+    @classmethod
+    def normalize_rule(cls, rule: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(rule, dict):
+            raise ValueError("监控规则必须是对象")
+        value = dict(rule)
+        conditions = value.get("conditions")
+        if isinstance(conditions, dict):
+            normalized_conditions = []
+            for field, operators in conditions.items():
+                if not isinstance(operators, dict):
+                    raise ValueError("规则条件格式不正确")
+                for operator, expected in operators.items():
+                    normalized_conditions.append({"field": field, "op": operator, "value": expected})
+            conditions = normalized_conditions
+        elif isinstance(conditions, list):
+            conditions = [dict(item) if isinstance(item, dict) else item for item in conditions]
+        value["conditions"] = conditions
+        value.setdefault("logic", "all")
+        value.setdefault("confirm_count", 1)
+        value.setdefault("confirm_window_seconds", 10)
+        value.setdefault("cooldown_seconds", 60)
+        value.setdefault("freshness_seconds", 120)
+        value.setdefault("require_freshness", False)
+        value.setdefault("severity", "warning")
+        value.setdefault("enabled", True)
+        value.setdefault("topics", [])
+        value.setdefault("channels", {})
+        return value
+
+    @classmethod
+    def validate_rule(cls, rule: dict[str, Any]) -> dict[str, Any]:
+        value = cls.normalize_rule(rule)
+        if not str(value.get("id", "")).strip() or not str(value.get("name", "")).strip():
+            raise ValueError("监控规则缺少标识或名称")
+        conditions = value.get("conditions")
+        if not isinstance(conditions, list) or not conditions:
+            raise ValueError("规则至少需要一个触发条件")
+        logic = value.get("logic")
+        if logic not in cls.SUPPORTED_LOGIC:
+            raise ValueError("规则逻辑必须是 all、any 或 n_of")
+        if logic == "n_of":
+            try:
+                n = int(value.get("n"))
+            except (TypeError, ValueError) as error:
+                raise ValueError("n_of 规则必须提供 n") from error
+            if n < 1 or n > len(conditions):
+                raise ValueError("n_of 规则的 n 必须在条件数量范围内")
+            value["n"] = n
+        for condition in conditions:
+            if not isinstance(condition, dict) or not str(condition.get("field", "")).strip():
+                raise ValueError("规则条件缺少字段路径")
+            operator = condition.get("op", condition.get("operator"))
+            if operator not in cls.SUPPORTED_OPERATORS:
+                raise ValueError("不支持的规则比较符")
+            if "value" not in condition and "expected" not in condition:
+                raise ValueError("规则条件缺少阈值")
+            condition["field"] = str(condition["field"]).strip()
+            condition["op"] = operator
+            condition["value"] = condition.get("value", condition.get("expected"))
+        for field, minimum, message in (
+            ("confirm_count", 1, "确认次数必须大于等于 1"),
+            ("confirm_window_seconds", 1, "确认窗口必须大于等于 1 秒"),
+            ("cooldown_seconds", 0, "冷却时间不能小于 0 秒"),
+            ("freshness_seconds", 1, "数据新鲜度必须大于等于 1 秒"),
+        ):
+            try:
+                number = int(value.get(field))
+            except (TypeError, ValueError) as error:
+                raise ValueError(f"{field} 必须是数字") from error
+            if number < minimum:
+                raise ValueError(message)
+            value[field] = number
+        if value.get("severity") not in {"critical", "warning", "info"}:
+            raise ValueError("告警级别必须是 critical、warning 或 info")
+        return value
+
     def save_rule(self, rule: dict[str, Any]) -> dict[str, Any]:
-        if not rule.get("id") or not rule.get("conditions"):
-            raise ValueError("监控规则缺少标识或触发条件")
-        value = {"enabled": True, "cooldown_seconds": 60, **rule}
+        value = self.validate_rule(rule)
         with self._lock:
             self._state["rules"] = [item for item in self._state["rules"] if item["id"] != value["id"]]
             self._state["rules"].append(value)
             self._save()
         return value
+
+    def rule_views(self) -> list[dict[str, Any]]:
+        operator_names = {"eq": "等于", "gt": "大于", "gte": "大于等于", "lt": "小于", "lte": "小于等于"}
+        with self._lock:
+            views = []
+            for stored in self._state.get("rules", []):
+                try:
+                    rule = self.validate_rule(stored)
+                except ValueError as error:
+                    view = dict(stored)
+                    view["validation_state"] = "invalid"
+                    view["validation_error"] = str(error)
+                    views.append(view)
+                    continue
+                summaries = [
+                    f"{item['field']} {operator_names[item['op']]} {item['value']}"
+                    for item in rule["conditions"]
+                ]
+                view = dict(rule)
+                view["validation_state"] = "valid"
+                view["condition_summary"] = f" {rule['logic']} ".join(summaries)
+                views.append(view)
+            return views
+
+    @classmethod
+    def matches_rule(cls, snapshot: dict[str, Any], rule: dict[str, Any]) -> bool:
+        conditions = rule.get("conditions", [])
+        results = [cls._matches(snapshot, {item["field"]: {item["op"]: item["value"]}}) for item in conditions]
+        logic = rule.get("logic", "all")
+        if logic == "any":
+            return any(results)
+        if logic == "n_of":
+            return sum(results) >= int(rule.get("n", 1))
+        return all(results)
+
+    @staticmethod
+    def _is_fresh(snapshot: dict[str, Any], observed_at: datetime, rule: dict[str, Any]) -> bool:
+        if not rule.get("require_freshness", False):
+            return True
+        raw_observed = snapshot.get("observed_at") or snapshot.get("as_of")
+        if not raw_observed:
+            return False
+        try:
+            snapshot_time = datetime.fromisoformat(str(raw_observed))
+        except ValueError:
+            return False
+        if snapshot_time.tzinfo is None:
+            return False
+        age = observed_at.astimezone(timezone.utc).timestamp() - snapshot_time.astimezone(timezone.utc).timestamp()
+        return age >= 0 and age <= int(rule.get("freshness_seconds", 120))
 
     @staticmethod
     def _matches(snapshot: dict[str, Any], conditions: dict[str, Any]) -> bool:
@@ -141,8 +286,25 @@ class MonitorCenterService:
                 if (
                     not rule.get("enabled", True)
                     or (topics and topic not in topics)
-                    or not self._matches(snapshot, rule["conditions"])
+                    or not self._is_fresh(snapshot, observed_at, rule)
+                    or not self.matches_rule(snapshot, rule)
                 ):
+                    continue
+                state_key = self._condition_key(rule["id"], snapshot.get("symbol"), topic)
+                condition_state = self._state["condition_states"].setdefault(state_key, {})
+                previous_observed = self._parse_timestamp(condition_state.get("last_observed_at"))
+                elapsed = observed_at.timestamp() - previous_observed.timestamp() if previous_observed else None
+                if elapsed is None or elapsed < 0 or elapsed > int(rule.get("confirm_window_seconds", 10)):
+                    condition_state["confirm_count"] = 1
+                    condition_state["first_observed_at"] = observed_at.astimezone(timezone.utc).isoformat()
+                else:
+                    condition_state["confirm_count"] = int(condition_state.get("confirm_count", 0)) + 1
+                condition_state["last_observed_at"] = observed_at.astimezone(timezone.utc).isoformat()
+                last_triggered = self._parse_timestamp(condition_state.get("last_trigger_at"))
+                self._save()
+                if int(condition_state["confirm_count"]) < int(rule.get("confirm_count", 1)):
+                    continue
+                if last_triggered and observed_at.timestamp() - last_triggered.timestamp() < int(rule.get("cooldown_seconds", 60)):
                     continue
                 identity = f"{rule['id']}|{snapshot.get('symbol', '')}|{json.dumps(snapshot, sort_keys=True, ensure_ascii=False)}"
                 input_hash = hashlib.sha256(identity.encode("utf-8")).hexdigest()
@@ -194,6 +356,7 @@ class MonitorCenterService:
                     "symbol": alert["symbol"],
                     "topic": topic,
                 }
+                condition_state["last_trigger_at"] = alert["observed_at"]
                 self._save()
                 return alert
         return None
@@ -216,7 +379,22 @@ class MonitorCenterService:
                 ):
                     continue
                 rule = next((item for item in self._state["rules"] if item.get("id") == condition.get("rule_id")), None)
-                if rule is None or self._matches(snapshot, rule.get("conditions", {})):
+                if rule is None or not self._is_fresh(snapshot, observed_at, rule):
+                    continue
+                recovery = rule.get("recovery")
+                if isinstance(recovery, dict) and recovery.get("enabled", True):
+                    recovery_rule = self.normalize_rule(
+                        {
+                            "id": rule["id"],
+                            "name": rule.get("name", "恢复条件"),
+                            "logic": recovery.get("logic", "all"),
+                            "n": recovery.get("n"),
+                            "conditions": recovery.get("conditions"),
+                        }
+                    )
+                    if not self.matches_rule(snapshot, recovery_rule):
+                        continue
+                elif self.matches_rule(snapshot, rule):
                     continue
                 original = next((item for item in self._state["alerts"] if item.get("alert_id") == condition.get("alert_id")), None)
                 if original is None or original.get("state") != "active":
@@ -250,6 +428,7 @@ class MonitorCenterService:
                 }
                 self._state["alerts"].append(recovery)
                 self._state["active_conditions"].pop(key, None)
+                self._state["condition_states"].pop(key, None)
                 self._save()
                 return recovery
         return None
@@ -394,7 +573,16 @@ class MonitorRuntime:
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
             return
-        self._subscription = self.bus.subscribe({"market_overview", "quant_strategy", "news_events", "late_session_candidates"})
+        self._subscription = self.bus.subscribe(
+            {
+                "market_overview",
+                "quant_strategy",
+                "news_events",
+                "late_session_candidates",
+                "stock_observation",
+                "data_sources",
+            }
+        )
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="monitor-runtime", daemon=True)
         self._thread.start()
