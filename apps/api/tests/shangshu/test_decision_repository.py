@@ -87,6 +87,23 @@ def test_restart_recovery_idempotency_and_conflicting_id(tmp_path: Path) -> None
     restarted.close()
 
 
+def test_latest_reads_only_the_tail_snapshot_for_a_phase(tmp_path: Path) -> None:
+    repository = DecisionRepository(tmp_path / "decisions.sqlite3")
+    repository.append_cycle(aggregate())
+    repository.append_cycle(aggregate(2, "cycle-1"))
+    calls = []
+    original = repository._cycles
+
+    def traced(*args, **kwargs):
+        calls.append(kwargs.copy())
+        return original(*args, **kwargs)
+
+    repository._cycles = traced
+    assert repository.latest(TRADE_DATE, "premarket") == aggregate(2, "cycle-1")
+    assert calls == [{"snapshot_id": "cycle-2"}]
+    repository.close()
+
+
 def test_sequence_and_previous_snapshot_are_enforced(tmp_path: Path) -> None:
     repository = DecisionRepository(tmp_path / "decisions.sqlite3")
     repository.append_cycle(aggregate())

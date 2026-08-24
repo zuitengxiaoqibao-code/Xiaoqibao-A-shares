@@ -23,6 +23,7 @@ class Repository:
     def __init__(self, values=None, *, broken=False):
         self.values = values or {}
         self.broken = broken
+        self.cycle_calls = []
 
     def latest(self, trading_date, phase):
         if self.broken:
@@ -30,6 +31,7 @@ class Repository:
         return self.values.get((trading_date, phase))
 
     def cycles(self, trading_date, phase):
+        self.cycle_calls.append((trading_date, phase))
         return self.values.get((trading_date, f"{phase}_cycles"), [])
 
 
@@ -400,6 +402,7 @@ def test_postclose_slot_materializes_latest_advice_per_symbol_and_horizon():
     assert [item["advice_id"] for item in slot["advice"]] == [
         "post-latest", "post-swing",
     ]
+    assert repository.cycle_calls == [(day, "intraday")]
     assert [item["advice_id"] for item in slot["delta_advice"]] == [
         "post-latest", "post-swing",
     ]

@@ -622,10 +622,10 @@ function HeightPyramid({ data, actions }: { data: MarketOverviewResponse; action
   const heights = rows.map((item) => item.board_count).filter((value): value is number => value !== null && Number.isFinite(value));
   if (!heights.length) return <Empty>{reviewDate(data)} 连板记录存在，但连板高度字段不可用。</Empty>;
   const max = Math.max(...heights);
-  return <><div className="height-pyramid">{Array.from({ length: Math.max(1, max - 1) }, (_, index) => max - index).map((level, index) => {
+  return <><div className="height-pyramid" data-layout="compact-grid">{Array.from({ length: Math.max(1, max - 1) }, (_, index) => max - index).map((level) => {
     const members = rows.filter((item) => item.board_count === level);
     const item: MetricDrilldownSelection = { label: `${level} 板`, value: members.length, source: "本地连续涨停日线", stocks: members.map((member) => reviewStock(member, `连续 ${level} 个交易日收盘涨停`)) };
-    return <div key={level} style={{ width: `${Math.min(96, 38 + index * 12)}%` }}><DrilldownMetric item={item} selected={selection?.label === item.label} onSelect={setSelection}><b>{level} 板</b><span>{members.length}</span><small>{members.length ? "真实日线验证" : "该高度为空"}</small></DrilldownMetric></div>;
+    return <div key={level}><DrilldownMetric item={item} selected={selection?.label === item.label} onSelect={setSelection}><b>{level} 板</b><span>{members.length}</span><small>{members.length ? "真实日线验证" : "该高度为空"}</small></DrilldownMetric></div>;
   })}</div><DrilldownRegion selection={selection} setSelection={setSelection} actions={actions} /></>;
 }
 
@@ -637,7 +637,7 @@ function PromotionFunnel({ model, actions }: { model: WorkspaceMarketModel; acti
     { label: "当前封板", value: model.stocks.filter((stock) => stock.state === "limit_up").length, source: "严格现价状态", stocks: model.stocks.filter((stock) => stock.state === "limit_up").map((stock) => derivedStock(stock, "当前价格达到严格涨停状态")) },
     { label: "具备题材证据", value: model.stocks.filter((stock) => stock.themes.length > 0).length, source: "本地资讯关联", stocks: model.stocks.filter((stock) => stock.themes.length > 0).map((stock) => derivedStock(stock, `已关联题材：${stock.themes.join(" / ")}`)) },
   ];
-  return <><div className="promotion-funnel">{stages.map((item, index) => <article key={item.label} style={{ width: `${100 - index * 16}%` }}><DrilldownMetric item={item} selected={selection?.label === item.label} onSelect={setSelection}><span>{index + 1}</span><b>{item.label}</b><strong>{item.value}</strong></DrilldownMetric></article>)}</div><DrilldownRegion selection={selection} setSelection={setSelection} actions={actions} /></>;
+  return <><div className="promotion-funnel" data-layout="compact-grid">{stages.map((item, index) => <article key={item.label}><DrilldownMetric item={item} selected={selection?.label === item.label} onSelect={setSelection}><span>{index + 1}</span><b>{item.label}</b><strong>{item.value}</strong></DrilldownMetric></article>)}</div><DrilldownRegion selection={selection} setSelection={setSelection} actions={actions} /></>;
 }
 
 function LeaderLanes({ model, onOpenAShare }: { model: WorkspaceMarketModel; onOpenAShare?: (symbol: string) => void }) {

@@ -43,6 +43,22 @@ describe("DecisionWorkbench", () => {
     expect(screen.queryByText(/模拟操作计划|行情门禁|仓位/)).not.toBeInTheDocument();
   });
 
+  it("keeps the last valid decision visible when a refresh times out", async () => {
+    const item = advice();
+    const slot: PhaseSlot = { ...emptySlot, phase_status: "ready", quality: "ready", aggregate_version: "s1", advice: [item], evidence: item.supporting_evidence };
+    const loadCurrent = vi.fn()
+      .mockResolvedValueOnce(response({ phases: { premarket: emptySlot, intraday: slot, postclose: emptySlot } }))
+      .mockRejectedValueOnce(new Error("请求超时"));
+    render(<DecisionWorkbench loadCurrent={loadCurrent} />);
+
+    expect(await screen.findByText("600000 · 保持观察")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "刷新当前" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("最新研判刷新失败");
+    expect(screen.getByRole("alert")).toHaveTextContent("已保留上次有效研判");
+    expect(screen.getByText("600000 · 保持观察")).toBeInTheDocument();
+  });
+
   it("shows baseline evidence and only the latest quote in current intraday advice", async () => {
     const item = advice({
       supporting_evidence: [

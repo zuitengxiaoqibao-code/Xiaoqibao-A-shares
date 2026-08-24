@@ -214,8 +214,44 @@ class DecisionRepository:
             return self._cycles(trading_date=trading_date, phase=phase)
 
     def latest(self, trading_date: date, phase: DecisionPhase) -> DecisionCycleAggregate | None:
-        values = self.cycles(trading_date=trading_date, phase=phase)
-        return values[-1] if values else None
+        """Read and validate only the tail aggregate for a phase.
+
+        Full-chain verification remains available through ``cycles()`` and is
+        used by append/restore audits. The current decision screen only needs
+        the newest snapshot, so replaying every historical advice row on each
+        refresh needlessly turns a fast read into an unbounded operation.
+        The immediate predecessor link is still checked here so a broken tail
+        cannot be presented as a valid current decision.
+        """
+        with self._lock:
+            row = self.connection.execute(
+                """SELECT * FROM decision_cycles
+                WHERE trading_date=? AND phase=? ORDER BY sequence DESC LIMIT 1""",
+                (trading_date.isoformat(), phase),
+            ).fetchone()
+            if row is None:
+                return None
+            sequence = int(row["sequence"])
+            previous_id = row["previous_snapshot_id"]
+            if sequence == 1:
+                if previous_id is not None or row["previous_hash"] is not None:
+                    raise DecisionIntegrityError("decision cycle tail chain is broken")
+            else:
+                if not previous_id:
+                    raise DecisionIntegrityError("decision cycle tail chain is broken")
+                previous = self.connection.execute(
+                    """SELECT sequence, canonical_hash FROM decision_cycles
+                    WHERE snapshot_id=? AND trading_date=? AND phase=?""",
+                    (previous_id, trading_date.isoformat(), phase),
+                ).fetchone()
+                if (
+                    previous is None
+                    or int(previous["sequence"]) != sequence - 1
+                    or row["previous_hash"] != previous["canonical_hash"]
+                ):
+                    raise DecisionIntegrityError("decision cycle tail chain is broken")
+            values = self._cycles(snapshot_id=row["snapshot_id"])
+            return values[-1] if values else None
 
     def close(self) -> None:
         with self._lock:

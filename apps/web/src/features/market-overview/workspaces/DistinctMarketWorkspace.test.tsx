@@ -294,6 +294,24 @@ describe("DistinctMarketWorkspace", () => {
     expect(detail).toHaveTextContent("非异动高热股");
   });
 
+  it("uses a compact grid for promotion stages instead of shrinking staircase cards", () => {
+    render(<DistinctMarketWorkspace feature="龙头晋级" data={overview} />);
+
+    const funnel = screen.getByRole("region", { name: "龙头晋级漏斗" }).querySelector(".promotion-funnel");
+    expect(funnel).toHaveAttribute("data-layout", "compact-grid");
+    expect(funnel?.querySelectorAll(":scope > article")).toHaveLength(4);
+    expect(Array.from(funnel?.querySelectorAll(":scope > article") ?? []).every((item) => !item.hasAttribute("style"))).toBe(true);
+  });
+
+  it("uses a compact grid for consecutive-board heights instead of a large pyramid", () => {
+    render(<DistinctMarketWorkspace feature="连板表现" data={overview} />);
+
+    const pyramid = screen.getByRole("region", { name: "连板高度金字塔" }).querySelector(".height-pyramid");
+    expect(pyramid).toHaveAttribute("data-layout", "compact-grid");
+    expect(pyramid?.querySelectorAll(":scope > div").length).toBeGreaterThan(0);
+    expect(Array.from(pyramid?.querySelectorAll(":scope > div") ?? []).every((item) => !item.hasAttribute("style"))).toBe(true);
+  });
+
   it("makes review-column totals filterable and keeps each stock named", () => {
     render(<DistinctMarketWorkspace feature="涨停复盘啦" data={overview} />);
 

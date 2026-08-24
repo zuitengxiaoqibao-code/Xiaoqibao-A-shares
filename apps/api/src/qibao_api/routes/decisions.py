@@ -165,9 +165,9 @@ def _slot(
     }
 
 
-def _intraday_state(repository, trading_date):
+def _intraday_state(repository, trading_date, *, premarket=None):
     current = {}
-    premarket = repository.latest(trading_date, "premarket")
+    premarket = premarket if premarket is not None else repository.latest(trading_date, "premarket")
     if premarket is not None:
         for item in _model_dump(premarket).get("advice", []):
             current[(item["symbol"], item["horizon"])] = item
@@ -190,7 +190,7 @@ def _intraday_state(repository, trading_date):
     return list(current.values()), stream
 
 
-def _postclose_state(repository, trading_date, aggregate):
+def _postclose_state(repository, trading_date, aggregate, *, current=None):
     """Project one current postclose card per A-share and horizon.
 
     The stored postclose aggregate intentionally keeps every reviewed intraday
@@ -200,7 +200,7 @@ def _postclose_state(repository, trading_date, aggregate):
     """
     payload = _model_dump(aggregate)
     cards = payload.get("advice", [])
-    current, _ = _intraday_state(repository, trading_date)
+    current = current if current is not None else _intraday_state(repository, trading_date)[0]
     latest_original_ids = {
         (item.get("symbol"), item.get("horizon")): item.get("advice_id")
         for item in current
@@ -260,6 +260,14 @@ def _response(
         aggregates = {
             phase: repository.latest(trading_date, phase) for phase in PHASES
         }
+        intraday_projection = None
+        intraday_stream = []
+        if aggregates["intraday"] is not None or aggregates["postclose"] is not None:
+            intraday_projection, intraday_stream = _intraday_state(
+                repository,
+                trading_date,
+                premarket=aggregates["premarket"],
+            )
         scheduler_status = scheduler.status() if scheduler is not None else {}
         jobs = scheduler_status.get("jobs", [])
         executions = {
@@ -275,7 +283,8 @@ def _response(
             materialized_delta = None
             if phase == "postclose" and aggregates[phase] is not None:
                 materialized = _postclose_state(
-                    repository, trading_date, aggregates[phase]
+                    repository, trading_date, aggregates[phase],
+                    current=intraday_projection,
                 )
                 materialized_delta = materialized
             slots[phase] = _slot(
@@ -285,8 +294,8 @@ def _response(
                 news_repository=news_repository,
             )
         latest_intraday = aggregates["intraday"]
-        if latest_intraday is not None and hasattr(repository, "cycles"):
-            advice, stream = _intraday_state(repository, trading_date)
+        if latest_intraday is not None and intraday_projection is not None:
+            advice, stream = intraday_projection, intraday_stream
             slots["intraday"] = _slot(
                 latest_intraday, materialized_advice=advice, change_stream=stream,
                 execution=executions["intraday"], news_repository=news_repository,
