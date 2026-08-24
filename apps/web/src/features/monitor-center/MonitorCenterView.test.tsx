@@ -1,8 +1,68 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { MonitorCenterView } from "./MonitorCenterView";
 
 describe("MonitorCenterView", () => {
+  it("shows beginner templates with readable Chinese explanations", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.includes("notification-settings")) return Promise.resolve({ ok: true, json: async () => ({ feishu_configured: false, feishu_enabled: false, webhook_hint: null }) });
+      if (path.includes("/rules")) return Promise.resolve({ ok: true, json: async () => [] });
+      return Promise.resolve({ ok: true, json: async () => ({ service: { status: "healthy" }, rules: { total: 0, enabled: 0 }, alerts: { total: 0, active: 0, critical: 0, unconfirmed: 0, recovered: 0 }, delivery: { pending: 0, failed: 0 }, topics: [], recent_alerts: [] }) });
+    }));
+
+    render(<MonitorCenterView />);
+
+    expect(await screen.findByText("常用监控规则")).toBeInTheDocument();
+    expect(screen.getByText("市场风险升高提醒")).toBeInTheDocument();
+    expect(screen.getByText("量化策略风险升高提醒")).toBeInTheDocument();
+    expect(screen.getByText("新闻热点出现提醒")).toBeInTheDocument();
+    expect(screen.getByText("尾盘候选出现提醒")).toBeInTheDocument();
+    expect(screen.getByText("市场风险分达到 65 以上时提醒，优先检查风险闸门和仓位。")).toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+
+  it("enables the market risk template with the real nested field path", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.includes("notification-settings")) return Promise.resolve({ ok: true, json: async () => ({ feishu_configured: false, feishu_enabled: false, webhook_hint: null }) });
+      if (path.endsWith("/rules") && init?.method === "POST") return Promise.resolve({ ok: true, json: async () => JSON.parse(String(init.body)) });
+      if (path.endsWith("/rules")) return Promise.resolve({ ok: true, json: async () => [] });
+      return Promise.resolve({ ok: true, json: async () => ({ service: { status: "healthy" }, rules: { total: 0, enabled: 0 }, alerts: { total: 0, active: 0, critical: 0, unconfirmed: 0, recovered: 0 }, delivery: { pending: 0, failed: 0 }, topics: [], recent_alerts: [] }) });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<MonitorCenterView />);
+    const template = (await screen.findAllByText("市场风险升高提醒"))[0].closest("article");
+    expect(template).not.toBeNull();
+    fireEvent.click(within(template as HTMLElement).getByRole("button", { name: "启用此规则" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/v1/monitor-center/rules", expect.objectContaining({ method: "POST" })));
+    const request = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/rules") && init?.method === "POST");
+    const body = JSON.parse(String(request?.[1]?.body));
+    expect(body.id).toBe("monitor-market-risk");
+    expect(body.topics).toEqual(["market_overview"]);
+    expect(body.conditions).toEqual({ "regime.risk_score": { gte: 65 } });
+    vi.unstubAllGlobals();
+  });
+
+  it("shows an enabled template as monitoring when no alert has fired yet", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.includes("notification-settings")) return Promise.resolve({ ok: true, json: async () => ({ feishu_configured: false, feishu_enabled: false, webhook_hint: null }) });
+      if (path.includes("/alerts")) return Promise.resolve({ ok: true, json: async () => [] });
+      if (path.endsWith("/rules")) return Promise.resolve({ ok: true, json: async () => [{ id: "monitor-market-risk", name: "市场风险升高提醒", topics: ["market_overview"], conditions: [{ field: "regime.risk_score", op: "gte", value: 65 }], enabled: true }] });
+      return Promise.resolve({ ok: true, json: async () => ({ service: { status: "healthy" }, rules: { total: 1, enabled: 1 }, alerts: { total: 0, active: 0, critical: 0, unconfirmed: 0, recovered: 0 }, delivery: { pending: 0, failed: 0 }, topics: [], recent_alerts: [] }) });
+    }));
+
+    render(<MonitorCenterView />);
+
+    const template = (await screen.findAllByText("市场风险升高提醒"))[0].closest("article");
+    expect(template).not.toBeNull();
+    expect(await within(template as HTMLElement).findByText("监控中")).toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+
   it("shows persisted alerts and Chinese delivery states", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const path = String(input);
@@ -36,7 +96,7 @@ describe("MonitorCenterView", () => {
     const request = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/rules") && init?.method === "POST");
     const body = JSON.parse(String(request?.[1]?.body));
     expect(body.topics).toEqual(["quant_strategy"]);
-    expect(body.conditions).toEqual({ risk_score: { gte: 65 } });
+    expect(body.conditions).toEqual({ "regime.risk_score": { gte: 65 } });
     expect(body.channels).toEqual({ in_app: true, tts: true, feishu: false });
   });
 
@@ -178,7 +238,7 @@ describe("MonitorCenterView", () => {
     expect(await screen.findByText(/风险分 大于等于 65/)).toBeInTheDocument();
     const metricSelectors = screen.getAllByLabelText("监控指标");
     expect(metricSelectors.length).toBeGreaterThan(0);
-    expect((metricSelectors[0] as HTMLSelectElement).selectedOptions[0]?.textContent).toBe("风险分");
+    expect((metricSelectors[0] as HTMLSelectElement).selectedOptions[0]?.textContent).toBe("风险分（实时快照）");
     expect(screen.queryByText("字段路径")).not.toBeInTheDocument();
     vi.unstubAllGlobals();
   });
