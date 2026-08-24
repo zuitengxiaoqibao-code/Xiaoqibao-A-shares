@@ -1,4 +1,7 @@
-param([switch]$SkipTests)
+param(
+    [switch]$SkipTests,
+    [switch]$SkipPersistentData
+)
 
 $ErrorActionPreference = "Stop"
 Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop
@@ -119,7 +122,7 @@ $PreserveRoot = Join-Path $env:TEMP (
 New-Item -ItemType Directory -Path $PreserveRoot | Out-Null
 foreach ($Name in $PersistentNames) {
     $Source = Join-Path $Release $Name
-    if (Test-Path -LiteralPath $Source) {
+    if (-not $SkipPersistentData -and (Test-Path -LiteralPath $Source)) {
         Copy-PersistentTree -Source $Source -Destination (Join-Path $PreserveRoot $Name)
     }
 }
@@ -146,7 +149,7 @@ try {
         $Target = Join-Path $BuiltRelease $Name
         New-Item -ItemType Directory -Force -Path $Target | Out-Null
         $Saved = Join-Path $PreserveRoot $Name
-        if (Test-Path -LiteralPath $Saved) {
+        if (-not $SkipPersistentData -and (Test-Path -LiteralPath $Saved)) {
             Copy-PersistentTree -Source $Saved -Destination $Target
         }
     }

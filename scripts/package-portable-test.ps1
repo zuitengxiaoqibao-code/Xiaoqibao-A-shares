@@ -1,12 +1,13 @@
 param(
     [switch]$IncludeDefaultAIKey,
-    [switch]$DataFree
+    [switch]$DataFree,
+    [string]$ReleaseRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $Dist = (Resolve-Path (Join-Path $Root "dist")).Path
-$Release = (Resolve-Path (Join-Path $Dist "XiaoQiBao-Portable")).Path
+$Release = if ($ReleaseRoot) { (Resolve-Path -LiteralPath $ReleaseRoot).Path } else { (Resolve-Path (Join-Path $Dist "XiaoQiBao-Portable")).Path }
 $Python = Join-Path $Root ".venv\Scripts\python.exe"
 $Stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $StageParent = Join-Path $Dist (
