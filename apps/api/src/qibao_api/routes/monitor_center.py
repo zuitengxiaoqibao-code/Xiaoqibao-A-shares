@@ -50,6 +50,11 @@ def alerts(request: Request, limit: int = 50) -> list[dict[str, Any]]:
     return _service(request).history(limit)
 
 
+@router.get("/summary")
+def summary(request: Request) -> dict[str, Any]:
+    return _service(request).summary()
+
+
 @router.get("/alerts/pending-tts")
 def pending_tts(request: Request, limit: int = 10) -> list[dict[str, Any]]:
     return _service(request).pending_tts(limit)
@@ -61,6 +66,25 @@ def complete_delivery(alert_id: str, payload: dict[str, Any], request: Request) 
         return _service(request).complete_delivery(
             alert_id, str(payload.get("channel", "")), str(payload.get("status", "")), payload.get("reason")
         )
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="告警不存在") from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.post("/alerts/{alert_id}/confirm")
+def confirm_alert(alert_id: str, payload: dict[str, Any] | None, request: Request) -> dict[str, Any]:
+    try:
+        confirmed_by = str((payload or {}).get("confirmed_by", "用户"))
+        return _service(request).confirm(alert_id, confirmed_by=confirmed_by)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="告警不存在") from error
+
+
+@router.post("/alerts/{alert_id}/delivery/retry")
+def retry_delivery(alert_id: str, payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    try:
+        return _service(request).retry_delivery(alert_id, str(payload.get("channel", "")))
     except KeyError as error:
         raise HTTPException(status_code=404, detail="告警不存在") from error
     except ValueError as error:

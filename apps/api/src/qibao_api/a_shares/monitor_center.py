@@ -38,12 +38,54 @@ class MonitorCenterService:
         self._state = self._load()
 
     def _load(self) -> dict[str, Any]:
+        default = {"rules": [], "alerts": [], "active_conditions": {}}
         if not self.path.exists():
-            return {"rules": [], "alerts": []}
+            return default
         try:
-            return json.loads(self.path.read_text(encoding="utf-8"))
+            state = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return {"rules": [], "alerts": []}
+            return default
+        if not isinstance(state, dict):
+            return default
+        state.setdefault("rules", [])
+        state.setdefault("alerts", [])
+        state.setdefault("active_conditions", {})
+        for alert in state["alerts"]:
+            self._normalize_alert(alert)
+            if alert.get("state") == "active":
+                key = self._condition_key(alert.get("rule_id"), alert.get("symbol"), alert.get("topic"))
+                state["active_conditions"].setdefault(
+                    key,
+                    {
+                        "input_hash": alert.get("input_hash"),
+                        "alert_id": alert.get("alert_id"),
+                        "rule_id": alert.get("rule_id"),
+                        "symbol": alert.get("symbol"),
+                        "topic": alert.get("topic"),
+                    },
+                )
+        return state
+
+    @staticmethod
+    def _condition_key(rule_id: str | None, symbol: str | None, topic: str | None) -> str:
+        return "|".join((str(rule_id or ""), str(symbol or ""), str(topic or "")))
+
+    @staticmethod
+    def _normalize_alert(alert: dict[str, Any]) -> dict[str, Any]:
+        severity = alert.get("severity")
+        alert["severity"] = severity if severity in {"critical", "warning", "info"} else "warning"
+        state = alert.get("state")
+        alert["state"] = state if state in {"active", "recovered"} else "active"
+        alert["confirmed"] = bool(alert.get("confirmed", False))
+        alert.setdefault("confirmed_at", None)
+        alert.setdefault("confirmed_by", None)
+        alert["trigger_count"] = max(1, int(alert.get("trigger_count", 1)))
+        alert.setdefault("recovered_at", None)
+        alert.setdefault("recovery_alert_id", None)
+        alert.setdefault("delivery", {})
+        alert.setdefault("delivery_reason", {})
+        alert.setdefault("retry_count", {})
+        return alert
 
     def _save(self) -> None:
         temporary = self.path.with_suffix(".tmp")
@@ -118,13 +160,184 @@ class MonitorCenterService:
                         delivery["tts"] = "未配置"
                     if channels.get("feishu") is False:
                         delivery["feishu"] = "未配置"
-                alert = {"alert_id": f"alert-{input_hash[:24]}", "rule_id": rule["id"], "topic": topic, "symbol": snapshot.get("symbol"), "observed_at": observed_at.astimezone(timezone.utc).isoformat(), "input_hash": input_hash, "snapshot": snapshot, "delivery": delivery}
+                prior_count = int(prior.get("trigger_count", 0)) if prior else 0
+                severity = rule.get("severity", "warning")
+                if severity not in {"critical", "warning", "info"}:
+                    severity = "warning"
+                alert = {
+                    "alert_id": f"alert-{input_hash[:24]}",
+                    "rule_id": rule["id"],
+                    "topic": topic,
+                    "symbol": snapshot.get("symbol"),
+                    "observed_at": observed_at.astimezone(timezone.utc).isoformat(),
+                    "input_hash": input_hash,
+                    "snapshot": snapshot,
+                    "delivery": delivery,
+                    "severity": severity,
+                    "state": "active",
+                    "confirmed": False,
+                    "confirmed_at": None,
+                    "confirmed_by": None,
+                    "trigger_count": prior_count + 1,
+                    "recovered_at": None,
+                    "recovery_alert_id": None,
+                    "delivery_reason": {},
+                    "retry_count": {},
+                }
                 if isinstance(channels, dict) and channels.get("in_app") is True:
                     delivery["in_app"] = "sent"
                 self._state["alerts"].append(alert)
+                self._state["active_conditions"][self._condition_key(rule["id"], alert["symbol"], topic)] = {
+                    "input_hash": input_hash,
+                    "alert_id": alert["alert_id"],
+                    "rule_id": rule["id"],
+                    "symbol": alert["symbol"],
+                    "topic": topic,
+                }
                 self._save()
                 return alert
         return None
+
+    def evaluate_recovery(
+        self,
+        snapshot: dict[str, Any],
+        observed_at: datetime,
+        *,
+        topic: str | None = None,
+    ) -> dict[str, Any] | None:
+        if observed_at.tzinfo is None:
+            raise ValueError("观测时间必须带时区")
+        symbol = snapshot.get("symbol")
+        with self._lock:
+            active = list(self._state.get("active_conditions", {}).items())
+            for key, condition in active:
+                if condition.get("symbol") != symbol or (
+                    topic is not None and condition.get("topic") != topic
+                ):
+                    continue
+                rule = next((item for item in self._state["rules"] if item.get("id") == condition.get("rule_id")), None)
+                if rule is None or self._matches(snapshot, rule.get("conditions", {})):
+                    continue
+                original = next((item for item in self._state["alerts"] if item.get("alert_id") == condition.get("alert_id")), None)
+                if original is None or original.get("state") != "active":
+                    self._state["active_conditions"].pop(key, None)
+                    continue
+                recovered_at = observed_at.astimezone(timezone.utc).isoformat()
+                original["state"] = "recovered"
+                original["recovered_at"] = recovered_at
+                recovery_hash = hashlib.sha256(
+                    f"recovery|{original['alert_id']}|{recovered_at}".encode("utf-8")
+                ).hexdigest()
+                recovery = {
+                    "alert_id": f"recovery-{recovery_hash[:24]}",
+                    "rule_id": original["rule_id"],
+                    "topic": original.get("topic"),
+                    "symbol": symbol,
+                    "observed_at": recovered_at,
+                    "input_hash": recovery_hash,
+                    "snapshot": snapshot,
+                    "delivery": {"in_app": "sent", "tts": "未配置", "feishu": "未配置"},
+                    "severity": "info",
+                    "state": "recovered",
+                    "confirmed": False,
+                    "confirmed_at": None,
+                    "confirmed_by": None,
+                    "trigger_count": 1,
+                    "recovered_at": recovered_at,
+                    "recovery_alert_id": original["alert_id"],
+                    "delivery_reason": {},
+                    "retry_count": {},
+                }
+                self._state["alerts"].append(recovery)
+                self._state["active_conditions"].pop(key, None)
+                self._save()
+                return recovery
+        return None
+
+    def summary(self, *, now: datetime | None = None) -> dict[str, Any]:
+        current = now or datetime.now(timezone.utc)
+        if current.tzinfo is None:
+            raise ValueError("摘要时间必须带时区")
+        with self._lock:
+            alerts = [self._normalize_alert(item) for item in self._state.get("alerts", [])]
+            rules = self._state.get("rules", [])
+            active = [item for item in alerts if item.get("state") == "active"]
+            latest = max(alerts, key=lambda item: item.get("observed_at", ""), default=None)
+            failed = sum(1 for item in alerts for status in item.get("delivery", {}).values() if status == "failed")
+            pending = sum(1 for item in alerts for status in item.get("delivery", {}).values() if status in {"pending", "queued", "playing"})
+            topic_names = {str(item.get("topic")) for item in alerts if item.get("topic")}
+            topic_names.update(str(topic) for rule in rules for topic in rule.get("topics", []) if topic)
+            topic_names.update(
+                {
+                    "market_overview",
+                    "quant_strategy",
+                    "news_events",
+                    "late_session_candidates",
+                    "stock_observation",
+                    "company_research",
+                    "data_sources",
+                }
+            )
+            topics = []
+            for topic in sorted(topic_names):
+                topic_alerts = [item for item in alerts if item.get("topic") == topic]
+                topic_active = [item for item in topic_alerts if item.get("state") == "active"]
+                severity = "critical" if any(item.get("severity") == "critical" for item in topic_active) else "warning" if topic_active else "ok" if topic_alerts else "no_data"
+                topics.append({
+                    "topic": topic,
+                    "status": severity,
+                    "alert_count": len(topic_alerts),
+                    "active_count": len(topic_active),
+                    "last_alert_at": max((item.get("observed_at") for item in topic_alerts), default=None),
+                })
+            heartbeat = latest.get("observed_at") if latest else None
+            latency_ms = None
+            if heartbeat:
+                latency_ms = max(0, round((current.astimezone(timezone.utc).timestamp() - datetime.fromisoformat(heartbeat).timestamp()) * 1000, 2))
+            return {
+                "generated_at": current.astimezone(timezone.utc).isoformat(),
+                "service": {
+                    "status": "degraded" if failed else "healthy",
+                    "last_heartbeat_at": heartbeat,
+                    "latency_ms": latency_ms,
+                },
+                "rules": {"total": len(rules), "enabled": sum(1 for rule in rules if rule.get("enabled", True))},
+                "alerts": {
+                    "total": len(alerts),
+                    "active": len(active),
+                    "critical": sum(1 for item in active if item.get("severity") == "critical"),
+                    "unconfirmed": sum(1 for item in active if not item.get("confirmed")),
+                    "recovered": sum(1 for item in alerts if item.get("state") == "recovered"),
+                },
+                "delivery": {"pending": pending, "failed": failed},
+                "topics": topics,
+                "recent_alerts": list(reversed(alerts[-10:])),
+            }
+
+    def confirm(self, alert_id: str, *, confirmed_by: str = "用户") -> dict[str, Any]:
+        with self._lock:
+            alert = next((item for item in self._state["alerts"] if item.get("alert_id") == alert_id), None)
+            if alert is None:
+                raise KeyError(alert_id)
+            alert["confirmed"] = True
+            alert["confirmed_at"] = datetime.now(timezone.utc).isoformat()
+            alert["confirmed_by"] = confirmed_by.strip() or "用户"
+            self._normalize_alert(alert)
+            self._save()
+            return dict(alert)
+
+    def retry_delivery(self, alert_id: str, channel: str) -> dict[str, Any]:
+        if channel not in {"tts", "feishu", "in_app"}:
+            raise ValueError("不支持的告警投递通道")
+        with self._lock:
+            alert = next((item for item in self._state["alerts"] if item.get("alert_id") == alert_id), None)
+            if alert is None:
+                raise KeyError(alert_id)
+            alert.setdefault("retry_count", {})[channel] = int(alert.get("retry_count", {}).get(channel, 0)) + 1
+            alert.setdefault("delivery_reason", {}).pop(channel, None)
+            alert["delivery"][channel] = "pending"
+            self._save()
+            return {"delivery": dict(alert["delivery"]), "retry_count": dict(alert["retry_count"]), "delivery_reason": dict(alert.get("delivery_reason", {}))}
 
     def deliver(self, alert_id: str, *, feishu_configured: bool, tts_ok: bool = True) -> dict[str, str]:
         with self._lock:
@@ -208,6 +421,12 @@ class MonitorRuntime:
                 datetime.fromisoformat(event["observed_at"]),
                 topic=event.get("kind"),
             )
+            if alert is None:
+                self.service.evaluate_recovery(
+                    event["payload"],
+                    datetime.fromisoformat(event["observed_at"]),
+                    topic=event.get("kind"),
+                )
             if (
                 alert is None
                 or self.feishu is None
