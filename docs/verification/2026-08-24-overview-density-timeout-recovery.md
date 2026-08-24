@@ -20,9 +20,9 @@
 ## 便携 EXE 验证
 
 - EXE：`D:/Users/90090/Documents/金融财经/.worktrees/a-share-daily-research/dist/XiaoQiBao-Portable/xiaoqibao.exe`
-- SHA-256：`773428D0F7D28AC7F9964D3CD56256AE3DF08786B67DC70F0570A66714121C45`
+- SHA-256：`A655F162572A357104F0D20F7415B918F9013DC1FD65ADE576065C504F82ABA8`
 - 发布清单：`source_state=clean`
-- 热启动 smoke：通过；窗口 `102ms`，API `2467ms`，14 菜单 `14/14` 通过，缓存首帧均不超过 `1s`
+- 热启动 smoke：通过；窗口 `348ms`，API `6729ms`；恢复演练内置 smoke 窗口 `92ms`、API `2344ms`，14 菜单 `14/14` 通过，缓存首帧均不超过 `1s`
 - 恢复演练：通过；复制并校验 `36` 个数据库，迁移版本 `1`，关键 API `pass`
 - 发布质量门禁：通过；质量状态为 `warning` 仅因真实量化候选和公司研究仍为 `partial`，没有伪造 `ready`
 
