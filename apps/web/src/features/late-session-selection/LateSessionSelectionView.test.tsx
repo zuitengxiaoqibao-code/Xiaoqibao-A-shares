@@ -74,4 +74,13 @@ describe("LateSessionSelectionView", () => {
     expect(screen.getByText("数据待补")).toBeInTheDocument();
     expect(screen.getByText("真实字段待补齐，不进入严格候选")).toBeInTheDocument();
   });
+
+  it("ends the loading state and explains a first-load failure", async () => {
+    const load = vi.fn().mockRejectedValue(new Error("服务连接失败：尾盘数据源不可用"));
+    render(<LateSessionSelectionView load={load} analyze={vi.fn()} />);
+
+    await waitFor(() => expect(screen.getByText("尾盘数据暂不可用")).toBeInTheDocument());
+    expect(screen.getAllByText("服务连接失败：尾盘数据源不可用").length).toBeGreaterThan(0);
+    expect(screen.queryByText("正在读取真实尾盘数据")).not.toBeInTheDocument();
+  });
 });

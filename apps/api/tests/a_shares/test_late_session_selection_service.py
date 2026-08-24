@@ -1,6 +1,8 @@
 from datetime import datetime
 from decimal import Decimal
 from types import SimpleNamespace
+import threading
+import time
 from zoneinfo import ZoneInfo
 
 from qibao_api.a_shares.late_session_selection_service import LateSessionSelectionService
@@ -121,6 +123,60 @@ def test_service_refreshes_a_warming_local_source_before_reporting_no_market_dat
     assert local_source.refresh_calls == 1
     assert result.data_state != "no_market_data"
     assert result.candidate_count == 1
+
+
+def test_service_does_not_block_request_when_refresh_is_still_running() -> None:
+    class BlockingSource:
+        def __init__(self) -> None:
+            self.started = threading.Event()
+            self.release = threading.Event()
+
+        def current_quotes(self):
+            return ()
+
+        def refresh_fast(self):
+            self.started.set()
+            self.release.wait(timeout=2)
+
+    source = BlockingSource()
+    service = LateSessionSelectionService(
+        local_market_source=source,
+        bar_repository=_Bars(),
+        instrument_directory=SimpleNamespace(resolve=lambda _symbol: None),
+        clock=lambda: datetime(2026, 8, 17, 7, 1, tzinfo=ZoneInfo("UTC")),
+    )
+
+    started_at = time.monotonic()
+    result = service.current()
+    elapsed = time.monotonic() - started_at
+    source.release.set()
+
+    assert elapsed < 0.5
+    assert result.status == "unavailable"
+    assert result.data_state == "no_market_data"
+    assert "后台" in result.no_data_reason
+    assert source.started.wait(timeout=1)
+
+
+def test_service_exposes_a_chinese_reason_when_refresh_fails() -> None:
+    class FailedSource:
+        def current_quotes(self):
+            return ()
+
+        def refresh_fast(self):
+            raise OSError("connection refused")
+
+    service = LateSessionSelectionService(
+        local_market_source=FailedSource(),
+        bar_repository=_Bars(),
+        instrument_directory=SimpleNamespace(resolve=lambda _symbol: None),
+        clock=lambda: datetime(2026, 8, 17, 7, 1, tzinfo=ZoneInfo("UTC")),
+    )
+
+    result = service.current()
+
+    assert "数据源连接失败" in result.no_data_reason
+    assert "OSError" not in result.no_data_reason
 
 
 def test_service_enrichment_uses_full_market_batches() -> None:

@@ -1,5 +1,6 @@
 import hashlib
 import json
+import threading
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Callable
@@ -46,6 +47,9 @@ class LateSessionSelectionService:
         self._enrichment_observed_at: datetime | None = None
         self._enrichment: dict[str, object] = {}
         self._on_demand_refresh_at: datetime | None = None
+        self._refresh_thread: threading.Thread | None = None
+        self._refresh_thread_lock = threading.Lock()
+        self._refresh_error: str | None = None
 
     def current(
         self,
@@ -68,16 +72,22 @@ class LateSessionSelectionService:
             last_attempt = self._on_demand_refresh_at
             can_refresh = last_attempt is None or (now - last_attempt).total_seconds() >= 5
             if callable(refresh) and can_refresh:
-                self._on_demand_refresh_at = now
-                try:
-                    refresh()
-                except Exception:
-                    # Keep the source's truthful unavailable state; the next
-                    # request may retry after the short cooldown.
-                    pass
+                self._schedule_refresh(refresh, now)
+                refresh_thread = self._refresh_thread
+                if refresh_thread is not None:
+                    # Fast in-process sources can still satisfy the first
+                    # request, while a blocked network source never holds the
+                    # HTTP worker for more than this small paint window.
+                    refresh_thread.join(timeout=0.1)
                 quotes = tuple(getattr(self.local_market_source, "current_quotes", lambda: ())())
         if not quotes:
-            return self._publish_if_changed(self._unavailable(trading_date, local_now, phase, "本地通达信全市场实时快照尚未就绪"))
+            if self._refresh_in_progress():
+                detail = "本地通达信全市场实时快照尚未就绪，正在后台刷新；页面已先返回状态"
+            elif self._refresh_error:
+                detail = f"本地通达信全市场实时快照刷新失败：{self._refresh_error}"
+            else:
+                detail = "本地通达信全市场实时快照尚未就绪"
+            return self._publish_if_changed(self._unavailable(trading_date, local_now, phase, detail))
         quotes_are_cached = bool(
             getattr(self.local_market_source, "current_quotes_are_cached", lambda: False)()
         )
@@ -258,6 +268,39 @@ class LateSessionSelectionService:
             limitations=tuple(limitations),
         )
         return self._publish_if_changed(response)
+
+    def _schedule_refresh(self, refresh: Callable[[], object], now: datetime) -> None:
+        with self._refresh_thread_lock:
+            if self._refresh_thread is not None and self._refresh_thread.is_alive():
+                return
+            self._on_demand_refresh_at = now
+            self._refresh_error = None
+            self._refresh_thread = threading.Thread(
+                target=self._run_refresh,
+                args=(refresh,),
+                name="late-session-market-refresh",
+                daemon=True,
+            )
+            self._refresh_thread.start()
+
+    def _run_refresh(self, refresh: Callable[[], object]) -> None:
+        try:
+            refresh()
+        except Exception as error:
+            self._refresh_error = self._friendly_refresh_error(error)
+
+    @staticmethod
+    def _friendly_refresh_error(error: Exception) -> str:
+        message = str(error).lower()
+        if isinstance(error, TimeoutError) or "timeout" in message or "timed out" in message:
+            return "数据源响应超时，请检查网络或通达信本地服务"
+        if isinstance(error, OSError) or "connect" in message or "refused" in message:
+            return "数据源连接失败，请检查网络或通达信本地服务"
+        return "数据源刷新失败，请稍后重试"
+
+    def _refresh_in_progress(self) -> bool:
+        thread = self._refresh_thread
+        return thread is not None and thread.is_alive()
 
     def _reduce_monitor_pool(
         self,

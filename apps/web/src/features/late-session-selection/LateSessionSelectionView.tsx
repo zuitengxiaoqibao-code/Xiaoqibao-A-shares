@@ -68,6 +68,7 @@ export function LateSessionSelectionView({ load, analyze = loadLateSessionAIAnal
   const [error, setError] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [retryNonce, setRetryNonce] = useState(0);
   const [loadProgress, setLoadProgress] = useState<LoadProgress | null>(null);
   const [aiAnalysis, setAiAnalysis] = useState<LateSessionAIAnalysis | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
@@ -108,7 +109,7 @@ export function LateSessionSelectionView({ load, analyze = loadLateSessionAIAnal
     };
     void refresh(true);
     return () => { disposed = true; };
-  }, [load, activeSettings]);
+  }, [load, activeSettings, retryNonce]);
 
   useEffect(() => {
     if (streamFallbackTick === 0) return;
@@ -132,7 +133,12 @@ export function LateSessionSelectionView({ load, analyze = loadLateSessionAIAnal
   const resetRules = () => { if (snapshot) { setDraft(snapshot.default_settings); setApplying(true); setActiveSettings({ ...snapshot.default_settings }); } };
   const hasObservationCandidates = snapshot?.candidates.some((candidate) => !candidate.passed) ?? false;
 
-  if (!snapshot) return <main className="late-session-page"><div className="late-session-loading"><RefreshCw className="spin" size={20} /><b>正在读取真实尾盘数据</b><small>等待通达信本地快照，不使用模拟候选</small><DailyRefreshStatus label="尾盘选股" loading progress={loadProgress} /></div></main>;
+  if (!snapshot) {
+    if (error) {
+      return <main className="late-session-page"><div className="late-session-loading"><ShieldAlert size={22} /><b>尾盘数据暂不可用</b><div className="late-session-error">{error}</div><button type="button" className="primary" onClick={() => { setError(null); setRetryNonce((value) => value + 1); }}><RefreshCw size={15} />重新读取</button><DailyRefreshStatus label="尾盘选股" loading={false} progress={loadProgress} error={error} /></div></main>;
+    }
+    return <main className="late-session-page"><div className="late-session-loading"><RefreshCw className="spin" size={20} /><b>正在读取真实尾盘数据</b><small>等待通达信本地快照，不使用模拟候选</small><DailyRefreshStatus label="尾盘选股" loading progress={loadProgress} /></div></main>;
+  }
   return <main className="late-session-page">
     <header className="late-session-hero"><div><p className="eyebrow">A-SHARE / LATE SESSION SCREENER</p><h1>尾盘选股</h1><p>优先展示严格通过项；严格项为空时，保留已通过可验证条件的观察候选。</p></div><div className={`late-session-phase ${snapshot.phase}`}><Clock3 size={18} /><b>{phaseLabel[snapshot.phase]}</b><small>{stageLabel[snapshot.monitor_stage]} · {streamState === "connected" ? "实时推送" : "轮询保底"}</small></div></header>
     {error && <div className="late-session-error"><ShieldAlert size={16} />{error}</div>}
