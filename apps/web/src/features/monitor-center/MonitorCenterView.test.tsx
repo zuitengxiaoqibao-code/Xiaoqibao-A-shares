@@ -242,4 +242,66 @@ describe("MonitorCenterView", () => {
     expect(screen.queryByText("字段路径")).not.toBeInTheDocument();
     vi.unstubAllGlobals();
   });
+
+  it("pauses and resumes a saved rule through the lifecycle status endpoint", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.includes("notification-settings")) return Promise.resolve({ ok: true, json: async () => ({ feishu_configured: false, feishu_enabled: false, webhook_hint: null }) });
+      if (path.includes("/alerts")) return Promise.resolve({ ok: true, json: async () => [] });
+      if (path.includes("/rules/r1/status") && init?.method === "PATCH") return Promise.resolve({ ok: true, json: async () => ({ id: "r1", name: "风险提醒", enabled: false }) });
+      if (path.endsWith("/rules")) return Promise.resolve({ ok: true, json: async () => [{ id: "r1", name: "风险提醒", topics: ["quant_strategy"], conditions: [{ field: "risk_score", op: "gte", value: 65 }], enabled: true }] });
+      return Promise.resolve({ ok: true, json: async () => ({ service: { status: "healthy" }, rules: { total: 1, enabled: 1 }, alerts: { total: 0, active: 0, critical: 0, unconfirmed: 0, recovered: 0 }, delivery: { pending: 0, failed: 0 }, topics: [], recent_alerts: [] }) });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<MonitorCenterView />);
+
+    expect(await screen.findByText("风险提醒")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "暂停监控" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/v1/monitor-center/rules/r1/status", expect.objectContaining({ method: "PATCH" })));
+    expect(JSON.parse(String(fetchMock.mock.calls.find(([url, init]) => String(url).includes("/rules/r1/status") && init?.method === "PATCH")?.[1]?.body))).toEqual({ enabled: false });
+    vi.unstubAllGlobals();
+  });
+
+  it("offers restore and delete actions for a paused rule", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.includes("notification-settings")) return Promise.resolve({ ok: true, json: async () => ({ feishu_configured: false, feishu_enabled: false, webhook_hint: null }) });
+      if (path.includes("/alerts")) return Promise.resolve({ ok: true, json: async () => [] });
+      if (path.includes("/rules/r1/status") && init?.method === "PATCH") return Promise.resolve({ ok: true, json: async () => ({ id: "r1", name: "风险提醒", enabled: true }) });
+      if (path.includes("/rules/r1") && init?.method === "DELETE") return Promise.resolve({ ok: true, json: async () => ({ status: "deleted", rule_id: "r1" }) });
+      if (path.endsWith("/rules")) return Promise.resolve({ ok: true, json: async () => [{ id: "r1", name: "风险提醒", topics: ["quant_strategy"], conditions: [{ field: "risk_score", op: "gte", value: 65 }], enabled: false }] });
+      return Promise.resolve({ ok: true, json: async () => ({ service: { status: "healthy" }, rules: { total: 1, enabled: 0 }, alerts: { total: 0, active: 0, critical: 0, unconfirmed: 0, recovered: 0 }, delivery: { pending: 0, failed: 0 }, topics: [], recent_alerts: [] }) });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    render(<MonitorCenterView />);
+
+    expect(await screen.findByText("已暂停")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "恢复监控" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/v1/monitor-center/rules/r1/status", expect.objectContaining({ method: "PATCH" })));
+    fireEvent.click(screen.getByRole("button", { name: "停止并删除" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/v1/monitor-center/rules/r1", expect.objectContaining({ method: "DELETE" })));
+    vi.unstubAllGlobals();
+  });
+
+  it("deletes added conditions but keeps the final condition as a protected row", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.includes("notification-settings")) return Promise.resolve({ ok: true, json: async () => ({ feishu_configured: false, feishu_enabled: false, webhook_hint: null }) });
+      if (path.includes("/alerts")) return Promise.resolve({ ok: true, json: async () => [] });
+      if (path.endsWith("/rules")) return Promise.resolve({ ok: true, json: async () => [] });
+      return Promise.resolve({ ok: true, json: async () => ({ service: { status: "healthy" }, rules: { total: 0, enabled: 0 }, alerts: { total: 0, active: 0, critical: 0, unconfirmed: 0, recovered: 0 }, delivery: { pending: 0, failed: 0 }, topics: [], recent_alerts: [] }) });
+    }));
+    render(<MonitorCenterView />);
+
+    expect(await screen.findByText("高级规则构建器")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "删除条件 1" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "增加条件" }));
+    expect(screen.getByRole("button", { name: "删除条件 1" })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "删除条件 2" })).not.toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "删除条件 2" }));
+    expect(screen.getByRole("button", { name: "删除条件 1" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "删除条件 2" })).not.toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
 });
