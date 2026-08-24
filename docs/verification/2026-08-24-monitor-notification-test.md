@@ -27,8 +27,8 @@ scope: monitor-notification-test-and-navigation
 ## EXE 验收
 
 - EXE：`D:/Users/90090/Documents/金融财经/.worktrees/a-share-daily-research/dist/XiaoQiBao-Portable/xiaoqibao.exe`
-- SHA-256：`1DF31541B19B84837002719BC2A2ECB47BB306AEA984A9A89822BA25F4FCB284`
-- 绑定提交：`9a215c5ff2eb724154caeea36f6652e43a958026`
+- SHA-256：以便携发布目录 `release-manifest.json` 中的最终 `xiaoqibao.exe` 哈希为准。
+- 绑定提交：以便携发布目录 `release-manifest.json` 中的 `source_commit` 为准。
 - 热启动 smoke：窗口 104ms、API 2638ms、完整验证 9901ms。
 - 14 菜单真实性门禁：14/14 通过。
 - 恢复演练：36 个数据库、迁移版本 1、关键 API 通过。
