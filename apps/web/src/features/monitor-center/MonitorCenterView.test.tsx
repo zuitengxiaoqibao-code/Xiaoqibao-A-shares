@@ -132,4 +132,33 @@ describe("MonitorCenterView", () => {
     expect(screen.getByText("600519")).toBeInTheDocument();
     vi.unstubAllGlobals();
   });
+
+  it("builds a multi-condition realtime rule with confirmation and freshness gates", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.includes("notification-settings")) return Promise.resolve({ ok: true, json: async () => ({ feishu_configured: false, feishu_enabled: false, webhook_hint: null }) });
+      if (path.includes("/rules") && init?.method === "POST") return Promise.resolve({ ok: true, json: async () => JSON.parse(String(init.body)) });
+      if (path.includes("/rules")) return Promise.resolve({ ok: true, json: async () => [] });
+      if (path.includes("/summary")) return Promise.resolve({ ok: true, json: async () => ({ service: { status: "healthy" }, rules: { total: 0, enabled: 0 }, alerts: { total: 0, active: 0, critical: 0, unconfirmed: 0, recovered: 0 }, delivery: { pending: 0, failed: 0 }, topics: [], recent_alerts: [] }) });
+      return Promise.resolve({ ok: true, json: async () => [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<MonitorCenterView />);
+    await screen.findByText("高级规则构建器");
+    fireEvent.change(screen.getByLabelText("条件逻辑"), { target: { value: "any" } });
+    fireEvent.click(screen.getByRole("button", { name: "增加条件" }));
+    fireEvent.change(screen.getByLabelText("连续确认次数"), { target: { value: "3" } });
+    fireEvent.change(screen.getByLabelText("数据新鲜度秒数"), { target: { value: "5" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存高级规则" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/v1/monitor-center/rules", expect.objectContaining({ method: "POST" })));
+    const request = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/rules") && init?.method === "POST");
+    const body = JSON.parse(String(request?.[1]?.body));
+    expect(body.logic).toBe("any");
+    expect(body.conditions).toHaveLength(2);
+    expect(body.confirm_count).toBe(3);
+    expect(body.freshness_seconds).toBe(5);
+    vi.unstubAllGlobals();
+  });
 });
