@@ -1,5 +1,6 @@
 param(
-    [switch]$IncludeDefaultAIKey
+    [switch]$IncludeDefaultAIKey,
+    [switch]$DataFree
 )
 
 $ErrorActionPreference = "Stop"
@@ -12,7 +13,11 @@ $StageParent = Join-Path $Dist (
     ".package-staging-" + [guid]::NewGuid().ToString("N")
 )
 $StageRelease = Join-Path $StageParent "XiaoQiBao-Portable"
-$Suffix = if ($IncludeDefaultAIKey) { "With-Default-AI" } else { "No-AI-Key" }
+$SuffixParts = @(
+    if ($DataFree) { "Data-Free" }
+    if ($IncludeDefaultAIKey) { "With-Default-AI" } else { "No-AI-Key" }
+)
+$Suffix = $SuffixParts -join "-"
 $Archive = Join-Path $Dist (
     "XiaoQiBao-Portable-Test-$Suffix-$Stamp.zip"
 )
@@ -35,11 +40,35 @@ function Assert-SafeStagingPath([string]$Path) {
 try {
     Assert-SafeStagingPath $StageParent
     New-Item -ItemType Directory -Path $StageParent | Out-Null
-    Copy-Item `
-        -LiteralPath $Release `
-        -Destination $StageParent `
-        -Recurse `
-        -Force
+    if ($DataFree) {
+        New-Item -ItemType Directory -Path $StageRelease | Out-Null
+        $PersistentNames = @("config", "data", "news", "cache", "logs", "models", "exports", "backups")
+        foreach ($Entry in Get-ChildItem -LiteralPath $Release -Force) {
+            if ($Entry.Name -notin ($PersistentNames + @("release-manifest.json"))) {
+                Copy-Item -LiteralPath $Entry.FullName -Destination $StageRelease -Recurse -Force
+            }
+        }
+        foreach ($Name in $PersistentNames) {
+            New-Item -ItemType Directory -Path (Join-Path $StageRelease $Name) -Force | Out-Null
+        }
+        $SourceAISettings = Join-Path $Release "data\ai-settings.json"
+        if (Test-Path -LiteralPath $SourceAISettings) {
+            Copy-Item -LiteralPath $SourceAISettings -Destination (Join-Path $StageRelease "data") -Force
+        }
+        if (Test-Path -LiteralPath (Join-Path $Release "config")) {
+            Copy-Item -Path (Join-Path $Release "config\*") -Destination (Join-Path $StageRelease "config") -Recurse -Force
+        }
+        $PackageReadme = Join-Path $Root "packaging\portable-test-readme.txt"
+        if (Test-Path -LiteralPath $PackageReadme) {
+            Copy-Item -LiteralPath $PackageReadme -Destination (Join-Path $StageRelease "测试包说明.txt") -Force
+        }
+    } else {
+        Copy-Item `
+            -LiteralPath $Release `
+            -Destination $StageParent `
+            -Recurse `
+            -Force
+    }
 
     if ($IncludeDefaultAIKey) {
         $sourceData = Join-Path $Release "data"
