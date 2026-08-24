@@ -13,10 +13,9 @@ export type LoadProgress = {
 
 export type LoadProgressCallback = (progress: LoadProgress) => void;
 
-// A stalled local endpoint must release the page from its loading state. Long
-// work is already represented by the company-research task polling contract;
-// each individual HTTP exchange should therefore have a bounded wait.
-export const DEFAULT_FETCH_TIMEOUT_MS = 10_000;
+// Ten seconds is a performance target only. Keep a long final guard for a
+// genuinely dead connection without truncating slow but valid data sources.
+export const DEFAULT_FETCH_TIMEOUT_MS = 120_000;
 
 function apiMessage(text: string, fallback: string): string {
   try {

@@ -58,7 +58,7 @@ describe("company research api", () => {
     expect(updates.at(-1)).toBe(100);
   });
 
-  it("ends a stalled research poll with a Chinese stage error", async () => {
+  it("ends a stalled research poll with a Chinese stage error after the long guard", async () => {
     vi.useFakeTimers();
     const running = { progress: { task_id: "task-stalled", status: "running", stage: "financials", processed: 2, total: 6, percent: 33.33, detail: "正在等待财务来源", error: null }, result: null };
     vi.stubGlobal("fetch", vi.fn()
@@ -67,15 +67,15 @@ describe("company research api", () => {
 
     const pending = loadCompanyResearch("600519");
     await vi.advanceTimersByTimeAsync(1);
-    const assertion = expect(pending).rejects.toThrow("公司研究停滞：正在等待财务来源超过10秒无进展");
-    await vi.advanceTimersByTimeAsync(11_000);
+    const assertion = expect(pending).rejects.toThrow("公司研究停滞：正在等待财务来源超过60秒无进展");
+    await vi.advanceTimersByTimeAsync(61_000);
     await assertion;
 
     expect(readTaskActivities()[0]).toMatchObject({
       id: "company-research:600519:latest",
       state: "failed",
       stage: "公司研究失败",
-      error: "公司研究停滞：正在等待财务来源超过10秒无进展",
+      error: "公司研究停滞：正在等待财务来源超过60秒无进展",
     });
   });
 

@@ -29,7 +29,10 @@ export type ApiCachedOptions = ApiRequestOptions & {
 
 type CacheEntry = ApiResult<unknown> & { cachedAtMs: number };
 
-const DEFAULT_TIMEOUT_MS = 10_000;
+// Ten seconds is a startup target, not a correctness cutoff. Some verified
+// sources (financials, F10, history repair) legitimately need longer. Keep a
+// generous final guard so a truly dead connection still ends eventually.
+const DEFAULT_TIMEOUT_MS = 120_000;
 const responseCache = new Map<string, CacheEntry>();
 
 function containsChinese(value: string): boolean {

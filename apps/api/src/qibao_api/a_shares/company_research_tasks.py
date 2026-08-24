@@ -14,7 +14,7 @@ class CompanyResearchTaskService:
         research_service: object,
         registry: TaskProgressRegistry,
         *,
-        task_timeout_seconds: float = 30.0,
+        task_timeout_seconds: float = 180.0,
     ) -> None:
         if task_timeout_seconds <= 0:
             raise ValueError("task_timeout_seconds must be positive")

@@ -104,7 +104,7 @@ describe("fetchJsonWithProgress", () => {
 
     const request = fetchJsonWithProgress("/api/stalled");
     const assertion = expect(request).rejects.toThrow("请求超时，请稍后重试");
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(120_000);
     await assertion;
   });
 

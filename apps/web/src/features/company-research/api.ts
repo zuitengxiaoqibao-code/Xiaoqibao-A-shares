@@ -50,10 +50,10 @@ export function loadCompanyResearch(symbol: string, asOf?: string, signal?: Abor
         if (signature !== lastSignature) {
           lastSignature = signature;
           lastChangedAt = now;
-        } else if (now - lastChangedAt > 10_000) {
-          throw new Error(`公司研究停滞：${snapshot.progress.detail ?? snapshot.progress.stage}超过10秒无进展`);
+        } else if (now - lastChangedAt > 60_000) {
+          throw new Error(`公司研究停滞：${snapshot.progress.detail ?? snapshot.progress.stage}超过60秒无进展`);
         }
-        if (now - startedAt > 35_000) throw new Error("公司研究超时：超过35秒仍未完成，请检查数据源");
+        if (now - startedAt > 180_000) throw new Error("公司研究超时：超过180秒仍未完成，请检查数据源");
         onProgress?.({
           percent: snapshot.progress.percent ?? 1,
           stage: snapshot.progress.status === "queued" ? "connecting" : "receiving",
