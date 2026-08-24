@@ -161,4 +161,25 @@ describe("MonitorCenterView", () => {
     expect(body.freshness_seconds).toBe(5);
     vi.unstubAllGlobals();
   });
+
+  it("shows readable Chinese metric names instead of technical field paths", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.includes("notification-settings")) return Promise.resolve({ ok: true, json: async () => ({ feishu_configured: false, feishu_enabled: false, webhook_hint: null }) });
+      if (path.includes("/alerts")) return Promise.resolve({ ok: true, json: async () => [] });
+      if (path.endsWith("/rules")) return Promise.resolve({ ok: true, json: async () => [{ id: "r1", name: "风险提醒", topics: ["quant_strategy"], conditions: [{ field: "risk_score", op: "gte", value: 65 }], channels: { in_app: true, tts: true, feishu: false } }] });
+      return Promise.resolve({ ok: true, json: async () => ({ service: { status: "healthy" }, rules: { total: 1, enabled: 1 }, alerts: { total: 0, active: 0, critical: 0, unconfirmed: 0, recovered: 0 }, delivery: { pending: 0, failed: 0 }, topics: [], recent_alerts: [] }) });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<MonitorCenterView />);
+
+    await screen.findByText("规则配置");
+    expect(await screen.findByText(/风险分 大于等于 65/)).toBeInTheDocument();
+    const metricSelectors = screen.getAllByLabelText("监控指标");
+    expect(metricSelectors.length).toBeGreaterThan(0);
+    expect((metricSelectors[0] as HTMLSelectElement).selectedOptions[0]?.textContent).toBe("风险分");
+    expect(screen.queryByText("字段路径")).not.toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
 });
