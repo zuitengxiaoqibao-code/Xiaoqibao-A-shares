@@ -10,6 +10,8 @@ from qibao_api.routes.monitor_center import router
 def test_monitor_routes_are_exposed():
     paths = {route.path for route in router.routes}
     assert "/api/v1/monitor-center/rules" in paths
+    assert "/api/v1/monitor-center/rules/{rule_id}/status" in paths
+    assert "/api/v1/monitor-center/rules/{rule_id}" in paths
     assert "/api/v1/monitor-center/alerts" in paths
     assert "/api/v1/monitor-center/summary" in paths
     assert "/api/v1/monitor-center/alerts/{alert_id}/confirm" in paths
@@ -102,3 +104,29 @@ def test_save_rule_route_rejects_unknown_operator_in_chinese(tmp_path):
 
     assert response.status_code == 422
     assert response.json()["detail"] == "不支持的规则比较符"
+
+
+def test_rule_status_route_pauses_and_resumes_rule(tmp_path):
+    client, service = _client(tmp_path)
+    service.save_rule({"id": "r1", "name": "风险", "conditions": {"score": {"gte": 1}}})
+
+    paused = client.patch("/api/v1/monitor-center/rules/r1/status", json={"enabled": False})
+    assert paused.status_code == 200
+    assert paused.json()["enabled"] is False
+
+    resumed = client.patch("/api/v1/monitor-center/rules/r1/status", json={"enabled": True})
+    assert resumed.status_code == 200
+    assert resumed.json()["enabled"] is True
+
+
+def test_rule_delete_route_removes_rule_and_keeps_history(tmp_path):
+    client, service = _client(tmp_path)
+    service.save_rule({"id": "r1", "name": "风险", "conditions": {"score": {"gte": 1}}})
+
+    response = client.delete("/api/v1/monitor-center/rules/r1")
+    assert response.status_code == 200
+    assert response.json() == {"status": "deleted", "rule_id": "r1"}
+
+    missing = client.delete("/api/v1/monitor-center/rules/missing")
+    assert missing.status_code == 404
+    assert missing.json()["detail"] == "监控规则不存在"

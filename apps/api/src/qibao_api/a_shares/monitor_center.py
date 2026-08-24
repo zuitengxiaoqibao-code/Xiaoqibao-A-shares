@@ -102,6 +102,7 @@ class MonitorCenterService:
         alert.setdefault("confirmed_by", None)
         alert["trigger_count"] = max(1, int(alert.get("trigger_count", 1)))
         alert.setdefault("recovered_at", None)
+        alert.setdefault("recovery_reason", None)
         alert.setdefault("recovery_alert_id", None)
         alert.setdefault("delivery", {})
         alert.setdefault("delivery_reason", {})
@@ -196,6 +197,41 @@ class MonitorCenterService:
             self._state["rules"].append(value)
             self._save()
         return value
+
+    def _close_rule_alerts(self, rule_id: str, reason: str) -> None:
+        recovered_at = datetime.now(timezone.utc).isoformat()
+        for alert in self._state.get("alerts", []):
+            if alert.get("rule_id") != rule_id or alert.get("state") != "active":
+                continue
+            alert["state"] = "recovered"
+            alert["recovered_at"] = recovered_at
+            alert["recovery_reason"] = reason
+        for key in list(self._state.get("active_conditions", {})):
+            if key.startswith(f"{rule_id}|"):
+                self._state["active_conditions"].pop(key, None)
+                self._state["condition_states"].pop(key, None)
+
+    def set_rule_enabled(self, rule_id: str, enabled: bool) -> dict[str, Any]:
+        if not isinstance(enabled, bool):
+            raise ValueError("规则启用状态必须是布尔值")
+        with self._lock:
+            rule = next((item for item in self._state["rules"] if item.get("id") == rule_id), None)
+            if rule is None:
+                raise KeyError("监控规则不存在")
+            rule["enabled"] = enabled
+            if not enabled:
+                self._close_rule_alerts(rule_id, "规则已暂停")
+            self._save()
+            return self.validate_rule(rule)
+
+    def delete_rule(self, rule_id: str) -> dict[str, str]:
+        with self._lock:
+            if not any(item.get("id") == rule_id for item in self._state["rules"]):
+                raise KeyError("监控规则不存在")
+            self._close_rule_alerts(rule_id, "规则已删除")
+            self._state["rules"] = [item for item in self._state["rules"] if item.get("id") != rule_id]
+            self._save()
+        return {"status": "deleted", "rule_id": rule_id}
 
     def rule_views(self) -> list[dict[str, Any]]:
         operator_names = {"eq": "等于", "gt": "大于", "gte": "大于等于", "lt": "小于", "lte": "小于等于"}

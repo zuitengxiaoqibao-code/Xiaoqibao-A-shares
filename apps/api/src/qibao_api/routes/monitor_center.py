@@ -45,6 +45,27 @@ def save_rule(payload: dict[str, Any], request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
 
+@router.patch("/rules/{rule_id}/status")
+def update_rule_status(rule_id: str, payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    enabled = payload.get("enabled")
+    if not isinstance(enabled, bool):
+        raise HTTPException(status_code=422, detail="规则启用状态必须是布尔值")
+    try:
+        return _service(request).set_rule_enabled(rule_id, enabled)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="监控规则不存在") from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.delete("/rules/{rule_id}")
+def delete_rule(rule_id: str, request: Request) -> dict[str, str]:
+    try:
+        return _service(request).delete_rule(rule_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="监控规则不存在") from error
+
+
 @router.get("/alerts")
 def alerts(request: Request, limit: int = 50) -> list[dict[str, Any]]:
     return _service(request).history(limit)

@@ -185,3 +185,34 @@ def test_pending_tts_excludes_expired_alerts(tmp_path):
     )
 
     assert service.pending_tts(max_age_seconds=300) == []
+
+
+def test_rule_can_pause_and_resume_with_active_alert_lifecycle(tmp_path):
+    service = MonitorCenterService(tmp_path / "monitor.json")
+    service.save_rule({"id": "r1", "name": "风险提醒", "conditions": {"score": {"gte": 1}}})
+    alert = service.evaluate({"symbol": "000001", "score": 2}, datetime.now(timezone.utc))
+
+    paused = service.set_rule_enabled("r1", False)
+    assert paused["enabled"] is False
+    assert service.history()[0]["alert_id"] == alert["alert_id"]
+    assert service.history()[0]["state"] == "recovered"
+    assert service.history()[0]["recovery_reason"] == "规则已暂停"
+    assert service.evaluate({"symbol": "000001", "score": 2}, datetime.now(timezone.utc)) is None
+
+    resumed = service.set_rule_enabled("r1", True)
+    assert resumed["enabled"] is True
+
+
+def test_rule_delete_keeps_alert_audit_history(tmp_path):
+    service = MonitorCenterService(tmp_path / "monitor.json")
+    service.save_rule({"id": "r1", "name": "风险提醒", "conditions": {"score": {"gte": 1}}})
+    alert = service.evaluate({"symbol": "000001", "score": 2}, datetime.now(timezone.utc))
+
+    result = service.delete_rule("r1")
+    assert result == {"status": "deleted", "rule_id": "r1"}
+    assert service.rule_views() == []
+    assert service.history()[0]["alert_id"] == alert["alert_id"]
+    assert service.history()[0]["recovery_reason"] == "规则已删除"
+
+    with pytest.raises(KeyError, match="监控规则不存在"):
+        service.delete_rule("missing")
