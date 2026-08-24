@@ -34,7 +34,7 @@ def _notification_repository(request: Request) -> NotificationSettingsRepository
 
 @router.get("/rules")
 def rules(request: Request) -> list[dict[str, Any]]:
-    return _service(request)._state["rules"]
+    return _service(request).rule_views()
 
 
 @router.post("/rules")

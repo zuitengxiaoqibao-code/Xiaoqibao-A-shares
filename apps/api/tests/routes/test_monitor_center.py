@@ -76,3 +76,29 @@ def test_retry_route_rejects_unknown_channel(tmp_path):
 
     assert response.status_code == 422
     assert response.json()["detail"] == "不支持的告警投递通道"
+
+
+def test_rules_route_returns_normalized_condition_summary(tmp_path):
+    client, service = _client(tmp_path)
+    service.save_rule({"id": "r1", "name": "风险", "conditions": {"score": {"gte": 1}}})
+
+    response = client.get("/api/v1/monitor-center/rules")
+
+    assert response.status_code == 200
+    body = response.json()[0]
+    assert body["logic"] == "all"
+    assert body["conditions"][0] == {"field": "score", "op": "gte", "value": 1}
+    assert body["validation_state"] == "valid"
+    assert body["condition_summary"] == "score 大于等于 1"
+
+
+def test_save_rule_route_rejects_unknown_operator_in_chinese(tmp_path):
+    client, _ = _client(tmp_path)
+
+    response = client.post(
+        "/api/v1/monitor-center/rules",
+        json={"id": "r1", "name": "坏规则", "conditions": [{"field": "score", "op": "near", "value": 1}]},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "不支持的规则比较符"
