@@ -15,10 +15,10 @@ const entries = [
   ["first_limit_up", "首次涨停", CircleDot],
   ["late_session_selection", "尾盘选股", Activity],
   ["quant_analysis", "量化分析", BarChart3],
-  ["monitor_center", "监控中心", BellRing],
   ["news", "新闻热点", Newspaper],
   ["risk", "风险提醒", ShieldAlert],
   ["history", "历史复盘", History],
+  ["monitor_center", "监控中心", BellRing],
   ["settings", "数据设置", Settings2],
   ["operations", "本地运维", ServerCog],
 ] as const;

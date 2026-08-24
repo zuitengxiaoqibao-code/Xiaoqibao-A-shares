@@ -161,6 +161,8 @@ export function MonitorCenterView() {
   const [topicFilter, setTopicFilter] = useState("all");
   const [symbolFilter, setSymbolFilter] = useState("");
   const [saving, setSaving] = useState(false);
+  const [voiceTestState, setVoiceTestState] = useState<"idle" | "running" | "success" | "error">("idle");
+  const [feishuTestState, setFeishuTestState] = useState<"idle" | "running" | "success" | "unconfigured" | "error">("idle");
   const mounted = useRef(true);
   const summaryRef = useRef<MonitorSummary | null>(null);
   const requestGeneration = useRef(0);
@@ -272,7 +274,37 @@ export function MonitorCenterView() {
     setRule(draft);
     await saveRuleDraft(draft, `${template.name}已启用，等待下一条实时快照`);
   };
-  const testFeishu = async () => { setNotice(""); try { const result = await jsonFetch<{ status: string; message: string }>("/api/v1/monitor-center/notification-settings/test", { method: "POST" }); setNotice(result.message); } catch (reason) { setError(reason instanceof Error ? reason.message : "飞书测试发送失败"); } };
+  const testVoice = async () => {
+    setVoiceTestState("running"); setNotice(""); setError("");
+    let player: HTMLAudioElement | null = null;
+    let objectUrl: string | null = null;
+    try {
+      const response = await fetch("/api/v1/speech/synthesize", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: "一树-A股观测台监控语音测试，提醒通道正常。" }) });
+      if (!response.ok) throw new Error(`语音合成失败（${response.status}）`);
+      const blob = await response.blob();
+      if (!blob.size) throw new Error("语音合成返回空音频");
+      if (typeof URL.createObjectURL !== "function") throw new Error("当前运行环境不支持音频播放");
+      objectUrl = URL.createObjectURL(blob);
+      player = new Audio(objectUrl);
+      await new Promise<void>((resolve, reject) => { player!.onended = () => resolve(); player!.onerror = () => reject(new Error("音频播放失败，请检查系统输出设备")); void player!.play().catch(reject); });
+      setVoiceTestState("success"); setNotice("语音测试已完成");
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : "语音测试失败，请检查语音配置和系统输出设备";
+      setVoiceTestState("error"); setError(message);
+    } finally {
+      player?.pause();
+      if (objectUrl && typeof URL.revokeObjectURL === "function") URL.revokeObjectURL(objectUrl);
+    }
+  };
+  const testFeishu = async () => {
+    setFeishuTestState("running"); setNotice(""); setError("");
+    try {
+      const result = await jsonFetch<{ status: string; message: string }>("/api/v1/monitor-center/notification-settings/test", { method: "POST" });
+      if (result.status === "sent") { setFeishuTestState("success"); setNotice(result.message); }
+      else if (result.status === "未配置") { setFeishuTestState("unconfigured"); setError(result.message); }
+      else { setFeishuTestState("error"); setError(result.message); }
+    } catch (reason) { setFeishuTestState("error"); setError(reason instanceof Error ? reason.message : "飞书测试发送失败"); }
+  };
   const saveFeishu = async () => {
     if (feishuEnabled && !webhook.trim() && !settings?.feishu_configured) { setError("启用飞书前必须填写飞书机器人地址"); return; }
     try {
@@ -298,6 +330,7 @@ export function MonitorCenterView() {
     {error && <p className="cockpit-error" role="alert"><ShieldAlert size={15} />{error}</p>}
     {notice && <p className="monitor-notice" role="status"><CheckCircle2 size={15} />{notice}</p>}
     {lastRefreshError && !error && <p className="monitor-stale-note" role="status">上次有效数据仍在展示，最新刷新：{lastRefreshError}</p>}
+    <section className="settings-section monitor-test-panel"><div className="settings-heading"><div><BellRing size={20} /><span><h2>提醒通道测试</h2><p>发送一次真实测试，不会产生交易信号；根据结果确认语音和飞书是否真的可用。</p></span></div></div><div className="monitor-test-grid"><article><div><Volume2 size={17} /><strong>语音提醒</strong><span className={`status-chip ${voiceTestState === "success" ? "ok" : voiceTestState === "error" ? "bad" : "muted"}`}>{voiceTestState === "running" ? "测试中" : voiceTestState === "success" ? "已完成" : voiceTestState === "error" ? "失败" : "待测试"}</span></div><small>使用当前语音配置合成并播放一条测试语音。</small><button type="button" className="settings-action secondary" disabled={voiceTestState === "running"} onClick={() => void testVoice()}><Volume2 size={15} />{voiceTestState === "running" ? "语音测试中" : "测试语音提醒"}</button></article><article><div><Cloud size={17} /><strong>飞书消息</strong><span className={`status-chip ${feishuTestState === "success" ? "ok" : feishuTestState === "error" || feishuTestState === "unconfigured" ? "bad" : "muted"}`}>{feishuTestState === "running" ? "发送中" : feishuTestState === "success" ? "已送达" : feishuTestState === "unconfigured" ? "未配置" : feishuTestState === "error" ? "失败" : settings?.feishu_configured && settings.feishu_enabled ? "已配置" : "未配置"}</span></div><small>向当前已保存的飞书机器人发送一条测试消息。</small><button type="button" className="settings-action secondary" disabled={!settings?.feishu_configured || !settings.feishu_enabled || feishuTestState === "running"} onClick={() => void testFeishu()}><Cloud size={15} />{feishuTestState === "running" ? "飞书发送中" : "测试飞书消息"}</button></article></div></section>
     {advancedRuleBuilder}
     <section className="monitor-status-strip"><span className={`monitor-live-dot ${current.service.status === "healthy" ? "is-live" : ""}`} /><strong>监控服务：{statusLabel(current.service.status)}</strong><span>规则 {current.rules.enabled}/{current.rules.total} 启用</span><span>最近心跳 {current.service.last_heartbeat_at ? new Date(current.service.last_heartbeat_at).toLocaleTimeString("zh-CN", { hour12: false }) : "暂无"}</span><span>总线延迟 {current.service.latency_ms == null ? "暂无" : `${Math.round(current.service.latency_ms)} ms`}</span></section>
     <section className="monitor-kpi-grid" aria-label="监控摘要">

@@ -304,4 +304,50 @@ describe("MonitorCenterView", () => {
     expect(screen.queryByRole("button", { name: "删除条件 2" })).not.toBeInTheDocument();
     vi.unstubAllGlobals();
   });
+
+  it("tests the real voice synthesis channel and reports playback completion", async () => {
+    class FakeAudio {
+      onended: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      play = vi.fn(async () => { this.onended?.(); });
+      pause = vi.fn();
+    }
+    vi.stubGlobal("Audio", FakeAudio);
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:test") });
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.includes("/speech/synthesize")) return Promise.resolve(new Response(new Blob(["audio"]), { status: 200 }));
+      if (path.includes("notification-settings")) return Promise.resolve({ ok: true, json: async () => ({ feishu_configured: false, feishu_enabled: false, webhook_hint: null }) });
+      if (path.includes("/alerts")) return Promise.resolve({ ok: true, json: async () => [] });
+      if (path.endsWith("/rules")) return Promise.resolve({ ok: true, json: async () => [] });
+      return Promise.resolve({ ok: true, json: async () => ({ service: { status: "healthy" }, rules: { total: 0, enabled: 0 }, alerts: { total: 0, active: 0, critical: 0, unconfirmed: 0, recovered: 0 }, delivery: { pending: 0, failed: 0 }, topics: [], recent_alerts: [] }) });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<MonitorCenterView />);
+    fireEvent.click(await screen.findByRole("button", { name: "测试语音提醒" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/v1/speech/synthesize", expect.objectContaining({ method: "POST" })));
+    expect(await screen.findByText("语音测试已完成")).toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+
+  it("tests the configured Feishu channel and shows the server result", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.includes("/notification-settings/test")) return Promise.resolve({ ok: true, json: async () => ({ status: "sent", message: "飞书消息已送达" }) });
+      if (path.includes("notification-settings")) return Promise.resolve({ ok: true, json: async () => ({ feishu_configured: true, feishu_enabled: true, webhook_hint: "****abcd" }) });
+      if (path.includes("/alerts")) return Promise.resolve({ ok: true, json: async () => [] });
+      if (path.endsWith("/rules")) return Promise.resolve({ ok: true, json: async () => [] });
+      return Promise.resolve({ ok: true, json: async () => ({ service: { status: "healthy" }, rules: { total: 0, enabled: 0 }, alerts: { total: 0, active: 0, critical: 0, unconfirmed: 0, recovered: 0 }, delivery: { pending: 0, failed: 0 }, topics: [], recent_alerts: [] }) });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<MonitorCenterView />);
+    fireEvent.click(await screen.findByRole("button", { name: "测试飞书消息" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/v1/monitor-center/notification-settings/test", expect.objectContaining({ method: "POST" })));
+    expect(await screen.findByText("飞书消息已送达")).toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
 });
