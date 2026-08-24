@@ -6,9 +6,9 @@ type AIState = "unconfigured" | "configured_unverified" | "connected" | "connect
 type Props = { ai?: { configured: boolean; state?: AIState; message?: string } | null };
 
 const aiCopy: Record<AIState, { label: string; tone: string }> = {
-  unconfigured: { label: "AI 未配置", tone: "muted" }, configured_unverified: { label: "AI 待验证", tone: "pending" },
-  connected: { label: "AI 正常", tone: "ok" }, connection_failed: { label: "AI 异常", tone: "bad" },
-  timeout: { label: "AI 超时", tone: "bad" }, rate_limited: { label: "AI 限流", tone: "bad" }, model_not_found: { label: "AI 模型异常", tone: "bad" },
+  unconfigured: { label: "离线", tone: "muted" }, configured_unverified: { label: "异常", tone: "bad" },
+  connected: { label: "在线", tone: "ok" }, connection_failed: { label: "异常", tone: "bad" },
+  timeout: { label: "异常", tone: "bad" }, rate_limited: { label: "异常", tone: "bad" }, model_not_found: { label: "异常", tone: "bad" },
 };
 
 function taskTone(task: TaskActivity): string { return task.state === "failed" ? "bad" : task.state === "succeeded" ? "ok" : task.state === "queued" ? "pending" : "running"; }
@@ -20,7 +20,7 @@ export function TaskActivityStatus({ ai }: Props) {
   const failed = tasks.find((task) => task.state === "failed");
   return <section className="task-activity-status" aria-label="系统状态与数据任务">
     <header><span><Activity size={14} /><b>系统状态</b></span><small>{active.length ? `处理中 ${active.length}` : failed ? "有任务异常" : "当前空闲"}</small></header>
-    <div className={`task-activity-ai ${aiView.tone}`}><Bot size={14} /><span>{aiView.label}</span><small>{ai?.message ?? "正在读取 AI 配置"}</small></div>
+    <div className={`task-activity-ai ${aiView.tone}`}><Bot size={14} /><span>AI 状态</span><small>{aiView.label}</small></div>
     {active.map((task) => <article className="task-activity-row" key={task.id}>
       <span className={`task-activity-dot ${taskTone(task)}`} />
       <div><b>{task.stage}</b><small>{task.label}{task.detail ? ` · ${task.detail}` : ""}</small></div>
