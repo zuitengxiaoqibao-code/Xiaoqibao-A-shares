@@ -915,6 +915,18 @@ class LocalTdxOverviewSource:
                         datetime.fromisoformat(str(observed_at))
                         if observed_at else None
                     ),
+                    market_cap_yi=(
+                        Decimal(str(row["market_cap_yi"]))
+                        if row.get("market_cap_yi") is not None else None
+                    ),
+                    intraday_average_price=(
+                        Decimal(str(row["intraday_average_price"]))
+                        if row.get("intraday_average_price") is not None else None
+                    ),
+                    turnover_rate=(
+                        Decimal(str(row["turnover_rate"]))
+                        if row.get("turnover_rate") is not None else None
+                    ),
                 ))
             except (KeyError, TypeError, ValueError, InvalidOperation):
                 continue
@@ -944,6 +956,9 @@ class LocalTdxOverviewSource:
                         "volume": str(item.volume),
                         "amount_yi": str(item.amount_wan / Decimal("10000")),
                         "observed_at": item.observed_at.isoformat() if item.observed_at else None,
+                        "market_cap_yi": str(item.market_cap_yi) if item.market_cap_yi is not None else None,
+                        "intraday_average_price": str(item.intraday_average_price) if item.intraday_average_price is not None else None,
+                        "turnover_rate": str(item.turnover_rate) if item.turnover_rate is not None else None,
                     }
                     for item in self._quotes
                 ]

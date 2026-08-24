@@ -78,11 +78,14 @@ class LateSessionSelectionService:
                 quotes = tuple(getattr(self.local_market_source, "current_quotes", lambda: ())())
         if not quotes:
             return self._publish_if_changed(self._unavailable(trading_date, local_now, phase, "本地通达信全市场实时快照尚未就绪"))
-        enriched = self._enrich(quotes, now)
-        symbols = tuple(raw.symbol for raw in quotes)
         quotes_are_cached = bool(
             getattr(self.local_market_source, "current_quotes_are_cached", lambda: False)()
         )
+        # A restored quote snapshot is the first paint, not a reason to block
+        # the page on a full-market remote enrichment request. The refresh
+        # loop will publish live quotes; the next request can then enrich them.
+        enriched = {} if quotes_are_cached else self._enrich(quotes, now)
+        symbols = tuple(raw.symbol for raw in quotes)
         slow_factors = {} if quotes_are_cached else self.factor_cache.get_or_build(
             trading_date,
             symbols,

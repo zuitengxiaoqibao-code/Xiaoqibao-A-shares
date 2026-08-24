@@ -313,6 +313,54 @@ def test_local_overview_restores_full_fallback_quotes_after_restart(tmp_path) ->
     assert restarted.current_quotes() == (fallback_quote,)
 
 
+def test_local_overview_restores_enrichment_fields_from_quote_cache(tmp_path) -> None:
+    fallback_quote = TdxRealtimeQuote(
+        symbol="600000",
+        exchange_code="600000.SH",
+        name="浦发银行",
+        previous_close=Decimal("9.19"),
+        price=Decimal("9.28"),
+        high=Decimal("9.35"),
+        low=Decimal("9.12"),
+        open=Decimal("9.20"),
+        volume=Decimal("100"),
+        amount_wan=Decimal("102935.42"),
+        observed_at=NOW,
+        market_cap_yi=Decimal("1800.50"),
+        intraday_average_price=Decimal("9.24"),
+        turnover_rate=Decimal("1.35"),
+    )
+    expected = build_market_statistics(
+        (fallback_quote,), observed_at=NOW, source="tencent-realtime+tdx-catalog"
+    )
+
+    class Fallback:
+        last_quotes = (fallback_quote,)
+
+        def fetch(self):
+            return expected
+
+    first = LocalTdxOverviewSource(
+        cache_path=tmp_path / "tdx-market-overview.json",
+        rpc=None,
+        fallback=Fallback(),
+        clock=lambda: NOW,
+    )
+    first.refresh()
+
+    restarted = LocalTdxOverviewSource(
+        cache_path=tmp_path / "tdx-market-overview.json",
+        rpc=None,
+        fallback=None,
+        clock=lambda: NOW,
+    )
+
+    restored = restarted.current_quotes()
+    assert restored[0].market_cap_yi == Decimal("1800.50")
+    assert restored[0].intraday_average_price == Decimal("9.24")
+    assert restored[0].turnover_rate == Decimal("1.35")
+
+
 def test_local_overview_can_refresh_fast_from_fallback_without_scanning_rpc_catalog(tmp_path) -> None:
     fallback_quote = quote(
         "600000", "浦发银行", previous_close="9.19", price="9.28",
