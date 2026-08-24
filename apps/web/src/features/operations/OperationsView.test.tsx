@@ -251,6 +251,8 @@ describe("OperationsView", () => {
         final_history_coverage_percent: 97.42, remaining_gap_count: 154,
         final_quality: "stale", final_blockers: ["dominant_trade_date_behind_target"],
         result_detail: "主导交易日仍落后，剩余缺口已保留，可继续重试。",
+        error_stage: "checking_metadata",
+        error_detail: "'utf-8' codec can't decode byte 0xc1 in position 87: invalid start byte",
         source_attempts: [
           { source: "tdx_local", state: "completed", detail: "本机增量导入完成", observed_at: "2026-08-19T02:00:00Z" },
           { source: "tdx_official", state: "completed", detail: "官方包导入完成", observed_at: "2026-08-19T02:00:00Z" },
@@ -272,6 +274,8 @@ describe("OperationsView", () => {
     expect(screen.getByText("在线补缺")).toBeInTheDocument();
     expect(screen.getByText(/通达信在线成功 100 只/)).toBeInTheDocument();
     expect(screen.getByText(/百度后备成功 40 只/)).toBeInTheDocument();
+    expect(screen.getByText(/官方包元数据编码无法识别，请稍后重试/)).toBeInTheDocument();
+    expect(screen.queryByText(/invalid start byte/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "一键全面修复" }));
     await waitFor(() => expect(startRepair).toHaveBeenCalledTimes(1));
   });

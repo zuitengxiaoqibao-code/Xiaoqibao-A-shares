@@ -3,6 +3,7 @@ import io
 import struct
 import zipfile
 from datetime import date, datetime, timezone
+from pathlib import Path
 
 import httpx
 import pytest
@@ -46,6 +47,41 @@ def test_official_package_info_and_archive_inspection_are_truthful(tmp_path) -> 
     assert inspection.day_file_count == 2
     assert inspection.supported_file_count == 1
     assert inspection.latest_trade_date == date(2026, 8, 18)
+
+
+def test_official_package_metadata_accepts_gb18030_response() -> None:
+    metadata = (
+        '// 官方日线包\n'
+        'window.HSJDAY_SOFT_SIZE="520.67MB";\n'
+        'window.HSJDAY_SOFT_TIME="2026-08-18 15:58:48";'
+    ).encode("gb18030")
+
+    class Response:
+        content = metadata
+
+        def raise_for_status(self):
+            return None
+
+        @property
+        def text(self):
+            raise UnicodeDecodeError("utf-8", b"\xc1", 0, 1, "invalid start byte")
+
+    class Client:
+        def get(self, _url):
+            return Response()
+
+    service = OfficialTdxPackageService(
+        cache_dir=Path("cache"),
+        state_path=Path("state.json"),
+        tdx_import_service=object(),
+        client=Client(),
+        as_of=date(2026, 8, 19),
+    )
+
+    info = service.package_info()
+
+    assert info.size_label == "520.67MB"
+    assert info.modified_at.isoformat() == "2026-08-18T15:58:48+08:00"
 
 
 def test_official_package_rejects_zip_path_escape(tmp_path) -> None:

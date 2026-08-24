@@ -31,6 +31,18 @@ _SIZE_PATTERN = re.compile(r'HSJDAY_SOFT_SIZE="([^"]+)"')
 _TIME_PATTERN = re.compile(r'HSJDAY_SOFT_TIME="([^"]+)"')
 
 
+def _decode_official_metadata(response: httpx.Response) -> str:
+    """Decode the vendor metadata without treating a binary/GBK response as UTF-8."""
+    raw = response.content
+    errors: list[UnicodeDecodeError] = []
+    for encoding in ("utf-8-sig", "gb18030", "gbk"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError as error:
+            errors.append(error)
+    raise ValueError("通达信官方包元数据编码无法识别，请稍后重试") from errors[-1]
+
+
 def parse_official_package_info(content: str) -> OfficialTdxPackageInfo:
     size = _SIZE_PATTERN.search(content)
     modified = _TIME_PATTERN.search(content)
@@ -204,7 +216,7 @@ class OfficialTdxPackageService:
     def package_info(self) -> OfficialTdxPackageInfo:
         response = self.client.get(INFO_URL)
         response.raise_for_status()
-        return parse_official_package_info(response.text)
+        return parse_official_package_info(_decode_official_metadata(response))
 
     @staticmethod
     def _file_sha256(

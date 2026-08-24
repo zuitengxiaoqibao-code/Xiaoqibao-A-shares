@@ -77,6 +77,15 @@ const operationError = (reason: unknown, fallback: string) => {
   const message = reason instanceof Error ? reason.message.trim() : "";
   return message && hasChinese(message) ? message : friendlyError(reason, fallback);
 };
+const friendlySupplementError = (value: string | null | undefined) => {
+  const message = String(value ?? "").trim();
+  if (!message) return "官方数据修复失败，请查看数据源状态后重试";
+  if (/utf-?8.*codec|UnicodeDecodeError|invalid start byte|decode byte/i.test(message)) {
+    return "官方包元数据编码无法识别，请稍后重试";
+  }
+  if (!hasChinese(message)) return friendlyError(new Error(message), "官方数据修复失败，请稍后重试");
+  return message;
+};
 const supplementStageLabel: Record<string, string> = {
   queued: "等待执行", checking_metadata: "核对官方包", checking_cache: "检查缓存",
   validating_cache: "校验缓存", downloading: "下载官方包", validating: "校验下载",
@@ -267,7 +276,7 @@ export function OperationsView(props: Props) {
       {supplement && <div className="data-repair-progress" role="status" aria-live="polite"><div><b>{supplementStageLabel[supplement.stage] ?? "正在处理"} · {supplement.percent.toFixed(2)}%</b><small>{supplement.result_detail ?? `任务更新时间 ${new Date(supplement.updated_at).toLocaleString("zh-CN")}`}</small></div><progress max={100} value={supplement.percent}/></div>}
       {supplement?.source_attempts?.length ? <div className="data-source-ladder">{supplement.source_attempts.map((item) => <article key={item.source} className={item.state}><span>{item.state === "completed" ? <CheckCircle2 size={15}/> : item.state === "failed" ? <AlertTriangle size={15}/> : <Clock3 size={15}/>}<b>{supplementSourceLabel[item.source] ?? item.source}</b></span><small>{item.detail}</small></article>)}</div> : null}
       {supplementError && <p className="history-repair-error" role="alert"><AlertTriangle size={15}/>{supplementError}</p>}
-      {supplement?.error_detail && <p className="history-repair-error" role="alert"><AlertTriangle size={15}/>失败阶段：{supplementStageLabel[supplement.error_stage ?? "failed"] ?? supplement.error_stage} · {supplement.error_detail}</p>}
+      {supplement?.error_detail && <p className="history-repair-error" role="alert"><AlertTriangle size={15}/>失败阶段：{supplementStageLabel[supplement.error_stage ?? "failed"] ?? supplement.error_stage} · {friendlySupplementError(supplement.error_detail)}</p>}
     </section>}
     {status?.tdx_auto_import && <section className={`tdx-auto-import-status ${status.tdx_auto_import.state}`} aria-label="通达信自动导入状态">
       <div><Database size={16}/><strong>通达信日线自动监测</strong><span>{autoImportStateLabel[status.tdx_auto_import.state] ?? localizedState(status.tdx_auto_import.state)}</span></div>
