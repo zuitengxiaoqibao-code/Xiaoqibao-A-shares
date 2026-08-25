@@ -125,6 +125,7 @@ export function LocalSourceSettingsSection({ load, detect, save }: Props) {
 
   const rpcStatus = result?.tdx_rpc;
   const bridgePort = bridgePortLabel(rpcStatus?.endpoint ?? draft.tdx_rpc_url);
+  const activeTerminal = result?.terminals.find((terminal) => terminal.data_path === result.active_tdx_vipdoc);
 
   const run = async (operation: LocalSourceSettingsWriter, saved: boolean) => {
     controller.current?.abort();
@@ -179,7 +180,7 @@ export function LocalSourceSettingsSection({ load, detect, save }: Props) {
 
     <div className={`local-source-active ${result?.active_tdx_vipdoc ? "is-ready" : "is-warning"}`}>
       <FolderSearch size={17} />
-      <span><small>当前采用的通达信日线目录</small><strong>{result?.active_tdx_vipdoc ?? "未发现有效 vipdoc"}</strong></span>
+      <span><small>当前采用的通达信日线目录 {activeTerminal?.source_score && activeTerminal.source_score > 0 ? <b className="local-source-recommended">推荐主源 · {activeTerminal.source_score.toFixed(2)} 分</b> : null}</small><strong>{result?.active_tdx_vipdoc ?? "未发现有效 vipdoc"}</strong></span>
     </div>
 
     <PathEditor
@@ -216,6 +217,8 @@ export function LocalSourceSettingsSection({ load, detect, save }: Props) {
         <span className="local-terminal-path">{terminal.install_path}</span>
         <span className="local-terminal-state">
           {terminal.status === "ready" && <>可用 · 沪市 {terminal.sh_daily_count} · 深市 {terminal.sz_daily_count}
+            {terminal.source_score !== undefined && <small className="local-terminal-score">主源评分 {terminal.source_score.toFixed(2)} · 覆盖率 {(terminal.a_share_coverage_percent ?? 0).toFixed(2)}%</small>}
+            {terminal.latest_trade_date && <small className="local-terminal-note">最新交易日 {terminal.latest_trade_date}</small>}
             {terminal.professional_data_status === "detected_only" && <small className="local-terminal-note">专业缓存已发现 {terminal.professional_data_files?.length ?? 0} 项，等待只读桥接读取</small>}
             {terminal.professional_data_status === "ready" && <small className="local-terminal-note">专业只读字段已验证</small>}
           </>}

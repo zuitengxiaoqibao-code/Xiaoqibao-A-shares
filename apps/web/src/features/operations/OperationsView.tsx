@@ -81,7 +81,7 @@ const friendlySupplementError = (value: string | null | undefined) => {
   const message = String(value ?? "").trim();
   if (!message) return "官方数据修复失败，请查看数据源状态后重试";
   if (/utf-?8.*codec|UnicodeDecodeError|invalid start byte|decode byte/i.test(message)) {
-    return "官方包元数据编码无法识别，请稍后重试";
+    return "本地行情数据库暂时不可读取，可能正在被其他任务占用，请等待当前任务完成后重试";
   }
   if (!hasChinese(message)) return friendlyError(new Error(message), "官方数据修复失败，请稍后重试");
   return message;
@@ -89,7 +89,7 @@ const friendlySupplementError = (value: string | null | undefined) => {
 const supplementStageLabel: Record<string, string> = {
   queued: "等待执行", checking_metadata: "核对官方包", checking_cache: "检查缓存",
   validating_cache: "校验缓存", downloading: "下载官方包", validating: "校验下载",
-  scanning: "扫描本机日线", extracting: "解压日线文件", importing: "批量导入日线",
+  scanning: "扫描本机日线", waiting_database: "等待本地数据库释放", extracting: "解压日线文件", importing: "批量导入日线",
   online_repair: "在线修复缺口", final_review: "最终覆盖复核", completed: "修复完成",
   partial: "部分完成", failed: "修复失败",
 };
@@ -273,7 +273,40 @@ export function OperationsView(props: Props) {
         <article><span>导入股票</span><strong>{supplement?.processed_files ?? 0} / {supplement?.total_import_files ?? 0}</strong><small>新增 {supplement?.imported_rows ?? 0} · 替换 {supplement?.replaced_rows ?? 0} · 失败 {supplement?.failed_files ?? 0}</small></article>
         <article><span>在线补缺</span><strong>{supplement?.online_ready ?? 0} / {supplement?.online_total ?? 0}</strong><small>失败 {supplement?.online_failed ?? 0} · 待处理 {supplement?.online_pending ?? 0}</small></article>
       </div>
-      {supplement && <div className="data-repair-progress" role="status" aria-live="polite"><div><b>{supplementStageLabel[supplement.stage] ?? "正在处理"} · {supplement.percent.toFixed(2)}%</b><small>{supplement.result_detail ?? `任务更新时间 ${new Date(supplement.updated_at).toLocaleString("zh-CN")}`}</small></div><progress max={100} value={supplement.percent}/></div>}
+      {supplement && (() => {
+        const active = supplement.state === "pending" || supplement.state === "running";
+        const scanning = supplement.stage === "scanning";
+        const waitingDatabase = supplement.stage === "waiting_database";
+        const scanTotal = supplement.scan_total_files ?? null;
+        const scanCount = supplement.scan_scanned_files ?? 0;
+        const scanDayFiles = supplement.scan_day_files ?? 0;
+        const scanReadable = supplement.scan_readable_files ?? 0;
+        const scanPercentReady = !scanning || scanTotal !== null;
+        const hasScanEvidence = scanCount > 0 && scanTotal !== null;
+        const scanDetail = waitingDatabase
+          ? scanTotal === null
+            ? `本机日线扫描已完成 · 已扫描 ${scanCount} 个文件 · 发现 ${scanDayFiles} 个日线文件 · 可读取 ${scanReadable} 个`
+            : `本机日线扫描已完成 · 已扫描 ${scanCount} / ${scanTotal} 个文件 · 发现 ${scanDayFiles} 个日线文件 · 可读取 ${scanReadable} 个`
+          : scanning || hasScanEvidence
+            ? scanTotal === null
+              ? `已扫描 ${scanCount} 个文件 · 正在统计总量 · 发现 ${scanDayFiles} 个日线文件 · 可读取 ${scanReadable} 个`
+              : `已扫描 ${scanCount} / ${scanTotal} 个文件 · 发现 ${scanDayFiles} 个日线文件 · 可读取 ${scanReadable} 个`
+            : null;
+        const currentFile = scanning && supplement.scan_current_file
+          ? `当前 ${supplement.scan_current_file.split(/[\\/]/).pop()}`
+          : null;
+        const speed = scanning && supplement.scan_speed
+          ? `${supplement.scan_speed.toFixed(1)} 文件/秒`
+          : null;
+        return <div className={`data-repair-progress ${active ? "is-active" : ""} ${scanning || waitingDatabase ? "is-scanning" : ""}`} data-state={active ? "active" : supplement.state} role="status" aria-live="polite">
+          <div className="data-repair-stage" data-testid={`repair-stage-${supplement.stage}`} data-state={active ? "active" : supplement.state}>
+            <b>{supplementStageLabel[supplement.stage] ?? "正在处理"}{scanPercentReady ? ` · ${supplement.percent.toFixed(2)}%` : ""}</b>
+            <small>{scanDetail ?? supplement.result_detail ?? `任务更新时间 ${new Date(supplement.updated_at).toLocaleString("zh-CN")}`}</small>
+            {(scanning || waitingDatabase) && <small className="data-repair-scan-meta">{waitingDatabase ? "扫描已完成 · 正在等待数据库释放并自动重试" : [currentFile, speed].filter(Boolean).join(" · ") || "正在读取本机日线文件"}</small>}
+          </div>
+          {scanPercentReady ? <progress max={100} value={supplement.percent}/> : <progress max={100}/>}
+        </div>;
+      })()}
       {supplement?.source_attempts?.length ? <div className="data-source-ladder">{supplement.source_attempts.map((item) => <article key={item.source} className={item.state}><span>{item.state === "completed" ? <CheckCircle2 size={15}/> : item.state === "failed" ? <AlertTriangle size={15}/> : <Clock3 size={15}/>}<b>{supplementSourceLabel[item.source] ?? item.source}</b></span><small>{item.detail}</small></article>)}</div> : null}
       {supplementError && <p className="history-repair-error" role="alert"><AlertTriangle size={15}/>{supplementError}</p>}
       {supplement?.error_detail && <p className="history-repair-error" role="alert"><AlertTriangle size={15}/>失败阶段：{supplementStageLabel[supplement.error_stage ?? "failed"] ?? supplement.error_stage} · {friendlySupplementError(supplement.error_detail)}</p>}

@@ -40,6 +40,26 @@ def test_history_loader_skips_files_after_stop_is_requested(tmp_path, monkeypatc
     assert reads == []
 
 
+def test_history_loader_fills_missing_symbols_from_lower_ranked_directory(tmp_path) -> None:
+    primary = tmp_path / "primary" / "sh" / "lday"
+    secondary = tmp_path / "secondary" / "sz" / "lday"
+    primary.mkdir(parents=True)
+    secondary.mkdir(parents=True)
+    (primary / "sh600000.day").write_bytes(struct.pack(
+        "<IIIIIfII", 20260825, 1000, 1010, 990, 1005, 100.0, 10, 0,
+    ))
+    (secondary / "sz000001.day").write_bytes(struct.pack(
+        "<IIIIIfII", 20260825, 2000, 2010, 1990, 2005, 200.0, 20, 0,
+    ))
+
+    histories = load_tdx_daily_histories(
+        (tmp_path / "primary", tmp_path / "secondary"),
+        as_of=date(2026, 8, 25),
+    )
+
+    assert set(histories) == {"600000", "000001"}
+
+
 def test_read_tdx_day_bars_decodes_prices_amount_and_date(tmp_path) -> None:
     path = tmp_path / "sh600000.day"
     path.write_bytes(struct.pack(

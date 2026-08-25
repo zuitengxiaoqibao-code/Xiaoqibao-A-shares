@@ -36,7 +36,7 @@ class HistorySupplementJob(BaseModel):
     stage: Literal[
         "queued", "checking_metadata", "checking_cache", "validating_cache",
         "downloading", "validating",
-        "importing", "extracting", "scanning", "online_repair", "final_review",
+        "importing", "extracting", "scanning", "waiting_database", "online_repair", "final_review",
         "completed", "partial", "failed",
     ]
     percent: float = Field(ge=0, le=100)
@@ -69,6 +69,13 @@ class HistorySupplementJob(BaseModel):
     online_ready: int = Field(default=0, ge=0)
     online_failed: int = Field(default=0, ge=0)
     online_pending: int = Field(default=0, ge=0)
+    scan_scanned_files: int = Field(default=0, ge=0)
+    scan_total_files: int | None = Field(default=None, ge=0)
+    scan_day_files: int = Field(default=0, ge=0)
+    scan_readable_files: int = Field(default=0, ge=0)
+    scan_current_file: str | None = None
+    scan_speed: float | None = Field(default=None, ge=0)
+    scan_eta_seconds: float | None = Field(default=None, ge=0)
     final_target_date: date | None = None
     final_dominant_trade_date: date | None = None
     final_dominant_coverage_percent: float | None = Field(default=None, ge=0, le=100)

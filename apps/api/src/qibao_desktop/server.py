@@ -44,7 +44,10 @@ class LocalApiServer:
         self._thread = threading.Thread(
             target=self._run,
             name="qibao-local-api",
-            daemon=False,
+            # The desktop lifecycle owns this thread and calls stop() during
+            # normal shutdown. A daemon fallback prevents a stalled ASGI
+            # teardown from keeping a windowless EXE alive and locking data.
+            daemon=True,
         )
 
     @property

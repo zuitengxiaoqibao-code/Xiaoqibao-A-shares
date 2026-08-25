@@ -28,6 +28,15 @@ describe("TaskActivityStatus", () => {
     expect(screen.queryByText("正在轮询")).not.toBeInTheDocument();
   });
 
+  it("treats a configured but unverified AI as available", () => {
+    render(<TaskActivityStatus ai={{ configured: true, state: "configured_unverified", message: "AI 接口已配置，等待首次连接验证" }} />);
+
+    expect(screen.getByText("AI 状态")).toBeInTheDocument();
+    expect(screen.getByText("在线")).toBeInTheDocument();
+    expect(screen.queryByText("异常")).not.toBeInTheDocument();
+    expect(screen.queryByText("离线")).not.toBeInTheDocument();
+  });
+
   it("cleans its singleton state between tests", () => {
     render(<TaskActivityStatus ai={{ configured: true, state: "connected", message: "AI 已连接" }} />);
     expect(screen.getByText("AI 状态")).toBeInTheDocument();

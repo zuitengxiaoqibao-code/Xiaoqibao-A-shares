@@ -13,6 +13,7 @@ from qibao_api.gongbu.tdx_official_package import (
     inspect_official_archive,
     parse_official_package_info,
 )
+from qibao_api.gongbu.tdx_local_import import TdxLocalDatabaseUnavailable
 
 
 def _day_record(raw_date: int, close: int = 1000) -> bytes:
@@ -82,6 +83,37 @@ def test_official_package_metadata_accepts_gb18030_response() -> None:
 
     assert info.size_label == "520.67MB"
     assert info.modified_at.isoformat() == "2026-08-18T15:58:48+08:00"
+
+
+def test_official_package_metadata_accepts_current_vendor_response() -> None:
+    metadata = (
+        b'/*modified at 2026-08-24 16:20:01*/\n'
+        b'window.HSJDAY_SOFT_SIZE="521.36MB";\n'
+        b'window.HSJDAY_SOFT_TIME="2026-08-24 15:58:48";\n'
+    )
+
+    class Response:
+        content = metadata
+
+        def raise_for_status(self):
+            return None
+
+    class Client:
+        def get(self, _url):
+            return Response()
+
+    service = OfficialTdxPackageService(
+        cache_dir=Path("cache"),
+        state_path=Path("state.json"),
+        tdx_import_service=object(),
+        client=Client(),
+        as_of=date(2026, 8, 24),
+    )
+
+    info = service.package_info()
+
+    assert info.size_label == "521.36MB"
+    assert info.modified_at.isoformat() == "2026-08-24T15:58:48+08:00"
 
 
 def test_official_package_rejects_zip_path_escape(tmp_path) -> None:
@@ -164,6 +196,98 @@ def test_official_package_job_downloads_validates_imports_and_survives_reopen(tm
     )
     assert reopened.current_job() == completed
     reopened.close()
+
+
+def test_official_package_persists_local_scan_progress(tmp_path) -> None:
+    payload = _archive_bytes()
+    metadata = (
+        'window.HSJDAY_SOFT_SIZE="520.67MB";\n'
+        'window.HSJDAY_SOFT_TIME="2026-08-18 15:58:48";'
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("_hsjdayinfo.js"):
+            return httpx.Response(200, text=metadata)
+        return httpx.Response(200, content=payload, headers={"Content-Length": str(len(payload))})
+
+    class ImportService:
+        def default_paths(self):
+            return (tmp_path / "vipdoc",)
+
+        def import_now(self, _paths, **options):
+            options["discovery_progress"]({
+                "scanned_files": 3,
+                "total_scan_files": 5,
+                "day_files": 3,
+                "readable_files": 2,
+                "current_file": "C:/tdx/vipdoc/sh/lday/sh600001.day",
+                "scan_speed": 12.5,
+                "scan_eta_seconds": 0.16,
+            })
+            return type("Result", (), {
+                "state": "completed", "imported_rows": 1, "replaced_rows": 0,
+                "skipped_rows": 0, "failed_files": 0,
+                "latest_trade_date": "2026-08-18", "errors": (),
+            })()
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        service = OfficialTdxPackageService(
+            cache_dir=tmp_path / "cache",
+            state_path=tmp_path / "official-package.json",
+            tdx_import_service=ImportService(),
+            client=client,
+            clock=lambda: datetime(2026, 8, 19, 2, tzinfo=timezone.utc),
+            as_of=date(2026, 8, 19),
+        )
+        job = service.create_job()
+        completed = service.run(job.job_id)
+
+    assert completed.scan_scanned_files == 3
+    assert completed.scan_total_files == 5
+    assert completed.scan_day_files == 3
+    assert completed.scan_readable_files == 2
+    assert completed.scan_current_file.endswith("sh600001.day")
+    assert completed.scan_speed == 12.5
+    assert completed.scan_eta_seconds == 0.16
+
+
+def test_current_job_reclassifies_legacy_completed_scan_database_lock(tmp_path) -> None:
+    observed = datetime(2026, 8, 25, 2, tzinfo=timezone.utc)
+
+    service = OfficialTdxPackageService(
+        cache_dir=tmp_path / "cache",
+        state_path=tmp_path / "official-package.json",
+        tdx_import_service=object(),
+        client=httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(500))),
+        clock=lambda: observed,
+        as_of=date(2026, 8, 25),
+    )
+    job = service.create_job()
+    service._update(
+        job,
+        state="failed",
+        stage="failed",
+        percent=5,
+        error_stage="scanning",
+        error_detail="本地行情数据库暂时不可读取，可能正在被其他任务占用，请等待当前任务完成后重试",
+        scan_scanned_files=9497,
+        scan_total_files=9497,
+        scan_day_files=9497,
+        scan_current_file="sz399998.day",
+        result_detail="已扫描 9497 个文件 / 9497",
+        finished_at=observed,
+    )
+
+    normalized = service.current_job()
+
+    assert normalized is not None
+    assert normalized.state == "partial"
+    assert normalized.stage == "waiting_database"
+    assert normalized.percent == 6
+    assert normalized.error_detail is None
+    assert "重新执行一键全面修复" in (normalized.result_detail or "")
+    assert service.current_job().stage == "waiting_database"
+    service.close()
 
 
 def test_official_package_reuses_valid_cached_archive_after_interrupted_job(tmp_path) -> None:
@@ -375,6 +499,110 @@ def test_full_repair_reports_real_validation_extraction_import_and_verification_
     assert [item.source for item in completed.source_attempts] == [
         "tdx_local", "tdx_official", "mootdx", "baidu",
     ]
+
+
+def test_full_repair_falls_back_when_local_database_date_is_temporarily_unavailable(tmp_path) -> None:
+    payload = _archive_bytes()
+    metadata = (
+        'window.HSJDAY_SOFT_SIZE="520.67MB";\n'
+        'window.HSJDAY_SOFT_TIME="2026-08-18 15:58:48";'
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("_hsjdayinfo.js"):
+            return httpx.Response(200, text=metadata)
+        return httpx.Response(200, content=payload)
+
+    class ImportService:
+        def default_paths(self):
+            return ()
+
+        def import_now(self, _paths, **_options):
+            return type("Result", (), {
+                "state": "completed", "imported_rows": 1, "replaced_rows": 0,
+                "skipped_rows": 0, "failed_files": 0,
+                "latest_trade_date": "2026-08-18", "errors": (),
+            })()
+
+    class Coverage:
+        target_date = date(2026, 8, 19)
+        dominant_trade_date = date(2026, 8, 19)
+        dominant_date_coverage_percent = 99.1
+        coverage_percent = 99.2
+        missing_history_count = 0
+        quality = "ready"
+        blockers = ()
+
+    class HistoryService:
+        def default_target_date(self):
+            raise UnicodeDecodeError("utf-8", b"\\xc1", 0, 1, "database is locked")
+
+        def create_target_repair(self, target):
+            assert target == date(2026, 8, 19)
+            return None
+
+        def coverage(self, target):
+            assert target == date(2026, 8, 19)
+            return Coverage()
+
+    observed = datetime(2026, 8, 19, 2, tzinfo=timezone.utc)
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        service = OfficialTdxPackageService(
+            cache_dir=tmp_path / "cache",
+            state_path=tmp_path / "full-repair.json",
+            tdx_import_service=ImportService(),
+            history_service=HistoryService(),
+            client=client,
+            clock=lambda: observed,
+            as_of=date(2026, 8, 19),
+        )
+        completed = service.run(service.create_job().job_id)
+
+    assert completed.state == "completed"
+    assert completed.final_target_date == date(2026, 8, 19)
+
+
+def test_full_repair_preserves_completed_scan_when_local_database_remains_locked(tmp_path) -> None:
+    class ImportService:
+        def default_paths(self):
+            return (tmp_path / "vipdoc",)
+
+        def import_now(self, _paths, **options):
+            options["discovery_progress"]({
+                "phase": "scan_complete",
+                "scanned_files": 9497,
+                "total_scan_files": 9497,
+                "day_files": 9497,
+                "readable_files": 9497,
+                "current_file": None,
+                "scan_speed": 256.0,
+                "scan_eta_seconds": 0.0,
+            })
+            raise TdxLocalDatabaseUnavailable(attempts=5, scanned_files=9497, total_files=9497)
+
+    class HistoryService:
+        def default_target_date(self):
+            return date(2026, 8, 25)
+
+    service = OfficialTdxPackageService(
+        cache_dir=tmp_path / "cache",
+        state_path=tmp_path / "history-supplement.json",
+        tdx_import_service=ImportService(),
+        history_service=HistoryService(),
+        client=httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(500))),
+        as_of=date(2026, 8, 25),
+    )
+
+    completed = service.run(service.create_job().job_id)
+
+    assert completed.state == "partial"
+    assert completed.stage == "partial"
+    assert completed.percent >= 6
+    assert completed.scan_scanned_files == 9497
+    assert completed.scan_total_files == 9497
+    assert completed.scan_current_file is None
+    assert "扫描已完成" in (completed.result_detail or "")
+    assert "数据库" in (completed.error_detail or "")
 
 
 def test_full_repair_finishes_partial_when_final_coverage_is_still_stale(tmp_path) -> None:

@@ -51,6 +51,31 @@ SAFE_MARKET_OVERVIEW_ERROR = "市场总览加载失败，请检查本地行情�
 MINIMUM_SHARED_CANDIDATE_LIMIT = 12
 LOGGER = logging.getLogger(__name__)
 
+
+def _shutdown_candidate_process_executor(executor) -> None:
+    """Cancel the local candidate scan without keeping the desktop alive.
+
+    Candidate scans run in a process pool because they can be CPU-heavy. A
+    normal ``shutdown(wait=True)`` makes closing the desktop wait for the
+    current full-market scan, leaving a windowless EXE in Task Manager. The
+    process objects belong exclusively to this executor, so terminating them
+    here is bounded and cannot touch the user's external applications.
+    """
+    processes = getattr(executor, "_processes", {})
+    processes = {} if processes is None else processes
+    for process in tuple(processes.values()):
+        try:
+            if process.is_alive():
+                process.terminate()
+        except (AttributeError, OSError, RuntimeError):
+            continue
+    executor.shutdown(wait=False, cancel_futures=True)
+    for process in tuple(processes.values()):
+        try:
+            process.join(timeout=1)
+        except (AttributeError, OSError, RuntimeError):
+            continue
+
 STRATEGY_MODEL_REGIMES = {
     "0轴低吸模型": ("情绪主升", "轮动震荡"),
     "恐慌低吸模型": ("冰点修复", "高位退潮"),
@@ -956,14 +981,14 @@ class QuantStrategyService:
         self._evidence_errors: dict[tuple[date, int], str] = {}
 
     def close(self) -> None:
-        executor = self._candidate_scan_executor
-        self._candidate_scan_executor = None
-        if executor is not None:
-            executor.shutdown(wait=True, cancel_futures=True)
         process_executor = self._candidate_process_executor
         self._candidate_process_executor = None
         if process_executor is not None:
-            process_executor.shutdown(wait=True, cancel_futures=True)
+            _shutdown_candidate_process_executor(process_executor)
+        executor = self._candidate_scan_executor
+        self._candidate_scan_executor = None
+        if executor is not None:
+            executor.shutdown(wait=False, cancel_futures=True)
         for lock, future_attr, executor_attr in (
             (self._overview_lock, "_overview_future", "_overview_executor"),
         ):

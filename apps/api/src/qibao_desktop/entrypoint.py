@@ -28,6 +28,36 @@ from qibao_desktop.pending_update import load_pending_update
 logger = logging.getLogger(__name__)
 
 
+def _hidden_process_kwargs() -> dict[str, object]:
+    """Keep helper processes out of the user's desktop on Windows."""
+    return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+
+
+def _defer_pending_update(manifest: Path) -> Path | None:
+    """Move a failed update out of the startup path without deleting it."""
+    deferred = manifest.with_name("pending-update.deferred.json")
+    try:
+        os.replace(manifest, deferred)
+    except OSError:
+        return None
+    return deferred
+
+
+def _launch_release(root: Path) -> bool:
+    executable = root / "xiaoqibao.exe"
+    if not executable.is_file():
+        return False
+    try:
+        subprocess.Popen(
+            [str(executable)],
+            cwd=root,
+            **_hidden_process_kwargs(),
+        )
+    except OSError:
+        return False
+    return True
+
+
 def _create_local_api_server(port: int):
     from qibao_desktop.server import LocalApiServer
 
@@ -82,6 +112,7 @@ def _release_process_ids(target_root: Path, excluded_pids: set[int]) -> set[int]
             errors="replace",
             timeout=5,
             check=False,
+            **_hidden_process_kwargs(),
         )
         stdout = result.stdout or ""
         if not stdout.strip():
@@ -152,14 +183,36 @@ def _run_update_helper(manifest: Path, parent_pid: int | None) -> int:
         fallback_root = update.target_root
         if not _wait_for_update_processes(update.target_root, parent_pid):
             error = TimeoutError("仍有旧版进程占用程序文件")
-            _record_update_failure(update.target_root, "便携版更新等待超时，已保留待更新文件", error)
+            deferred = _defer_pending_update(manifest)
+            if deferred is not None:
+                _record_update_failure(
+                    update.target_root,
+                    "便携版更新等待超时，已暂缓更新，当前版本继续启动",
+                    error,
+                )
+            else:
+                _record_update_failure(
+                    update.target_root,
+                    "便携版更新等待超时，暂缓更新失败，当前版本继续启动",
+                    error,
+                )
+            # The existing release is still alive at this point. Launching it
+            # again creates duplicate same-path processes and prevents the
+            # next startup from ever applying the pending update. The running
+            # instance remains available; retry the update on a later launch.
             return 3
         update.apply()
         manifest.unlink(missing_ok=True)
-        subprocess.Popen([str(update.target_root / "xiaoqibao.exe")], cwd=update.target_root)
+        _launch_release(update.target_root)
         return 0
     except Exception as error:
-        _record_update_failure(fallback_root, "便携版更新失败，已保留待更新文件并等待下次重试", error)
+        _defer_pending_update(manifest)
+        _record_update_failure(
+            fallback_root,
+            "便携版更新失败，已暂缓更新，当前版本继续启动",
+            error,
+        )
+        _launch_release(fallback_root)
         return 4
 
 
@@ -188,6 +241,7 @@ def _handoff_pending_update(portable_root: Path | None) -> bool:
     subprocess.Popen(
         [str(helper), "--apply-pending-update", str(manifest), "--parent-pid", str(os.getpid())],
         cwd=update.staged_root,
+        **_hidden_process_kwargs(),
     )
     return True
 

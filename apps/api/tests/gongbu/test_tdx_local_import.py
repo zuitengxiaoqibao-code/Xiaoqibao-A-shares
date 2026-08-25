@@ -3,7 +3,9 @@ import zipfile
 from datetime import date
 from decimal import Decimal
 
-from qibao_api.gongbu.tdx_local_import import TdxLocalImportService
+import pytest
+
+from qibao_api.gongbu.tdx_local_import import TdxLocalDatabaseUnavailable, TdxLocalImportService
 from qibao_api.gongbu.tdx_import_repository import TdxImportRepository
 from qibao_api.storage.bar_repository import BarRepository
 
@@ -157,6 +159,107 @@ def test_synchronous_import_reports_real_file_progress(tmp_path) -> None:
 
     assert result.state == "completed"
     assert observed == [(1, 2, "600000"), (2, 2, "600001")]
+
+
+def test_synchronous_import_reports_discovery_progress_for_each_day_file(tmp_path) -> None:
+    root = tmp_path / "vipdoc" / "sh" / "lday"
+    root.mkdir(parents=True)
+    (root / "sh600000.day").write_bytes(_day_record(20260813, 1010))
+    (root / "sh600001.day").write_bytes(_day_record(20260813, 1020))
+    repository = BarRepository(tmp_path / "market.duckdb", tmp_path / "parquet")
+    observed = []
+
+    result = TdxLocalImportService(repository, as_of=date(2026, 8, 19)).import_now(
+        (tmp_path / "vipdoc",), discovery_progress=observed.append,
+    )
+
+    assert result.state == "completed"
+    assert [event["scanned_files"] for event in observed] == [1, 2]
+    assert [event["total_scan_files"] for event in observed] == [2, 2]
+    assert [event["day_files"] for event in observed] == [1, 2]
+    assert observed[-1]["readable_files"] == 2
+    assert observed[-1]["current_file"].endswith("sh600001.day")
+
+
+def test_incremental_import_reports_scan_complete_before_database_watermark_read(tmp_path) -> None:
+    root = tmp_path / "vipdoc" / "sh" / "lday"
+    root.mkdir(parents=True)
+    (root / "sh600000.day").write_bytes(_day_record(20260818, 1010))
+    observed = []
+
+    class Repository:
+        def latest_dates(self, symbols, _as_of):
+            assert symbols == ["600000"]
+            assert observed[-1]["phase"] == "scan_complete"
+            assert observed[-1]["scanned_files"] == 1
+            assert observed[-1]["total_scan_files"] == 1
+            assert observed[-1]["current_file"] is None
+            return {"600000": None}
+
+        def append_preferred_batch(self, rows, _priority):
+            return len(rows), 0, 0
+
+    result = TdxLocalImportService(
+        Repository(), as_of=date(2026, 8, 19),
+    ).import_now(
+        (tmp_path / "vipdoc",),
+        discovery_progress=observed.append,
+        incremental=True,
+        batch_size=256,
+    )
+
+    assert result.state == "completed"
+
+
+def test_incremental_import_retries_transient_database_lock_and_reports_waiting_progress(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "vipdoc" / "sh" / "lday"
+    root.mkdir(parents=True)
+    (root / "sh600000.day").write_bytes(_day_record(20260818, 1010))
+    observed = []
+    attempts = {"count": 0}
+
+    class Repository:
+        def latest_dates(self, _symbols, _as_of):
+            attempts["count"] += 1
+            if attempts["count"] < 3:
+                raise RuntimeError("database is locked")
+            return {"600000": None}
+
+        def append_preferred_batch(self, rows, _priority):
+            return len(rows), 0, 0
+
+    monkeypatch.setattr("qibao_api.gongbu.tdx_local_import.time.sleep", lambda _seconds: None)
+
+    result = TdxLocalImportService(Repository(), as_of=date(2026, 8, 19)).import_now(
+        (tmp_path / "vipdoc",),
+        discovery_progress=observed.append,
+        incremental=True,
+        batch_size=256,
+    )
+
+    assert result.state == "completed"
+    assert attempts["count"] == 3
+    assert len([item for item in observed if item.get("phase") == "waiting_database"]) == 2
+
+
+def test_incremental_import_raises_recoverable_error_after_database_lock_retries(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "vipdoc" / "sh" / "lday"
+    root.mkdir(parents=True)
+    (root / "sh600000.day").write_bytes(_day_record(20260818, 1010))
+
+    class Repository:
+        def latest_dates(self, _symbols, _as_of):
+            raise RuntimeError("database is locked")
+
+    monkeypatch.setattr("qibao_api.gongbu.tdx_local_import.time.sleep", lambda _seconds: None)
+
+    with pytest.raises(TdxLocalDatabaseUnavailable) as raised:
+        TdxLocalImportService(Repository(), as_of=date(2026, 8, 19)).import_now(
+            (tmp_path / "vipdoc",), incremental=True, batch_size=256,
+        )
+
+    assert raised.value.attempts == 5
+    assert raised.value.scanned_files == 1
 
 
 def test_synchronous_import_reads_only_each_symbols_missing_date_range(tmp_path) -> None:

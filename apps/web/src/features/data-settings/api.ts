@@ -13,6 +13,7 @@ import type {
   SourceHealthResponse,
   TdxImportJob,
   TdxImportScan,
+  TdxDirectoriesView,
   DataImportPreview,
   DataImportTask,
 } from "./types";
@@ -47,6 +48,15 @@ export const saveLocalSourceSettings = (input: LocalSourceSettings, signal?: Abo
   "/api/v1/settings/data-sources",
   { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input), signal },
 );
+
+export const loadTdxDirectories = (signal?: AbortSignal) => apiClient.get<TdxDirectoriesView>(
+  "/api/v1/settings/tdx-directories",
+  { signal, context: "通达信目录评分" },
+);
+export const selectTdxDirectory = (root: string | null, signal?: AbortSignal) => apiClient.request<TdxDirectoriesView>(
+  "/api/v1/settings/tdx-directories/select",
+  { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ root }), signal, context: "通达信主源选择" },
+).then((response) => response.data);
 
 export const syncAShareUniverse = async (): Promise<AShareUniverseSyncResult> => {
   return apiClient.post<AShareUniverseSyncResult>("/api/v1/a-shares/universe/sync", undefined, { context: "A 股证券目录同步" });

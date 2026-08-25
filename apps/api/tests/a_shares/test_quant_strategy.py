@@ -15,6 +15,7 @@ from qibao_api.a_shares.quant_strategy import (
     ArchivedTriggerEvidenceSource,
     QuantStrategyService,
     TriggerEvidence,
+    _shutdown_candidate_process_executor,
     build_quant_strategy_dashboard,
 )
 from qibao_api.contracts.market_overview import (
@@ -33,6 +34,39 @@ from qibao_api.gongbu.market_feed import MarketFeedSnapshot
 
 
 NOW = datetime(2026, 7, 31, 6, 0, tzinfo=timezone.utc)
+
+
+def test_candidate_process_executor_shutdown_terminates_only_owned_workers() -> None:
+    class Worker:
+        def __init__(self) -> None:
+            self.terminated = False
+            self.joined = False
+
+        def is_alive(self) -> bool:
+            return True
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+        def join(self, timeout=None) -> None:
+            self.joined = timeout == 1
+
+    class Executor:
+        def __init__(self) -> None:
+            self.worker = Worker()
+            self._processes = {1: self.worker}
+            self.shutdown_args = None
+
+        def shutdown(self, **kwargs) -> None:
+            self.shutdown_args = kwargs
+
+    executor = Executor()
+
+    _shutdown_candidate_process_executor(executor)
+
+    assert executor.shutdown_args == {"wait": False, "cancel_futures": True}
+    assert executor.worker.terminated is True
+    assert executor.worker.joined is True
 
 
 def factor(symbol: str, score: Decimal = Decimal("81")) -> CandidateEntry:

@@ -181,6 +181,40 @@ def test_data_source_settings_default_to_discovery_without_rpc(tmp_path: Path) -
     assert body["tdx_rpc"]["capabilities"]
 
 
+def test_tdx_directory_settings_expose_ranked_candidates_and_active_mode(tmp_path: Path) -> None:
+    root = _create_tdx(tmp_path / "tdx")
+    subject = client(tmp_path)
+    subject.put("/api/v1/settings/data-sources", json={
+        "auto_discovery": False,
+        "tdx_install_paths": [str(root)],
+        "ths_install_paths": [],
+        "tdx_rpc_enabled": False,
+        "tdx_rpc_url": None,
+    })
+
+    response = subject.get("/api/v1/settings/tdx-directories")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["active_mode"] == "manual"
+    assert body["active_root"] == str(root)
+    assert body["candidates"][0]["root"] == str(root)
+
+
+def test_select_tdx_directory_persists_manual_override_and_auto_restore(tmp_path: Path) -> None:
+    root = _create_tdx(tmp_path / "tdx")
+    subject = client(tmp_path)
+
+    selected = subject.post("/api/v1/settings/tdx-directories/select", json={"root": str(root)})
+    restored = subject.post("/api/v1/settings/tdx-directories/select", json={"root": None})
+
+    assert selected.status_code == 200
+    assert selected.json()["active_mode"] == "manual"
+    assert selected.json()["active_root"] == str(root)
+    assert restored.status_code == 200
+    assert restored.json()["active_mode"] == "auto"
+
+
 def test_data_source_settings_reuse_startup_discovery_snapshot(tmp_path: Path) -> None:
     application = FastAPI()
     repository = LocalSourceSettingsRepository(tmp_path / "config" / "data-sources.json")

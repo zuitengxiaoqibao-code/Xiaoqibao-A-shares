@@ -20,6 +20,7 @@ from qibao_api.dependencies import (
     get_tdx_import_executor,
     get_tdx_import_service,
     get_history_supplement_service,
+    get_server_time,
 )
 from qibao_api.main import app
 
@@ -320,6 +321,20 @@ def test_official_history_supplement_metadata_and_start_are_exposed() -> None:
     assert executor.submissions[0][1] == ("history-supplement-test",)
 
 
+def test_official_history_metadata_decode_error_is_localized() -> None:
+    class BrokenMetadataService(RecordingHistorySupplementService):
+        def package_info(self):
+            raise UnicodeDecodeError("utf-8", b"\\xc1", 0, 1, "invalid start byte")
+
+    with make_supplement_client(BrokenMetadataService(), RecordingExecutor()) as client:
+        response = client.get("/api/v1/a-shares/history-supplement/official-info")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "本地行情数据库暂时不可读取，可能正在被其他任务占用，请等待当前任务完成后重试"
+    )
+
+
 def test_history_endpoint_returns_empty_list_before_sync() -> None:
     with make_client() as client:
         response = client.get("/api/v1/a-shares/600000/history?limit=20")
@@ -409,6 +424,23 @@ def test_history_repair_center_route_is_read_only_and_paginated() -> None:
     assert response.json()["total_gap_count"] == 1
     assert response.json()["gaps"][0]["gap_kind"] == "insufficient_history"
     assert service.run_calls == []
+
+
+def test_history_repair_center_falls_back_when_database_date_is_unavailable() -> None:
+    class LockedHistoryService(RecordingFullMarketHistoryService):
+        def default_target_date(self):
+            raise UnicodeDecodeError("utf-8", b"\\xc1", 0, 1, "invalid start byte")
+
+    service = LockedHistoryService()
+    app.dependency_overrides[get_server_time] = lambda: datetime(
+        2026, 8, 25, 3, 31, tzinfo=timezone.utc
+    )
+
+    with make_history_client(service, RecordingExecutor()) as client:
+        response = client.get("/api/v1/a-shares/history-sync/repair-center")
+
+    assert response.status_code == 200
+    assert response.json()["coverage"]["target_date"] == "2026-08-24"
 
 
 def test_history_quality_route_is_read_only() -> None:

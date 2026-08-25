@@ -224,6 +224,10 @@ class PollStateRepository:
             WHERE strftime('%s',observed_at) IS NOT NULL
             GROUP BY symbol,CAST(strftime('%s',observed_at) AS INTEGER)"""
         )
+        # The backfill above opens a write transaction during startup. Commit
+        # it before the repository is shared with background readers; otherwise
+        # a second process or a later startup sees a persistent database lock.
+        self.connection.commit()
 
     def close(self) -> None:
         with self._lock:

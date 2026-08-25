@@ -1,5 +1,5 @@
 from concurrent.futures import Executor
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Annotated
 from zoneinfo import ZoneInfo
@@ -48,9 +48,18 @@ def official_history_package_info(
     try:
         return service.package_info()
     except Exception as error:
+        if isinstance(error, UnicodeDecodeError):
+            detail = "本地行情数据库暂时不可读取，可能正在被其他任务占用，请等待当前任务完成后重试"
+        else:
+            message = str(error).strip()
+            detail = (
+                f"通达信官方日线包信息读取失败：{message}"
+                if any("\u4e00" <= char <= "\u9fff" for char in message)
+                else "通达信官方日线包信息暂时不可用，请稍后重试"
+            )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"通达信官方日线包信息读取失败：{str(error) or type(error).__name__}",
+            detail=detail,
         ) from error
 
 
@@ -168,9 +177,24 @@ def _china_date(now: datetime) -> date:
     return now.astimezone(ZoneInfo("Asia/Shanghai")).date()
 
 
+def _fallback_history_target(now: datetime) -> date:
+    local = now.astimezone(ZoneInfo("Asia/Shanghai"))
+    target = local.date()
+    if local.time() < time(15, 5):
+        target -= timedelta(days=1)
+    while target.weekday() >= 5:
+        target -= timedelta(days=1)
+    return target
+
+
 def _default_history_target(service: FullMarketHistoryService, now: datetime) -> date:
     resolver = getattr(service, "default_target_date", None)
-    return resolver() if resolver is not None else _china_date(now)
+    if resolver is None:
+        return _china_date(now)
+    try:
+        return resolver()
+    except (UnicodeDecodeError, OSError, RuntimeError):
+        return _fallback_history_target(now)
 
 
 def _submit(

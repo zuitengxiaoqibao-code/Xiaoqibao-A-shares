@@ -1,10 +1,14 @@
 param(
     [switch]$IncludeDefaultAIKey,
     [switch]$DataFree,
+    [switch]$ProgramOnly,
     [string]$ReleaseRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
+if ($ProgramOnly -and $DataFree) {
+    throw "ProgramOnly cannot be combined with DataFree"
+}
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $Dist = (Resolve-Path (Join-Path $Root "dist")).Path
 $Release = if ($ReleaseRoot) { (Resolve-Path -LiteralPath $ReleaseRoot).Path } else { (Resolve-Path (Join-Path $Dist "XiaoQiBao-Portable")).Path }
@@ -15,8 +19,10 @@ $StageParent = Join-Path $Dist (
 )
 $StageRelease = Join-Path $StageParent "XiaoQiBao-Portable"
 $SuffixParts = @(
+    if ($ProgramOnly) { "Program-Only" }
     if ($DataFree) { "Data-Free" }
-    if ($IncludeDefaultAIKey) { "With-Default-AI" } else { "No-AI-Key" }
+    if ($IncludeDefaultAIKey) { "With-Default-AI" }
+    elseif (-not $ProgramOnly) { "No-AI-Key" }
 )
 $Suffix = $SuffixParts -join "-"
 $Archive = Join-Path $Dist (
@@ -41,7 +47,29 @@ function Assert-SafeStagingPath([string]$Path) {
 try {
     Assert-SafeStagingPath $StageParent
     New-Item -ItemType Directory -Path $StageParent | Out-Null
-    if ($DataFree) {
+    if ($ProgramOnly) {
+        New-Item -ItemType Directory -Path $StageRelease | Out-Null
+        $PersistentNames = @("config", "data", "news", "cache", "logs", "models", "exports", "backups")
+        foreach ($Entry in Get-ChildItem -LiteralPath $Release -Force) {
+            if ($Entry.Name -notin ($PersistentNames + @("release-manifest.json"))) {
+                Copy-Item -LiteralPath $Entry.FullName -Destination $StageRelease -Recurse -Force
+            }
+        }
+        foreach ($Name in $PersistentNames) {
+            New-Item -ItemType Directory -Path (Join-Path $StageRelease $Name) -Force | Out-Null
+        }
+        if ($IncludeDefaultAIKey) {
+            $SourceAISettings = Join-Path $Release "data\ai-settings.json"
+            if (-not (Test-Path -LiteralPath $SourceAISettings)) {
+                throw "AI settings are missing from the portable release"
+            }
+            Copy-Item -LiteralPath $SourceAISettings -Destination (Join-Path $StageRelease "data") -Force
+        }
+        $PackageReadme = Join-Path $Root "packaging\portable-program-readme.txt"
+        if (Test-Path -LiteralPath $PackageReadme) {
+            Copy-Item -LiteralPath $PackageReadme -Destination (Join-Path $StageRelease "portable-program-readme.txt") -Force
+        }
+    } elseif ($DataFree) {
         New-Item -ItemType Directory -Path $StageRelease | Out-Null
         $PersistentNames = @("config", "data", "news", "cache", "logs", "models", "exports", "backups")
         foreach ($Entry in Get-ChildItem -LiteralPath $Release -Force) {
@@ -61,7 +89,9 @@ try {
         }
         $PackageReadme = Join-Path $Root "packaging\portable-test-readme.txt"
         if (Test-Path -LiteralPath $PackageReadme) {
-            Copy-Item -LiteralPath $PackageReadme -Destination (Join-Path $StageRelease "测试包说明.txt") -Force
+            # Keep the package filename ASCII so Windows PowerShell code pages
+            # cannot turn the destination into an invalid path.
+            Copy-Item -LiteralPath $PackageReadme -Destination (Join-Path $StageRelease "portable-test-readme.txt") -Force
         }
     } else {
         Copy-Item `

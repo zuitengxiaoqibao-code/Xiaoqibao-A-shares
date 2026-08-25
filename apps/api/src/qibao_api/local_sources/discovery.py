@@ -2,13 +2,17 @@ import ctypes
 import os
 from collections.abc import Callable, Iterable
 from ctypes import wintypes
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
 from qibao_api.local_sources.models import LocalSourceSettings
+from qibao_api.gongbu.tdx_directory_discovery import (
+    _inspect_root,
+    rank_tdx_directories,
+)
 
 
 Vendor = Literal["tdx", "ths"]
@@ -38,6 +42,12 @@ class LocalTerminalStatus(BaseModel):
     professional_data_files: tuple[str, ...] = ()
     selection_eligible: bool = True
     selection_note: str | None = None
+    latest_trade_date: date | None = None
+    day_file_count: int = 0
+    readable_day_file_count: int = 0
+    a_share_coverage_percent: float = 0.0
+    source_score: float = 0.0
+    source_reasons: tuple[str, ...] = ()
 
 
 class LocalTerminalDiscoveryResult(BaseModel):
@@ -89,9 +99,11 @@ class LocalTerminalDiscovery:
         self,
         *,
         system_candidates: Callable[[], Iterable[SystemCandidate]] | None = None,
+        known_paths: Iterable[Path] = (),
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     ) -> None:
         self.system_candidates = system_candidates or discover_system_candidates
+        self.known_paths = tuple(Path(path).expanduser().resolve(strict=False) for path in known_paths)
         self.clock = clock
 
     def inspect(self, settings: LocalSourceSettings) -> LocalTerminalDiscoveryResult:
@@ -100,6 +112,11 @@ class LocalTerminalDiscovery:
             *(('ths', path, 'manual') for path in settings.ths_install_paths),
         ]
         if settings.auto_discovery:
+            candidates.extend(
+                ("tdx", path, "manual")
+                for path in self.known_paths
+                if path.exists()
+            )
             candidates.extend(
                 (item.vendor, item.path, item.origin)
                 for item in self.system_candidates()
@@ -119,18 +136,46 @@ class LocalTerminalDiscovery:
                 continue
             seen.add(key)
             terminals.append(terminal)
-        active = next(
-            (
-                item.data_path
-                for item in terminals
-                if (
-                    item.vendor == "tdx"
-                    and item.status == "ready"
-                    and item.selection_eligible
-                )
+        tdx_terminals = [
+            item for item in terminals
+            if item.vendor == "tdx" and item.status == "ready" and item.data_path is not None
+        ]
+        ranked_by_root = {}
+        if tdx_terminals:
+            evidence = rank_tdx_directories(
+                tuple(_inspect_root(item.install_path, ()) for item in tdx_terminals)
+            )
+            ranked_by_root = {str(item.root).casefold(): item for item in evidence}
+            for index, item in enumerate(terminals):
+                if item.vendor != "tdx" or item.data_path is None:
+                    continue
+                candidate = ranked_by_root.get(str(item.install_path).casefold())
+                if candidate is None:
+                    continue
+                terminals[index] = item.model_copy(update={
+                    "latest_trade_date": candidate.latest_trade_date,
+                    "day_file_count": candidate.day_file_count,
+                    "readable_day_file_count": candidate.readable_day_file_count,
+                    "a_share_coverage_percent": candidate.a_share_coverage_percent,
+                    "source_score": candidate.score,
+                    "source_reasons": candidate.reasons,
+                })
+        eligible = [
+            item for item in terminals
+            if item.vendor == "tdx" and item.status == "ready" and item.selection_eligible
+        ]
+        has_scoring_evidence = any(item.readable_day_file_count > 0 for item in eligible)
+        ranked_eligible = sorted(
+            eligible,
+            key=lambda item: (
+                0 if (not has_scoring_evidence and item.origin == "manual") else 1,
+                -item.source_score,
+                -(item.latest_trade_date.toordinal() if item.latest_trade_date else 0),
+                -item.readable_day_file_count,
+                str(item.install_path).casefold(),
             ),
-            None,
         )
+        active = (ranked_eligible[0].data_path if ranked_eligible else None)
         return LocalTerminalDiscoveryResult(
             scanned_at=self.clock(),
             terminals=tuple(terminals),

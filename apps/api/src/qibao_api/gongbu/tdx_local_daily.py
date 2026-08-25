@@ -1,7 +1,7 @@
 import hashlib
 import json
 import struct
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -118,13 +118,49 @@ def _a_share_symbol(path: Path) -> str | None:
 
 
 def load_tdx_daily_histories(
-    vipdoc_root: Path,
+    vipdoc_root: Path | Sequence[Path],
     *,
     as_of: date,
     limit: int | None = 252,
     start_date: date | None = None,
     max_workers: int = 12,
     stop_requested: Callable[[], bool] | None = None,
+) -> dict[str, tuple[TdxLocalDailyBar, ...]]:
+    roots = (vipdoc_root,) if isinstance(vipdoc_root, Path) else tuple(vipdoc_root)
+    should_stop = stop_requested or (lambda: False)
+    histories: dict[str, tuple[TdxLocalDailyBar, ...]] = {}
+    for root in roots:
+        if should_stop():
+            break
+        source_histories = _load_tdx_daily_histories_single(
+            root,
+            as_of=as_of,
+            limit=limit,
+            start_date=start_date,
+            max_workers=max_workers,
+            stop_requested=should_stop,
+        )
+        for symbol, bars in source_histories.items():
+            if symbol not in histories:
+                histories[symbol] = bars
+                continue
+            # Keep the earlier (higher-ranked) source on duplicate dates, while
+            # allowing a lower-ranked source to fill missing/stale sessions.
+            by_date = {bar.trade_date: bar for bar in source_histories[symbol]}
+            by_date.update({bar.trade_date: bar for bar in histories[symbol]})
+            merged = tuple(by_date[key] for key in sorted(by_date))
+            histories[symbol] = merged[-limit:] if limit is not None else merged
+    return histories
+
+
+def _load_tdx_daily_histories_single(
+    vipdoc_root: Path,
+    *,
+    as_of: date,
+    limit: int | None,
+    start_date: date | None,
+    max_workers: int,
+    stop_requested: Callable[[], bool],
 ) -> dict[str, tuple[TdxLocalDailyBar, ...]]:
     should_stop = stop_requested or (lambda: False)
     paths = tuple(
@@ -173,7 +209,7 @@ class LocalTdxDailyFactorBuilder:
     def __init__(
         self,
         *,
-        vipdoc_root: Path,
+        vipdoc_root: Path | Sequence[Path],
         overview_source,
         cache_path: Path | None = None,
     ) -> None:

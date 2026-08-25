@@ -119,7 +119,7 @@ describe("DataSettingsView", () => {
       },
       scanned_at: "2026-07-30T02:00:00Z",
       terminals: [
-        { vendor: "tdx" as const, install_path: "D:\\new_tdx_mock", data_path: "D:\\new_tdx_mock\\vipdoc", origin: "manual" as const, status: "ready" as const, sh_daily_count: 2210, sz_daily_count: 2890, latest_modified_at: "2026-07-30T01:30:00Z", professional_data_status: "detected_only" as const, professional_data_files: ["base.dbf", "shs.tnf"] },
+        { vendor: "tdx" as const, install_path: "D:\\new_tdx_mock", data_path: "D:\\new_tdx_mock\\vipdoc", origin: "manual" as const, status: "ready" as const, sh_daily_count: 2210, sz_daily_count: 2890, latest_modified_at: "2026-07-30T01:30:00Z", professional_data_status: "detected_only" as const, professional_data_files: ["base.dbf", "shs.tnf"], source_score: 96.5, a_share_coverage_percent: 100, latest_trade_date: "2026-08-25" },
         { vendor: "tdx" as const, install_path: "D:\\tdx_fixture", data_path: "D:\\tdx_fixture\\vipdoc", origin: "registry" as const, status: "ready" as const, sh_daily_count: 100, sz_daily_count: 100, latest_modified_at: "2026-07-30T01:30:00Z", selection_eligible: false, selection_note: "自动发现已排除疑似测试/示例数据目录；如需使用请手工添加此目录" },
         { vendor: "ths" as const, install_path: "C:\\THS", data_path: null, origin: "manual" as const, status: "detected_only" as const, sh_daily_count: 0, sz_daily_count: 0, latest_modified_at: null },
       ],
@@ -151,6 +151,7 @@ describe("DataSettingsView", () => {
 
     expect(await screen.findByRole("heading", { name: "本地行情软件" })).toBeInTheDocument();
     expect(screen.getByText("D:\\new_tdx_mock\\vipdoc")).toBeInTheDocument();
+    expect(screen.getByText(/主源评分 96\.50/)).toBeInTheDocument();
     expect(screen.getByText(/沪市 2210.*深市 2890/)).toBeInTheDocument();
     expect(screen.getByText("专业缓存已发现 2 项，等待只读桥接读取")).toBeInTheDocument();
     expect(screen.getByText("已发现，暂未读取本地行情")).toBeInTheDocument();

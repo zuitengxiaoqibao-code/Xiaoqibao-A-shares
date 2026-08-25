@@ -272,6 +272,16 @@ def test_success_batch_and_state_are_atomic_idempotent_and_restart_safe(tmp_path
     )
 
 
+def test_repository_initialization_commits_schema_migration_for_second_process(tmp_path) -> None:
+    database = tmp_path / "startup-lock.sqlite3"
+    first = PollStateRepository(database)
+    try:
+        second = PollStateRepository(database)
+    finally:
+        first.close()
+    second.close()
+
+
 def test_identical_snapshot_on_two_due_executions_advances_restart_due_time(tmp_path) -> None:
     class IdenticalFeed:
         def snapshot_many(self, symbols, *, cutoff=None):

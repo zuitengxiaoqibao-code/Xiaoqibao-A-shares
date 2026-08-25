@@ -92,6 +92,7 @@ from qibao_api.local_sources.discovery import (
     LocalTerminalDiscoveryResult,
     LocalTerminalDiscoveryState,
 )
+from qibao_api.gongbu.tdx_directory_discovery import KNOWN_TDX_PATHS
 from qibao_api.local_sources.repository import (
     LocalSourceSettingsRepository,
     LocalTerminalDiscoverySnapshotRepository,
@@ -572,7 +573,12 @@ async def lifespan(application: FastAPI):
     local_source_settings_repository = LocalSourceSettingsRepository(
         portable_root / "config" / "data-sources.json"
     )
-    local_terminal_discovery = LocalTerminalDiscovery()
+    try:
+        local_terminal_discovery = LocalTerminalDiscovery(known_paths=KNOWN_TDX_PATHS)
+    except TypeError:
+        # Keep lightweight test/downgrade adapters compatible with the optional
+        # known-path argument introduced for multi-install discovery.
+        local_terminal_discovery = LocalTerminalDiscovery()
     local_source_settings_record = local_source_settings_repository.load()
     application.state.local_source_settings_repository = (
         local_source_settings_repository
@@ -1239,6 +1245,24 @@ async def lifespan(application: FastAPI):
                 )
                 log_startup_stage("market-sentiment-repository-ready")
                 vipdoc_root = local_source_discovery_state.active_tdx_vipdoc
+                tdx_daily_roots = tuple(
+                    terminal.data_path
+                    for terminal in sorted(
+                        (
+                            item for item in local_source_discovery_state.terminals
+                            if (
+                                item.vendor == "tdx"
+                                and item.status == "ready"
+                                and item.selection_eligible
+                                and item.data_path is not None
+                            )
+                        ),
+                        key=lambda item: (
+                            -item.source_score,
+                            str(item.install_path).casefold(),
+                        ),
+                    )
+                )
                 local_source_settings = local_source_settings_record.settings
                 tdx_rpc = (
                     TdxJsonRpcClient(endpoint=local_source_settings.tdx_rpc_url)
@@ -1289,7 +1313,7 @@ async def lifespan(application: FastAPI):
                 log_startup_stage("tdx-overview-cache-ready")
                 local_tdx_overview_source.start()
                 local_market_review_source = LocalMarketReviewSource(
-                    vipdoc_root=vipdoc_root,
+                    vipdoc_root=tdx_daily_roots or vipdoc_root,
                     cache_path=settings.data_dir / "market-review" / "latest.json",
                     bar_repository=bar_repository,
                     symbol_provider=lambda: tuple(
@@ -1354,7 +1378,7 @@ async def lifespan(application: FastAPI):
                 application.state.market_sentiment_source = market_sentiment_source
                 sentiment_factor_builder = (
                     LocalTdxDailyFactorBuilder(
-                        vipdoc_root=vipdoc_root,
+                        vipdoc_root=tdx_daily_roots or vipdoc_root,
                         overview_source=local_tdx_overview_source,
                         cache_path=(
                             portable_root / "cache" / "tdx-daily-factors.json"

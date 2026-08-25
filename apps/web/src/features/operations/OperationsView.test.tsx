@@ -274,9 +274,71 @@ describe("OperationsView", () => {
     expect(screen.getByText("在线补缺")).toBeInTheDocument();
     expect(screen.getByText(/通达信在线成功 100 只/)).toBeInTheDocument();
     expect(screen.getByText(/百度后备成功 40 只/)).toBeInTheDocument();
-    expect(screen.getByText(/官方包元数据编码无法识别，请稍后重试/)).toBeInTheDocument();
+    expect(screen.getByText(/本地行情数据库暂时不可读取，可能正在被其他任务占用，请等待当前任务完成后重试/)).toBeInTheDocument();
     expect(screen.queryByText(/invalid start byte/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "一键全面修复" }));
     await waitFor(() => expect(startRepair).toHaveBeenCalledTimes(1));
+  });
+
+  it("highlights the active local scan and shows truthful scan counters", async () => {
+    render(<OperationsView
+      loadStatus={() => Promise.resolve(status)}
+      setSchedulerPaused={() => Promise.resolve(status.scheduler)}
+      createBackup={() => Promise.resolve(status.backups[0])}
+      verifyBackup={() => Promise.reject(new Error("unused"))}
+      runManualJob={() => Promise.resolve({ report_id: "report-manual" })}
+      loadHistorySupplement={() => Promise.resolve({
+        job_id: "scan-job", state: "running", stage: "scanning", percent: 4,
+        source_url: "https://data.tdx.com.cn/vipdoc/hsjday.zip", downloaded_bytes: 0,
+        day_file_count: 0, supported_file_count: 0, imported_rows: 0,
+        replaced_rows: 0, skipped_rows: 0, failed_files: 0,
+        validated_bytes: 0, total_validation_bytes: 0, extracted_files: 0,
+        total_extract_files: 0, processed_files: 0, total_import_files: 0,
+        online_total: 0, online_ready: 0, online_failed: 0, online_pending: 0,
+        scan_scanned_files: 18, scan_total_files: null, scan_day_files: 18,
+        scan_readable_files: 16, scan_current_file: "C:/tdx/vipdoc/sh/lday/sh600001.day",
+        scan_speed: 6.4, scan_eta_seconds: null,
+        remaining_gap_count: 0, final_blockers: [], source_attempts: [], created_at: "2026-08-25T01:00:00Z",
+        updated_at: "2026-08-25T01:00:04Z",
+      })}
+    />);
+
+    expect(await screen.findByText("扫描本机日线")).toBeInTheDocument();
+    expect(screen.getByText(/已扫描 18 个文件 · 正在统计总量/)).toBeInTheDocument();
+    expect(screen.getByText(/当前 sh600001\.day/)).toBeInTheDocument();
+    expect(screen.getByText(/可读取 16 个/)).toBeInTheDocument();
+    expect(screen.getByTestId("repair-stage-scanning")).toHaveAttribute("data-state", "active");
+    expect(screen.queryByText(/4\.00%/)).not.toBeInTheDocument();
+  });
+
+  it("shows a completed scan while waiting for the local database", async () => {
+    vi.useRealTimers();
+    render(<OperationsView
+      loadStatus={() => Promise.resolve(status)}
+      setSchedulerPaused={() => Promise.resolve(status.scheduler)}
+      createBackup={() => Promise.resolve(status.backups[0])}
+      verifyBackup={() => Promise.reject(new Error("unused"))}
+      runManualJob={() => Promise.resolve({ report_id: "report-manual" })}
+      loadHistorySupplement={vi.fn().mockResolvedValue({
+        job_id: "waiting-job", state: "running", stage: "waiting_database", percent: 6,
+        source_url: "https://data.tdx.com.cn/vipdoc/hsjday.zip", downloaded_bytes: 0,
+        day_file_count: 0, supported_file_count: 0, imported_rows: 0,
+        replaced_rows: 0, skipped_rows: 0, failed_files: 0,
+        validated_bytes: 0, total_validation_bytes: 0, extracted_files: 0,
+        total_extract_files: 0, processed_files: 0, total_import_files: 0,
+        online_total: 0, online_ready: 0, online_failed: 0, online_pending: 0,
+        scan_scanned_files: 9497, scan_total_files: 9497, scan_day_files: 9497,
+        scan_readable_files: 9497, scan_current_file: null, scan_speed: 256,
+        scan_eta_seconds: 0, result_detail: "本机日线扫描已完成，正在等待本地行情数据库释放并自动重试",
+        remaining_gap_count: 0, final_blockers: [], source_attempts: [], created_at: "2026-08-25T01:00:00Z",
+        updated_at: "2026-08-25T01:00:04Z",
+      })}
+    />);
+
+    await waitFor(() => expect(screen.getByRole("heading", { name: "数据与运维中心" })).toBeInTheDocument(), { timeout: 1000 });
+    expect(await waitFor(() => screen.getByText(/等待本地数据库释放/), { timeout: 1000 })).toBeInTheDocument();
+    expect(screen.getByText(/本机日线扫描已完成/)).toBeInTheDocument();
+    expect(screen.getByText(/9497 \/ 9497/)).toBeInTheDocument();
+    expect(screen.getByTestId("repair-stage-waiting_database")).toHaveAttribute("data-state", "active");
   });
 });

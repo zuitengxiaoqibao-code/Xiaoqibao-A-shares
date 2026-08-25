@@ -1,3 +1,26 @@
+if (-not (Get-Command Get-FileHash -ErrorAction SilentlyContinue)) {
+    function Get-FileHash {
+        param(
+            [Parameter(Mandatory = $true)][string]$LiteralPath,
+            [string]$Algorithm = "SHA256"
+        )
+        $hasher = [Security.Cryptography.HashAlgorithm]::Create($Algorithm)
+        if ($null -eq $hasher) { throw "Unsupported hash algorithm: $Algorithm" }
+        $stream = [IO.File]::OpenRead($LiteralPath)
+        try {
+            $digest = $hasher.ComputeHash($stream)
+            [pscustomobject]@{
+                Algorithm = $Algorithm
+                Hash = ([BitConverter]::ToString($digest) -replace "-", "")
+                Path = $LiteralPath
+            }
+        } finally {
+            $stream.Dispose()
+            $hasher.Dispose()
+        }
+    }
+}
+
 function Update-ReleaseManifestRuntimeEvidence {
     param(
         [Parameter(Mandatory = $true)][string]$ReleaseRoot

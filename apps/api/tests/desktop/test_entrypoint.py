@@ -276,13 +276,14 @@ def test_update_helper_waits_for_residual_release_processes_before_replacing(
     assert applied == [True]
 
 
-def test_update_helper_keeps_manifest_and_logs_chinese_error_on_failure(
+def test_update_helper_defers_manifest_and_logs_chinese_error_on_failure(
     tmp_path: Path, monkeypatch, caplog
 ) -> None:
     manifest = tmp_path / "pending-update.json"
     manifest.write_text("{}", encoding="utf-8")
     target_root = tmp_path / "XiaoQiBao-Portable"
     target_root.mkdir()
+    (target_root / "xiaoqibao.exe").write_bytes(b"stub")
 
     class FakeUpdate:
         def __init__(self) -> None:
@@ -301,8 +302,41 @@ def test_update_helper_keeps_manifest_and_logs_chinese_error_on_failure(
         result = entrypoint._run_update_helper(manifest, parent_pid=None)
 
     assert result == 4
-    assert manifest.exists()
+    assert not manifest.exists()
+    assert (tmp_path / "pending-update.deferred.json").exists()
     assert "便携版更新失败" in caplog.text
+
+
+def test_update_helper_defers_timeout_without_launching_a_duplicate_version(
+    tmp_path: Path, monkeypatch, caplog
+) -> None:
+    manifest = tmp_path / "pending-update.json"
+    manifest.write_text("{}", encoding="utf-8")
+    target_root = tmp_path / "XiaoQiBao-Portable"
+    target_root.mkdir()
+    (target_root / "xiaoqibao.exe").write_bytes(b"stub")
+    popen_calls = []
+
+    class FakeUpdate:
+        def __init__(self) -> None:
+            self.target_root = target_root
+
+    monkeypatch.setattr(entrypoint, "load_pending_update", lambda *_args, **_kwargs: FakeUpdate())
+    monkeypatch.setattr(entrypoint, "_wait_for_update_processes", lambda *_args: False)
+    monkeypatch.setattr(
+        entrypoint.subprocess,
+        "Popen",
+        lambda *args, **kwargs: popen_calls.append((args, kwargs)),
+    )
+
+    with caplog.at_level(logging.ERROR, logger="qibao_desktop.entrypoint"):
+        result = entrypoint._run_update_helper(manifest, parent_pid=None)
+
+    assert result == 3
+    assert not manifest.exists()
+    assert (tmp_path / "pending-update.deferred.json").exists()
+    assert not popen_calls
+    assert "已暂缓更新" in caplog.text
 
 
 def test_handoff_keeps_current_startup_when_pending_manifest_is_invalid(
@@ -346,3 +380,4 @@ def test_release_process_scan_decodes_utf8_windows_paths(
     assert entrypoint._release_process_ids(target_root, set()) == {17144}
     assert seen["encoding"] == "utf-8"
     assert seen["errors"] == "replace"
+    assert seen["creationflags"] == getattr(entrypoint.subprocess, "CREATE_NO_WINDOW", 0)

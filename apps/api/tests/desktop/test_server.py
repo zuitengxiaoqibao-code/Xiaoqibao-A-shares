@@ -66,6 +66,15 @@ def test_local_api_server_initializes_without_a_console(monkeypatch) -> None:
     server.stop()
 
 
+def test_local_api_server_thread_cannot_keep_desktop_process_alive() -> None:
+    server = LocalApiServer(app=FastAPI(), port=0)
+
+    try:
+        assert server._thread.daemon is True
+    finally:
+        server._socket.close()
+
+
 def test_local_api_server_uses_loopback_and_stops_cleanly() -> None:
     app = FastAPI()
 

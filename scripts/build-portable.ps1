@@ -11,6 +11,29 @@ if (-not (Test-Path -LiteralPath $Python)) {
     throw "Missing build Python environment. Run the README environment setup first."
 }
 
+if (-not (Get-Command Get-FileHash -ErrorAction SilentlyContinue)) {
+    function Get-FileHash {
+        param(
+            [Parameter(Mandatory = $true)][string]$LiteralPath,
+            [string]$Algorithm = "SHA256"
+        )
+        $hasher = [Security.Cryptography.HashAlgorithm]::Create($Algorithm)
+        if ($null -eq $hasher) { throw "Unsupported hash algorithm: $Algorithm" }
+        $stream = [IO.File]::OpenRead($LiteralPath)
+        try {
+            $digest = $hasher.ComputeHash($stream)
+            [pscustomobject]@{
+                Algorithm = $Algorithm
+                Hash = ([BitConverter]::ToString($digest) -replace "-", "")
+                Path = $LiteralPath
+            }
+        } finally {
+            $stream.Dispose()
+            $hasher.Dispose()
+        }
+    }
+}
+
 # The portable build and API tests must resolve the same declared dependency
 # set. Reinstalling the editable package is incremental when nothing changed,
 # while also pulling newly declared runtime dependencies into the build venv.
@@ -29,6 +52,12 @@ $ReleaseInUse = @(Get-CimInstance Win32_Process -Filter "Name='xiaoqibao.exe'" -
         $_.ExecutablePath -and
         ([IO.Path]::GetFullPath($_.ExecutablePath) -ieq [IO.Path]::GetFullPath($ReleaseExe))
     })
+if ($ReleaseInUse.Count -eq 0 -and (Get-Process -Name "xiaoqibao" -ErrorAction SilentlyContinue)) {
+    # If Windows cannot expose ExecutablePath, prefer staging over risking a live release.
+    $ReleaseInUse = @(Get-Process -Name "xiaoqibao" -ErrorAction SilentlyContinue | ForEach-Object {
+        [pscustomobject]@{ ProcessId = $_.Id; ExecutablePath = $ReleaseExe }
+    })
+}
 $BuildDist = $DistRoot
 $PersistentFallback = $null
 if ($ReleaseInUse.Count -gt 0) {

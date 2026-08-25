@@ -56,6 +56,31 @@ class LocalSourceSettingsView(BaseModel):
     restart_required: bool = False
 
 
+class TdxDirectoryCandidateView(BaseModel):
+    root: Path
+    vipdoc_path: Path | None = None
+    display_name: str
+    latest_trade_date: str | None = None
+    day_file_count: int = 0
+    readable_day_file_count: int = 0
+    a_share_coverage_percent: float = 0.0
+    score: float = 0.0
+    state: Literal["ready", "partial", "unavailable"]
+    reasons: tuple[str, ...] = ()
+
+
+class TdxDirectoriesView(BaseModel):
+    active_mode: Literal["auto", "manual"]
+    active_root: Path | None
+    scanned_at: str
+    state: Literal["ready", "partial", "unavailable"]
+    candidates: tuple[TdxDirectoryCandidateView, ...] = ()
+
+
+class TdxDirectorySelectionInput(BaseModel):
+    root: Path | None = None
+
+
 class TdxRpcCapability(BaseModel):
     key: str
     label: str
@@ -132,6 +157,40 @@ def _local_source_view(
         active_tdx_vipdoc=discovery.active_tdx_vipdoc,
         tdx_rpc=_tdx_rpc_view(record.settings, discovery),
         restart_required=restart_required,
+    )
+
+
+def _tdx_directories_view(
+    record: LocalSourceSettingsRecord,
+    discovery: LocalTerminalDiscoveryResult,
+) -> TdxDirectoriesView:
+    candidates = tuple(
+        TdxDirectoryCandidateView(
+            root=item.install_path,
+            vipdoc_path=item.data_path,
+            display_name=item.install_path.name or str(item.install_path),
+            latest_trade_date=(item.latest_trade_date.isoformat() if item.latest_trade_date else None),
+            day_file_count=item.day_file_count or item.sh_daily_count + item.sz_daily_count,
+            readable_day_file_count=item.readable_day_file_count,
+            a_share_coverage_percent=item.a_share_coverage_percent,
+            score=item.source_score,
+            state=("unavailable" if item.status == "invalid" else "ready" if item.status == "ready" and item.readable_day_file_count >= item.day_file_count else "partial"),
+            reasons=item.source_reasons,
+        )
+        for item in discovery.terminals
+        if item.vendor == "tdx"
+    )
+    active_root = (
+        discovery.active_tdx_vipdoc.parent
+        if discovery.active_tdx_vipdoc is not None
+        else None
+    )
+    return TdxDirectoriesView(
+        active_mode="manual" if record.settings.tdx_install_paths else "auto",
+        active_root=active_root,
+        scanned_at=discovery.scanned_at.isoformat(),
+        state="ready" if candidates and active_root else "partial" if candidates else "unavailable",
+        candidates=candidates,
     )
 
 
@@ -353,6 +412,59 @@ def get_data_source_settings(
     record = repository.load()
     cached = get_local_source_discovery_snapshot(request)
     return _local_source_view(record, cached or discovery.inspect(record.settings))
+
+
+@router.get("/tdx-directories", response_model=TdxDirectoriesView)
+def get_tdx_directories(
+    request: Request,
+    repository: Annotated[
+        LocalSourceSettingsRepository,
+        Depends(get_local_source_settings_repository),
+    ],
+    discovery: Annotated[
+        LocalTerminalDiscovery,
+        Depends(get_local_terminal_discovery),
+    ],
+) -> TdxDirectoriesView:
+    record = repository.load()
+    cached = get_local_source_discovery_snapshot(request)
+    return _tdx_directories_view(record, cached or discovery.inspect(record.settings))
+
+
+@router.post("/tdx-directories/select", response_model=TdxDirectoriesView)
+def select_tdx_directory(
+    payload: TdxDirectorySelectionInput,
+    request: Request,
+    repository: Annotated[
+        LocalSourceSettingsRepository,
+        Depends(get_local_source_settings_repository),
+    ],
+    discovery: Annotated[
+        LocalTerminalDiscovery,
+        Depends(get_local_terminal_discovery),
+    ],
+) -> TdxDirectoriesView:
+    current = repository.load()
+    if payload.root is None:
+        settings = current.settings.model_copy(update={
+            "auto_discovery": True,
+            "tdx_install_paths": (),
+        })
+    else:
+        root = payload.root.expanduser().resolve(strict=False)
+        settings = current.settings.model_copy(update={
+            "auto_discovery": False,
+            "tdx_install_paths": (root,),
+        })
+    inspected = discovery.inspect(settings)
+    invalid = _invalid_manual_paths(inspected)
+    if invalid:
+        raise HTTPException(status_code=422, detail=f"通达信目录无效或缺少本地数据：{'、'.join(str(path) for path in invalid)}")
+    repository.save(settings)
+    request.app.state.local_source_discovery_result = inspected
+    return _tdx_directories_view(
+        LocalSourceSettingsRecord(settings=settings, state="ready"), inspected
+    )
 
 
 @router.post("/data-sources/detect", response_model=LocalSourceSettingsView)

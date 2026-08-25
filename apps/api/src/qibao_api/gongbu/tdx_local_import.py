@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import zipfile
 import shutil
+import time
 from collections.abc import Callable, Iterable
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -11,6 +12,16 @@ from qibao_api.contracts.bars import DailyBar
 from qibao_api.contracts.instruments import validate_a_share_code
 from qibao_api.contracts.tdx_import import TdxImportError, TdxImportJob, TdxImportScan
 from qibao_api.gongbu.tdx_local_daily import _a_share_symbol, read_tdx_day_bars
+
+
+class TdxLocalDatabaseUnavailable(RuntimeError):
+    """Raised when the local market database stays locked during an import."""
+
+    def __init__(self, *, attempts: int, scanned_files: int, total_files: int | None) -> None:
+        self.attempts = attempts
+        self.scanned_files = scanned_files
+        self.total_files = total_files
+        super().__init__("本机日线扫描已完成，但本地行情数据库仍被其他任务占用")
 
 
 class TdxLocalImportService:
@@ -26,6 +37,21 @@ class TdxLocalImportService:
 
     def default_paths(self) -> tuple[Path, ...]:
         candidates: list[Path] = []
+        terminals = getattr(self.discovery, "terminals", ())
+        ranked_terminals = sorted(
+            (
+                item for item in terminals
+                if getattr(item, "vendor", None) == "tdx"
+                and getattr(item, "status", None) == "ready"
+                and getattr(item, "data_path", None) is not None
+                and getattr(item, "selection_eligible", True)
+            ),
+            key=lambda item: (
+                -float(getattr(item, "source_score", 0.0)),
+                str(getattr(item, "install_path", "")).casefold(),
+            ),
+        )
+        candidates.extend(Path(item.data_path) for item in ranked_terminals)
         active = getattr(self.discovery, "active_tdx_vipdoc", None)
         if active is not None:
             candidates.append(Path(active))
@@ -181,6 +207,7 @@ class TdxLocalImportService:
         paths: Iterable[Path],
         *,
         progress: Callable[[tuple[int, int, str]], None] | None = None,
+        discovery_progress: Callable[[dict[str, object]], None] | None = None,
         extraction_progress: Callable[[tuple[int, int, str]], None] | None = None,
         incremental: bool = False,
         source: str = "tdx-local-day",
@@ -189,31 +216,61 @@ class TdxLocalImportService:
         if batch_size < 1:
             raise ValueError("批量导入文件数必须大于零")
         normalized = tuple(dict.fromkeys(Path(path).expanduser().resolve() for path in paths))
-        files: list[tuple[Path, str]] = []
+        files: list[tuple[Path, str, int]] = []
         errors: list[TdxImportError] = []
         temporary: list[Path] = []
         try:
+            scan_started = time.monotonic()
+            candidates: list[Path] = []
             for path in normalized:
-                for candidate in self._day_files(path, errors, temporary, extraction_progress):
-                    symbol = _a_share_symbol(candidate)
-                    if self._supported_symbol(symbol) is not None:
-                        files.append((candidate, symbol))
+                candidates.extend(self._day_files(path, errors, temporary, extraction_progress))
+            total_scan_files = len(candidates)
+            readable_files = 0
+            for scan_index, candidate in enumerate(candidates, start=1):
+                symbol = _a_share_symbol(candidate)
+                if self._supported_symbol(symbol) is not None:
+                    files.append((candidate, symbol, scan_index))
+                elif discovery_progress is not None:
+                    elapsed = max(0.001, time.monotonic() - scan_started)
+                    rate = scan_index / elapsed
+                    discovery_progress({
+                        "scanned_files": scan_index,
+                        "total_scan_files": total_scan_files,
+                        "day_files": scan_index,
+                        "readable_files": readable_files,
+                        "current_file": str(candidate),
+                        "scan_speed": rate,
+                        "scan_eta_seconds": max(0.0, (total_scan_files - scan_index) / max(0.001, rate)),
+                    })
             imported = replaced = skipped = 0
             failed = len(errors)
             latest: date | None = None
             total_files = len(files)
             latest_dates: dict[str, date | None] = {}
             if incremental and files:
-                symbols = list(dict.fromkeys(symbol for _candidate, symbol in files))
+                if discovery_progress is not None:
+                    elapsed = max(0.001, time.monotonic() - scan_started)
+                    rate = total_scan_files / elapsed if total_scan_files else 0.0
+                    discovery_progress({
+                        "phase": "scan_complete",
+                        "scanned_files": total_scan_files,
+                        "total_scan_files": total_scan_files,
+                        "day_files": total_scan_files,
+                        "readable_files": readable_files,
+                        "current_file": None,
+                        "scan_speed": rate,
+                        "scan_eta_seconds": 0.0,
+                    })
+                symbols = list(dict.fromkeys(symbol for _candidate, symbol, _scan_index in files))
                 latest_reader = getattr(self.bar_repository, "latest_dates", None)
-                if latest_reader is not None:
-                    latest_dates = latest_reader(symbols, self.as_of)
-                else:
-                    coverage = self.bar_repository.coverage(symbols, self.as_of)
-                    latest_dates = {
-                        symbol: getattr(value, "latest_trade_date", None)
-                        for symbol, value in coverage.items()
-                    }
+                latest_dates = self._read_latest_dates_with_retry(
+                    symbols,
+                    latest_reader,
+                    discovery_progress=discovery_progress,
+                    scanned_files=total_scan_files,
+                    total_scan_files=total_scan_files,
+                    scan_started=scan_started,
+                )
             pending: list[tuple[Path, str, list[DailyBar], date]] = []
 
             def flush_pending() -> None:
@@ -262,7 +319,7 @@ class TdxLocalImportService:
                                     detail=str(error) or type(error).__name__,
                                 ))
 
-            for index, (candidate, symbol) in enumerate(files, start=1):
+            for index, (candidate, symbol, scan_index) in enumerate(files, start=1):
                 try:
                     latest_stored = latest_dates.get(symbol)
                     start_date = latest_stored + timedelta(days=1) if latest_stored else None
@@ -272,11 +329,26 @@ class TdxLocalImportService:
                     )
                     if not bars:
                         if incremental and latest_stored is not None:
+                            readable_files += 1
+                            if discovery_progress is not None:
+                                elapsed = max(0.001, time.monotonic() - scan_started)
+                                scanned = scan_index
+                                rate = scanned / elapsed
+                                discovery_progress({
+                                    "scanned_files": scanned,
+                                    "total_scan_files": total_scan_files,
+                                    "day_files": scanned,
+                                    "readable_files": readable_files,
+                                    "current_file": str(candidate),
+                                    "scan_speed": rate,
+                                    "scan_eta_seconds": max(0.0, (total_scan_files - scanned) / max(0.001, rate)),
+                                })
                             if progress is not None:
                                 progress((index, total_files, symbol))
                             continue
                         raise ValueError("文件没有可验证的日线记录")
                     converted = [self._to_daily_bar(item, source=source) for item in bars]
+                    readable_files += 1
                     pending.append((candidate, symbol, converted, bars[-1].trade_date))
                     if len(pending) >= batch_size:
                         flush_pending()
@@ -292,6 +364,19 @@ class TdxLocalImportService:
                         path=str(candidate), code="file_import_failed",
                         detail=str(error) or type(error).__name__,
                     ))
+                if discovery_progress is not None:
+                    elapsed = max(0.001, time.monotonic() - scan_started)
+                    scanned = scan_index
+                    rate = scanned / elapsed
+                    discovery_progress({
+                        "scanned_files": scanned,
+                        "total_scan_files": total_scan_files,
+                        "day_files": scanned,
+                        "readable_files": readable_files,
+                        "current_file": str(candidate),
+                        "scan_speed": rate,
+                        "scan_eta_seconds": max(0.0, (total_scan_files - scanned) / max(0.001, rate)),
+                    })
                 if progress is not None:
                     progress((index, total_files, symbol))
             flush_pending()
@@ -310,6 +395,60 @@ class TdxLocalImportService:
                     shutil.rmtree(path, ignore_errors=True)
                 except OSError:
                     pass
+
+    def _read_latest_dates_with_retry(
+        self,
+        symbols: list[str],
+        latest_reader,
+        *,
+        discovery_progress: Callable[[dict[str, object]], None] | None,
+        scanned_files: int,
+        total_scan_files: int,
+        scan_started: float,
+        attempts: int = 5,
+    ) -> dict[str, date | None]:
+        for attempt in range(1, attempts + 1):
+            try:
+                if latest_reader is not None:
+                    return latest_reader(symbols, self.as_of)
+                coverage = self.bar_repository.coverage(symbols, self.as_of)
+                return {
+                    symbol: getattr(value, "latest_trade_date", None)
+                    for symbol, value in coverage.items()
+                }
+            except Exception as error:
+                if not self._is_database_unavailable(error) or attempt >= attempts:
+                    if self._is_database_unavailable(error):
+                        raise TdxLocalDatabaseUnavailable(
+                            attempts=attempts,
+                            scanned_files=scanned_files,
+                            total_files=total_scan_files,
+                        ) from error
+                    raise
+                delay = min(4.0, 0.25 * (2 ** (attempt - 1)))
+                if discovery_progress is not None:
+                    elapsed = max(0.001, time.monotonic() - scan_started)
+                    discovery_progress({
+                        "phase": "waiting_database",
+                        "scanned_files": scanned_files,
+                        "total_scan_files": total_scan_files,
+                        "day_files": total_scan_files,
+                        "readable_files": 0,
+                        "current_file": None,
+                        "scan_speed": scanned_files / elapsed if scanned_files else 0.0,
+                        "scan_eta_seconds": delay,
+                        "database_retry_attempt": attempt,
+                        "database_retry_total": attempts,
+                    })
+                time.sleep(delay)
+
+    @staticmethod
+    def _is_database_unavailable(error: Exception) -> bool:
+        message = str(error).casefold()
+        return isinstance(error, (UnicodeDecodeError, OSError, RuntimeError)) and any(
+            marker in message
+            for marker in ("lock", "locked", "database", "duckdb", "占用", "不可读取")
+        ) or isinstance(error, UnicodeDecodeError)
 
     def _day_files(
         self,

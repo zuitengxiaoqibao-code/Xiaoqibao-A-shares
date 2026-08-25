@@ -141,7 +141,7 @@ export type HistorySyncController = (jobId: string) => Promise<HistorySyncJob>;
 export type OfficialTdxPackageInfo = { size_label: string; modified_at: string };
 export type HistorySupplementJob = {
   job_id: string; state: "pending" | "running" | "completed" | "partial" | "failed";
-  stage: "queued" | "checking_metadata" | "checking_cache" | "validating_cache" | "downloading" | "validating" | "extracting" | "scanning" | "importing" | "online_repair" | "final_review" | "completed" | "partial" | "failed";
+  stage: "queued" | "checking_metadata" | "checking_cache" | "validating_cache" | "downloading" | "validating" | "extracting" | "scanning" | "waiting_database" | "importing" | "online_repair" | "final_review" | "completed" | "partial" | "failed";
   percent: number; source_url: string; package_modified_at?: string | null;
   package_size_label?: string | null; downloaded_bytes: number; total_bytes?: number | null;
   package_sha256?: string | null; package_path?: string | null;
@@ -150,6 +150,9 @@ export type HistorySupplementJob = {
   validated_bytes: number; total_validation_bytes: number; extracted_files: number; total_extract_files: number;
   processed_files: number; total_import_files: number; online_total: number; online_ready: number;
   online_failed: number; online_pending: number; final_target_date?: string | null;
+  scan_scanned_files?: number; scan_total_files?: number | null; scan_day_files?: number;
+  scan_readable_files?: number; scan_current_file?: string | null; scan_speed?: number | null;
+  scan_eta_seconds?: number | null;
   final_dominant_trade_date?: string | null; final_dominant_coverage_percent?: number | null;
   final_history_coverage_percent?: number | null; remaining_gap_count: number; final_quality?: string | null;
   final_blockers: string[]; result_detail?: string | null;
@@ -200,6 +203,12 @@ export type LocalTerminalStatus = {
   professional_data_files?: string[];
   selection_eligible?: boolean;
   selection_note?: string | null;
+  latest_trade_date?: string | null;
+  day_file_count?: number;
+  readable_day_file_count?: number;
+  a_share_coverage_percent?: number;
+  source_score?: number;
+  source_reasons?: string[];
 };
 export type LocalSourceSettingsView = {
   settings_state: "ready" | "default" | "invalid_local_config";
@@ -209,6 +218,25 @@ export type LocalSourceSettingsView = {
   active_tdx_vipdoc: string | null;
   tdx_rpc: TdxRpcStatus;
   restart_required: boolean;
+};
+export type TdxDirectoryCandidate = {
+  root: string;
+  vipdoc_path: string | null;
+  display_name: string;
+  latest_trade_date: string | null;
+  day_file_count: number;
+  readable_day_file_count: number;
+  a_share_coverage_percent: number;
+  score: number;
+  state: "ready" | "partial" | "unavailable";
+  reasons: string[];
+};
+export type TdxDirectoriesView = {
+  active_mode: "auto" | "manual";
+  active_root: string | null;
+  scanned_at: string;
+  state: "ready" | "partial" | "unavailable";
+  candidates: TdxDirectoryCandidate[];
 };
 export type TdxRpcCapability = {
   key: string;

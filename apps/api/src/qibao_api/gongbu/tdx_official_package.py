@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import struct
@@ -23,12 +24,20 @@ from qibao_api.contracts.history_supplement import (
 )
 from qibao_api.contracts.instruments import validate_a_share_code
 from qibao_api.gongbu.tdx_local_daily import TDX_DAY_RECORD, _a_share_symbol
+from qibao_api.gongbu.tdx_local_import import TdxLocalDatabaseUnavailable
 
 
 INFO_URL = "https://data.tdx.com.cn/vipdoc/_hsjdayinfo.js"
 PACKAGE_URL = "https://data.tdx.com.cn/vipdoc/hsjday.zip"
 _SIZE_PATTERN = re.compile(r'HSJDAY_SOFT_SIZE="([^"]+)"')
 _TIME_PATTERN = re.compile(r'HSJDAY_SOFT_TIME="([^"]+)"')
+logger = logging.getLogger(__name__)
+
+
+def _friendly_repair_error(error: Exception) -> str:
+    if isinstance(error, UnicodeDecodeError):
+        return "本地行情数据库暂时不可读取，可能正在被其他任务占用，请等待当前任务完成后重试"
+    return str(error) or type(error).__name__
 
 
 def _decode_official_metadata(response: httpx.Response) -> str:
@@ -163,11 +172,44 @@ class OfficialTdxPackageService:
             if not self.state_path.is_file():
                 return None
             try:
-                return HistorySupplementJob.model_validate_json(
+                job = HistorySupplementJob.model_validate_json(
                     self.state_path.read_text(encoding="utf-8")
                 )
             except (OSError, ValueError, json.JSONDecodeError):
                 return None
+            if self._is_legacy_database_lock_failure(job):
+                # Older releases recorded a completed local scan as a terminal
+                # 5% failure when DuckDB was locked. Reclassify that persisted
+                # evidence so the UI cannot keep showing a stale failure after
+                # the application has been upgraded.
+                return self._save(job.model_copy(update={
+                    "state": "partial",
+                    "stage": "waiting_database",
+                    "percent": max(6.0, job.percent),
+                    "error_stage": None,
+                    "error_detail": None,
+                    "finished_at": None,
+                    "result_detail": "本机日线扫描已完成，但本地行情数据库仍被占用，请释放占用后重新执行一键全面修复",
+                    "updated_at": self._now(),
+                }))
+            return job
+
+    @staticmethod
+    def _is_legacy_database_lock_failure(job: HistorySupplementJob) -> bool:
+        detail = " ".join(filter(None, (job.error_detail, job.result_detail)))
+        normalized = detail.casefold()
+        return (
+            job.state == "failed"
+            and job.scan_scanned_files > 0
+            and job.scan_total_files is not None
+            and job.scan_scanned_files >= job.scan_total_files
+            and (
+                "数据库暂时不可读取" in detail
+                or "数据库仍被" in detail
+                or "unicodedecodeerror" in normalized
+                or "codec can't decode" in normalized
+            )
+        )
 
     def recover_interrupted(self) -> HistorySupplementJob | None:
         """Mark a job left running by a previous process as interrupted."""
@@ -218,6 +260,20 @@ class OfficialTdxPackageService:
         response.raise_for_status()
         return parse_official_package_info(_decode_official_metadata(response))
 
+    def _resolve_target_date(self) -> date:
+        """Resolve the repair date without blocking the official package fallback."""
+        if self.history_service is None:
+            return self.as_of
+        try:
+            return self.history_service.default_target_date()
+        except (UnicodeDecodeError, OSError, RuntimeError) as error:
+            logger.warning(
+                "历史数据库暂时不可读取，官方包补齐改用当前观测日 %s：%s",
+                self.as_of,
+                error,
+            )
+            return self.as_of
+
     @staticmethod
     def _file_sha256(
         path: Path,
@@ -241,10 +297,7 @@ class OfficialTdxPackageService:
         stage = "checking_metadata"
         try:
             job = self._update(job, state="running", stage=stage, percent=2)
-            target_date = (
-                self.history_service.default_target_date()
-                if self.history_service is not None else self.as_of
-            )
+            target_date = self._resolve_target_date()
             local_paths = tuple(getattr(self.tdx_import_service, "default_paths", lambda: ())())
             if local_paths:
                 stage = "scanning"
@@ -254,16 +307,95 @@ class OfficialTdxPackageService:
                         job, "tdx_local", "running", "正在扫描并导入本机通达信日线",
                     ),
                 )
-                local_result = self.tdx_import_service.import_now(
-                    local_paths, incremental=True, source="tdx-local-day", batch_size=256,
-                )
+
+                def local_scan_progress(value: dict[str, object]) -> None:
+                    nonlocal job
+                    scanned = max(0, int(value.get("scanned_files", 0) or 0))
+                    total_value = value.get("total_scan_files")
+                    total = int(total_value) if total_value is not None else None
+                    ratio = scanned / total if total and total > 0 else 0
+                    detail = f"已扫描 {scanned} 个文件"
+                    if total and total > 0:
+                        detail += f" / {total}"
+                    else:
+                        detail += " · 正在统计总量"
+                    current_file = str(value.get("current_file") or "") or None
+                    if current_file:
+                        detail += f" · 当前 {Path(current_file).name}"
+                    speed = value.get("scan_speed")
+                    eta = value.get("scan_eta_seconds")
+                    if speed is not None:
+                        detail += f" · {float(speed):.1f} 文件/秒"
+                    if eta is not None and total and total > scanned:
+                        detail += f" · 预计剩余 {max(1, round(float(eta)))} 秒"
+                    phase = str(value.get("phase") or "scanning")
+                    if phase == "scan_complete":
+                        progress_stage = "waiting_database"
+                        detail = (
+                            f"本机日线扫描已完成：共发现 {scanned} 个文件，"
+                            "正在读取本地行情数据库增量范围"
+                        )
+                    elif phase == "waiting_database":
+                        progress_stage = "waiting_database"
+                        attempt = value.get("database_retry_attempt")
+                        total_attempts = value.get("database_retry_total")
+                        detail = "本机日线扫描已完成，正在等待本地行情数据库释放并自动重试"
+                        if attempt is not None and total_attempts is not None:
+                            detail += f"（第 {int(attempt)}/{int(total_attempts)} 次）"
+                    else:
+                        progress_stage = "scanning"
+                    job = self._update(
+                        job,
+                        stage=progress_stage,
+                        percent=(6 if phase in {"scan_complete", "waiting_database"} else min(5, 4 + ratio)),
+                        scan_scanned_files=scanned,
+                        scan_total_files=total,
+                        scan_day_files=max(0, int(value.get("day_files", scanned) or 0)),
+                        scan_readable_files=max(0, int(value.get("readable_files", 0) or 0)),
+                        scan_current_file=current_file,
+                        scan_speed=float(speed) if speed is not None else None,
+                        scan_eta_seconds=float(eta) if eta is not None else None,
+                        result_detail=detail,
+                    )
+
+                try:
+                    local_result = self.tdx_import_service.import_now(
+                        local_paths, discovery_progress=local_scan_progress,
+                        incremental=True, source="tdx-local-day", batch_size=256,
+                    )
+                except TdxLocalDatabaseUnavailable as error:
+                    job = self._update(
+                        job,
+                        state="partial",
+                        stage="partial",
+                        percent=max(6, job.percent),
+                        finished_at=self._now(),
+                        error_stage="tdx_local_database",
+                        error_detail=str(error),
+                        result_detail=(
+                            f"本机日线扫描已完成：共发现 {job.scan_scanned_files} 个文件，"
+                            f"可读取 {job.scan_readable_files} 个；"
+                            "本地行情数据库仍被其他任务占用，已暂停写入并保留扫描结果，请释放占用后重试"
+                        ),
+                        source_attempts=self._set_source_attempt(
+                            job, "tdx_local", "failed",
+                            "本机日线扫描已完成，但本地行情数据库仍被占用，等待释放后重试",
+                        ),
+                    )
+                    return job
                 local_state = "completed" if local_result.state == "completed" else "failed"
                 job = self._update(
                     job,
+                    stage="checking_cache",
+                    percent=max(8, job.percent),
                     imported_rows=local_result.imported_rows,
                     replaced_rows=local_result.replaced_rows,
                     skipped_rows=local_result.skipped_rows,
                     failed_files=local_result.failed_files,
+                    result_detail=(
+                        f"本机扫描完成：共发现 {job.scan_day_files} 个日线文件，"
+                        f"可读取 {job.scan_readable_files} 个"
+                    ),
                     source_attempts=self._set_source_attempt(
                         job, "tdx_local", local_state,
                         f"本机增量新增 {local_result.imported_rows}，替换 {local_result.replaced_rows}，失败 {local_result.failed_files}",
@@ -424,7 +556,7 @@ class OfficialTdxPackageService:
             now = self._now()
             return self._update(
                 job, state="failed", stage="failed", finished_at=now,
-                error_stage=stage, error_detail=str(error) or type(error).__name__,
+                error_stage=stage, error_detail=_friendly_repair_error(error),
             )
 
     def close(self) -> None:

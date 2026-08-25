@@ -6,7 +6,7 @@ type AIState = "unconfigured" | "configured_unverified" | "connected" | "connect
 type Props = { ai?: { configured: boolean; state?: AIState; message?: string } | null };
 
 const aiCopy: Record<AIState, { label: string; tone: string }> = {
-  unconfigured: { label: "离线", tone: "muted" }, configured_unverified: { label: "异常", tone: "bad" },
+  unconfigured: { label: "离线", tone: "muted" }, configured_unverified: { label: "在线", tone: "ok" },
   connected: { label: "在线", tone: "ok" }, connection_failed: { label: "异常", tone: "bad" },
   timeout: { label: "异常", tone: "bad" }, rate_limited: { label: "异常", tone: "bad" }, model_not_found: { label: "异常", tone: "bad" },
 };

@@ -1,0 +1,4 @@
+artifact: XiaoQiBao-Portable/xiaoqibao.exe
+build_date: 2026-08-25
+sha256: 24AA89F0B30A1A6D9F890B251F88FC6A0F789FF532583DAAAC1926B6DD2CA570
+data_policy: source and program runtime only; local data, caches, logs, and credentials excluded
