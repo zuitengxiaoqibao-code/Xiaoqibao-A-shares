@@ -140,8 +140,9 @@ describe("application layout safety", () => {
   it("uses a compact horizontal layout for the four review summary metrics", () => {
     const overviewCss = readFileSync("src/features/market-overview/overview.css", "utf8");
     expect(cssRule(overviewCss, ".review-summary-grid")).not.toContain("min-height: 260px");
-    expect(cssRule(overviewCss, ".review-summary-grid article")).toContain("grid-template-columns: 42px minmax(0, 1fr) auto");
-    expect(cssRule(overviewCss, ".review-summary-grid article")).toContain("min-height: 78px");
+    expect(cssRule(overviewCss, ".review-summary-grid article")).not.toContain("grid-template-columns: 42px minmax(0, 1fr) auto");
+    expect(cssRule(overviewCss, ".review-summary-grid article")).toContain("min-height: 82px");
+    expect(cssRule(overviewCss, ".review-summary-metric")).toContain("grid-template-columns: 42px minmax(64px, 1fr) auto");
   });
 
   it("keeps the market overview flat menu readable and content panels height-driven", () => {

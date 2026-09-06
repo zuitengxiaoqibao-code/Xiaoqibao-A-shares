@@ -1,6 +1,6 @@
 import type { BacktestResult } from "../backtest/types";
 import type { FirstLimitUpCandidate } from "../first-limit-up/types";
-import type { SignalMetric } from "./types";
+import type { QuantStrategyCandidate, SignalMetric } from "./types";
 
 function numeric(value: string | number | null | undefined): number | null {
   if (value === null || value === undefined || value === "") return null;
@@ -19,8 +19,9 @@ function percent(value: number | null, digits = 1): string {
 export function signalMetrics(
   candidate: FirstLimitUpCandidate | null,
   backtest: BacktestResult | null,
+  strategyCandidate: QuantStrategyCandidate | null = null,
 ): SignalMetric[] {
-  const score = numeric(candidate?.score);
+  const score = numeric(candidate?.score ?? strategyCandidate?.strategy_score);
   const hasTrades = (backtest?.metrics.closed_trade_count ?? 0) > 0;
   const volatility = backtest ? numeric(backtest.metrics.annualized_volatility) : null;
   const winRate = hasTrades && backtest ? numeric(backtest.metrics.win_rate) : null;
@@ -41,7 +42,11 @@ export function signalMetrics(
     {
       key: "score", label: "SCORE",
       value: score === null ? "--" : score.toFixed(1),
-      detail: candidate ? "首次涨停规则分" : "等待候选规则分",
+      detail: candidate
+        ? "首次涨停规则分"
+        : strategyCandidate
+          ? "量化策略综合分"
+          : "等待候选规则分",
       barValue: score === null ? 0 : clamp(score),
       tone: score === null ? "muted" : score >= 70 ? "positive" : score >= 50 ? "warning" : "danger",
     },
@@ -125,6 +130,31 @@ export function factorRadar(candidate: FirstLimitUpCandidate) {
       consolidation,
       score,
     ].filter((value) => value !== null && Number.isFinite(value)).length,
+  };
+}
+
+export function backtestFactorRadar(
+  backtest: BacktestResult,
+  strategyCandidate: QuantStrategyCandidate | null = null,
+) {
+  const winRate = numeric(backtest.metrics.win_rate);
+  const odds = numeric(backtest.metrics.profit_loss_ratio);
+  const volatility = numeric(backtest.metrics.annualized_volatility);
+  const drawdown = numeric(backtest.max_drawdown);
+  const sharpe = numeric(backtest.metrics.sharpe_ratio);
+  const score = numeric(strategyCandidate?.strategy_score);
+  const values = [
+    winRate === null ? null : clamp(winRate * 100),
+    odds === null ? null : clamp(odds / 3 * 100),
+    volatility === null ? null : clamp(100 - volatility * 100),
+    drawdown === null ? null : clamp(100 - drawdown * 100),
+    sharpe === null ? null : clamp((sharpe + 1) / 3 * 100),
+    score,
+  ];
+  return {
+    indicators: ["历史胜率", "历史赔率", "波动控制", "回撤控制", "风险调整", "策略综合分"],
+    values,
+    verifiedCount: values.filter((value) => value !== null && Number.isFinite(value)).length,
   };
 }
 

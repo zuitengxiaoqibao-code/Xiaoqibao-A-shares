@@ -17,7 +17,7 @@ import type { AShareInstrument, InstrumentSearchResponse } from "./types";
 import { friendlyError } from "../../shared/friendlyError";
 import { DailyCacheHistory } from "../../shared/DailyCacheHistory";
 import { createInstrumentDirectory } from "../../shared/instruments/instrumentDirectory";
-import { readAShareWatchlist, writeAShareWatchlist } from "./watchlist";
+import { A_SHARE_WATCHLIST_CHANGED_EVENT, readAShareWatchlist, writeAShareWatchlist } from "./watchlist";
 
 type CandidateTab = "short_term" | "swing" | "watchlist";
 const candidateTabs: ReadonlyArray<readonly [CandidateTab, string]> = [
@@ -44,7 +44,7 @@ type CachedStockSnapshot = {
 };
 
 function WatchButton({ symbol, watched, onToggle }: { symbol: string; watched: boolean; onToggle: () => void }) {
-  return <button className="watch-button" type="button" aria-label={`${watched ? "将" : "将"} ${symbol} ${watched ? "移出自选" : "加入自选"}`} title={`${symbol} ${watched ? "移出自选" : "加入自选"}`} onClick={onToggle}>{watched ? <BookmarkCheck size={15} /> : <Bookmark size={15} />}</button>;
+  return <button className={watched ? "watch-button watched" : "watch-button"} type="button" aria-label={`将 ${symbol} ${watched ? "移出自选" : "加入自选"}`} title={`${symbol} ${watched ? "移出自选" : "加入自选"}`} onClick={onToggle}>{watched ? <BookmarkCheck size={15} /> : <Bookmark size={15} />}<span>{watched ? "已自选" : "加入自选"}</span></button>;
 }
 
 function CandidateRow({ entry, identity, selected, watched, onSelect, onWatch }: { entry: CandidateEntry; identity?: AShareInstrument; selected: boolean; watched: boolean; onSelect: () => void; onWatch: () => void }) {
@@ -149,6 +149,11 @@ export function StockSelector({ loadCandidates, loadWatchlistScores, prepare, se
   }, [loadCandidates]);
 
   useEffect(() => { mounted.current = true; void refreshCandidates(true); const timer = window.setInterval(() => void refreshCandidates(), pollIntervalMs); return () => { mounted.current = false; candidateRequest.current += 1; window.clearInterval(timer); }; }, [pollIntervalMs, refreshCandidates]);
+  useEffect(() => {
+    const sync = () => setWatchlist(readAShareWatchlist());
+    window.addEventListener(A_SHARE_WATCHLIST_CHANGED_EVENT, sync);
+    return () => window.removeEventListener(A_SHARE_WATCHLIST_CHANGED_EVENT, sync);
+  }, []);
   useEffect(() => {
     if (!board || initializedSelection.current) return;
     initializedSelection.current = true;
@@ -340,7 +345,7 @@ export function StockSelector({ loadCandidates, loadWatchlistScores, prepare, se
 
   const qualityNames = { ready: "行情可用", stale: "行情已陈旧", unavailable: "行情不可用" } as const;
   return <section className="stock-selector" aria-label="A 股选择器">
-    <header><div><p className="eyebrow">股票选择</p><h2>选择观察股票</h2></div><span>{selection.symbol ?? "尚未选择 A 股"}</span><button type="button" className="selector-refresh" aria-label="刷新候选" onClick={() => { void refreshCandidates(); watchlist.forEach(retryIdentity); }}><RefreshCw size={14} /></button></header>
+    <header><div><p className="eyebrow">股票选择</p><h2>选择观察股票</h2><small className="watchlist-count">自选股 {watchlist.length} 只</small></div><span>{selection.symbol ?? "尚未选择 A 股"}</span><button type="button" className="selector-refresh" aria-label="刷新候选" onClick={() => { void refreshCandidates(); watchlist.forEach(retryIdentity); }}><RefreshCw size={14} /></button></header>
     <label className="stock-search"><Search size={16} /><span className="visually-hidden">搜索 A 股</span><input role="searchbox" aria-label="搜索 A 股" placeholder="输入六位代码或中文名称" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
     {searchState === "loading" && <p className="selector-message" role="status" aria-busy="true"><LoaderCircle size={15} />正在搜索...</p>}
     {query.trim() && searchState === "error" && <div className="selector-message error" role="alert"><ShieldAlert size={15} /><span>{searchError}</span><button type="button" onClick={() => executeSearch(query.trim())}>重试搜索</button></div>}

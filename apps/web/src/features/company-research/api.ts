@@ -17,6 +17,10 @@ function isResearchCache(value: unknown): value is CompanyResearchResponse {
     && candidate.valuation !== null;
 }
 
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
 export function loadCompanyResearch(symbol: string, asOf?: string, signal?: AbortSignal, onProgress?: LoadProgressCallback): Promise<CompanyResearchResponse> {
   return requestLedger.run(`company-research:${symbol}:${asOf ?? "latest"}`, async () => {
     const taskId = `company-research:${symbol}:${asOf ?? "latest"}`;
@@ -29,10 +33,27 @@ export function loadCompanyResearch(symbol: string, asOf?: string, signal?: Abor
       // Serve an existing verified snapshot before starting heavyweight
       // enrichment. A cache miss falls through to the progress task below.
       onProgress?.({ percent: 8, stage: "connecting", detail: "正在检查本地公司研究缓存", mode: "estimated" });
-      const cached = await apiClient.getOptional<CompanyResearchResponse>(
-        `/api/v1/a-shares/${encodeURIComponent(symbol)}/company-research${query}${query ? "&" : "?"}cache_only=true`,
-        { signal, context: "公司研究缓存" },
-      );
+      let cached: CompanyResearchResponse | null = null;
+      try {
+        cached = await apiClient.getOptional<CompanyResearchResponse>(
+          `/api/v1/a-shares/${encodeURIComponent(symbol)}/company-research${query}${query ? "&" : "?"}cache_only=true`,
+          // The cache is an optional first-screen optimization. Never let a
+          // locked or unavailable cache prevent the real research task from
+          // starting; the task has its own progress and error reporting.
+          { signal, context: "公司研究缓存", timeoutMs: 5_000 },
+        );
+      } catch (error) {
+        if (signal?.aborted || isAbortError(error)) throw error;
+        updateTaskActivity({
+          id: taskId,
+          label: `公司研究 ${symbol}`,
+          stage: "缓存检查失败，继续建立研究任务",
+          state: "running",
+          percent: 8,
+          detail: error instanceof Error ? error.message : "缓存暂不可用",
+        });
+        onProgress?.({ percent: 8, stage: "connecting", detail: "本地缓存暂不可用，继续连接实时研究任务", mode: "estimated" });
+      }
       if (isResearchCache(cached)) {
         updateTaskActivity({ id: taskId, label: `公司研究 ${symbol}`, stage: "已展示缓存，后台刷新最新数据", state: "succeeded", percent: 100 });
         onProgress?.({ percent: 100, stage: "complete", detail: "已展示有效研究缓存，后台正在刷新", mode: "verified" });

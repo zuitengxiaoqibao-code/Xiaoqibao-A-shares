@@ -1,3 +1,4 @@
+import json
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
@@ -9,7 +10,11 @@ from qibao_api.a_shares.late_session_selection import (
 from qibao_api.contracts.late_session_selection import LateSessionQuote
 from qibao_api.contracts.late_session_selection import LateSessionRuleSettings
 from qibao_api.contracts.late_session_selection import LateSessionCandidateResult, LateSessionSelectionResponse
-from qibao_api.a_shares.late_session_ai import LateSessionAIAnalyzer
+from qibao_api.a_shares.late_session_ai import LATE_SESSION_AI_TIMEOUT_SECONDS, LateSessionAIAnalyzer
+
+
+def test_late_session_ai_default_timeout_allows_slow_model_responses() -> None:
+    assert LATE_SESSION_AI_TIMEOUT_SECONDS == 60
 
 
 def quote(**overrides) -> LateSessionQuote:
@@ -135,3 +140,57 @@ def test_ai_analyzer_falls_back_to_rule_interpretation_when_unconfigured() -> No
     assert "AI" in result.title
     assert result.candidate_count == 1
     assert result.key_points
+
+    invalid = LateSessionAIAnalyzer._fallback(snapshot, status="output_invalid")
+    assert invalid.status == "output_invalid"
+    assert invalid.title == "AI 返回格式异常 · 已输出规则解析"
+
+
+def test_ai_request_aggregates_repeated_candidate_evidence_before_calling_model() -> None:
+    candidates = tuple(
+        LateSessionCandidateResult(
+            quote=quote(symbol=f"600{index:03d}", name=f"候选{index}"),
+            passed=False,
+            rules=(),
+            risk_notes=("未通过：监控时间", "未通过：量比", "待补齐：分时黄线"),
+        )
+        for index in range(38)
+    )
+    snapshot = LateSessionSelectionResponse(
+        status="partial",
+        trading_date=date(2026, 8, 27),
+        server_time=datetime(2026, 8, 27, 5, 2, tzinfo=timezone.utc),
+        phase="pre_screen",
+        refresh_interval_ms=1000,
+        next_refresh_ms=1000,
+        source_quality="partial",
+        universe_count=5200,
+        quote_count=5200,
+        candidate_count=len(candidates),
+        rules=(),
+        candidates=candidates,
+        limitations=("14:30 前仍需确认监控时间",),
+    )
+
+    request = LateSessionAIAnalyzer(settings=None)._request(snapshot, "provider-model")
+    prompt = json.loads(request["messages"][1]["content"])
+
+    assert request["max_tokens"] >= 2400
+    assert "candidates" not in prompt
+    assert prompt["candidate_summary"]["total"] == 38
+    assert prompt["risk_note_counts"] == {
+        "待补齐：分时黄线": 38,
+        "未通过：监控时间": 38,
+        "未通过：量比": 38,
+    }
+    assert len(request["messages"][1]["content"]) < 3000
+
+
+def test_ai_parser_accepts_json_inside_markdown_code_fence() -> None:
+    content = """```json
+    {"summary":"规则结果已聚合","key_points":["候选已核验"],"risk_points":[],"data_gaps":[]}
+    ```"""
+
+    parsed = LateSessionAIAnalyzer._parse_content(content)
+
+    assert parsed["summary"] == "规则结果已聚合"

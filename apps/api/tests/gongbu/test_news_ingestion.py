@@ -10,6 +10,7 @@ from qibao_api.contracts.news import NewsArticle
 from qibao_api.gongbu.news_ingestion import NewsIngestionService
 from qibao_api.gongbu.news_linking import DeterministicNewsLinker
 from qibao_api.gongbu.news_repository import NewsRepository
+from qibao_api.operations.realtime_snapshot_bus import RealtimeSnapshotBus
 from qibao_api.libu_compliance.repository import ComplianceRepository
 from qibao_api.contracts.risk import ComplianceRecord
 from qibao_api.settings_repository import (
@@ -149,6 +150,7 @@ async def test_ingestion_requires_authorization_and_persists_complete_chain(tmp_
     compliance = ComplianceRepository(tmp_path / "compliance.sqlite3")
     compliance.set_feature_sources("market_news", AssetKind.A_SHARE, ("eastmoney",))
     repository = NewsRepository(tmp_path / "news.sqlite3")
+    bus = RealtimeSnapshotBus()
     service = NewsIngestionService(
         Source(), repository,
         DeterministicNewsLinker(
@@ -161,6 +163,7 @@ async def test_ingestion_requires_authorization_and_persists_complete_chain(tmp_
             UnavailableProvider(), provider_name="unconfigured", model="none",
             prompt_version="news-v1", clock=lambda: NOW,
         ),
+        realtime_snapshot_bus=bus,
     )
 
     with pytest.raises(Exception, match="eastmoney"):
@@ -178,6 +181,7 @@ async def test_ingestion_requires_authorization_and_persists_complete_chain(tmp_
         (AssetKind.A_SHARE, "600000"),
     )
     assert repository.interpretations()[0].degraded is True
+    assert bus.latest("news_events")["payload"]["verified_count"] == 1
     assert (await service.sync())["inserted"] == 0
     assert len(repository.interpretations()) == 1
     repository.close()

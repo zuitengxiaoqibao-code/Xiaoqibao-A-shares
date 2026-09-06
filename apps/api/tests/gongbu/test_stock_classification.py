@@ -1,4 +1,6 @@
 import json
+import hashlib
+import json
 import sqlite3
 from datetime import date, datetime, timezone
 
@@ -65,6 +67,35 @@ async def test_source_fetches_verified_industry_and_board_labels_serially() -> N
     assert [board.code for board in snapshot.boards] == ["BK0477", "BK0896"]
     assert len(snapshot.content_hash) == 64
     assert snapshot.raw_snapshot
+
+
+@pytest.mark.asyncio
+async def test_content_hash_includes_canonical_shenwan_assignment() -> None:
+    replies = [
+        response({"data": {"f57": "600519", "f127": "食品饮料"}}),
+        response({"data": {"diff": [
+            {"f12": "BK0477", "f14": "酿酒行业", "f3": 1.25,
+             "f128": "贵州茅台"}
+        ]}}),
+    ]
+
+    async def transport(_url, _params, _headers):
+        return replies.pop(0)
+
+    snapshot = await EastmoneyStockClassificationSource(
+        transport=transport, minimum_interval=0,
+    ).fetch("600519")
+    semantic = {
+        "boards": [board.model_dump(mode="json") for board in snapshot.boards],
+        "industry": snapshot.industry,
+        "shenwan_industry": snapshot.shenwan_industry.model_dump(mode="json"),
+        "shenwan_mapping_status": snapshot.shenwan_mapping_status,
+        "symbol": snapshot.symbol,
+    }
+    expected = hashlib.sha256(json.dumps(
+        semantic, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")).hexdigest()
+    assert snapshot.content_hash == expected
 
 
 @pytest.mark.asyncio

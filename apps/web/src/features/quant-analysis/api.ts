@@ -10,7 +10,7 @@ const focusRegistrationState = new Map<string, {
   registeredUntil: number;
 }>();
 
-type FocusSource = "quant_analysis" | "watchlist";
+type FocusSource = "quant_analysis" | "watchlist" | "stock_observation";
 
 async function registerFocus(symbol: string, source: FocusSource): Promise<void> {
   const now = Date.now();
@@ -39,6 +39,10 @@ export async function registerQuantFocus(symbol: string): Promise<void> {
 
 export async function registerWatchlistFocus(symbol: string): Promise<void> {
   return registerFocus(symbol, "watchlist");
+}
+
+export async function registerStockObservationFocus(symbol: string): Promise<void> {
+  return registerFocus(symbol, "stock_observation");
 }
 
 export async function loadQuantTicks(

@@ -19,11 +19,16 @@ from qibao_api.contracts.market_overview import (
     OverviewMarketSnapshot,
     OverviewMinutePoint,
     OverviewRegimeMetrics,
+    OverviewSector,
     OverviewStockQuote,
 )
 from qibao_api.contracts.market_sentiment import (
     MarketSentimentSnapshot,
     SentimentComponent,
+)
+from qibao_api.gongbu.sector_fund_flow import (
+    SectorFundFlowItem,
+    SectorFundFlowSnapshot,
 )
 
 
@@ -383,6 +388,12 @@ def test_overview_labels_previous_close_snapshot_before_open() -> None:
     assert result.market_data.quality == "ready"
 
 
+def test_market_phase_keeps_overnight_snapshot_until_eight_am() -> None:
+    overnight = datetime(2026, 7, 30, 7, 30, tzinfo=timezone(timedelta(hours=8)))
+    result = service(Source())._market_phase(overnight)
+    assert result == "closed"
+
+
 def test_overview_removes_previous_session_tape_events_and_news_before_open(tmp_path) -> None:
     cache_path = tmp_path / "market-overview.json"
     timestamped_news = event(0, event_type="market_news")
@@ -531,6 +542,138 @@ def test_overview_publishes_realtime_snapshot_without_sqlite_registry() -> None:
     assert event["source"] == "market-sentiment-cache"
 
 
+def test_intraday_core_refresh_publishes_a_new_realtime_snapshot() -> None:
+    from qibao_api.operations.realtime_snapshot_bus import RealtimeSnapshotBus
+
+    bus = RealtimeSnapshotBus()
+    overview = service(Source(), realtime_snapshot_bus=bus)
+    overview.current(NOW)
+    initial = bus.latest("market_overview")
+
+    overview._refresh_intraday_core_snapshot(())
+
+    refreshed = bus.latest("market_overview")
+    assert initial is not None
+    assert refreshed is not None
+    assert refreshed["sequence"] > initial["sequence"]
+
+
+def test_intraday_core_refresh_publishes_event_enrichment_after_core_snapshot() -> None:
+    """The SSE payload must include events discovered after the tape refresh."""
+    from qibao_api.operations.realtime_snapshot_bus import RealtimeSnapshotBus
+
+    bus = RealtimeSnapshotBus()
+    fresh_news = event(0, event_type="market_news")
+    fresh_news.occurred_at = NOW
+    news_repository = NewsRepository([])
+    overview = service(
+        Source(),
+        realtime_snapshot_bus=bus,
+        news_repository=news_repository,
+    )
+    overview.current(NOW)
+    initial = bus.latest("market_overview")
+    news_repository.events = [fresh_news]
+
+    overview._refresh_intraday_core_snapshot(())
+
+    refreshed = bus.latest("market_overview")
+    assert initial is not None
+    assert refreshed is not None
+    assert refreshed["sequence"] > initial["sequence"]
+    assert refreshed["payload"]["anomalies"]
+    assert refreshed["payload"]["anomalies"][0]["anomaly_id"] == fresh_news.event_id
+
+
+def test_overview_uses_fresh_verified_sector_snapshot_when_local_sectors_are_empty() -> None:
+    class SectorRepository:
+        def history(self, *, limit=60):
+            return (SectorFundFlowSnapshot(
+                snapshot_id="sector-flow-1234567890abcdef12345678",
+                observed_at=NOW,
+                items=(SectorFundFlowItem(
+                    sector_code="BK1036",
+                    sector_name="人工智能",
+                    change_percent=Decimal("2.36"),
+                    amount_yi=Decimal("388.00"),
+                    main_net_yi=Decimal("23.80"),
+                    large_net_yi=Decimal("10.80"),
+                    super_net_yi=Decimal("13.00"),
+                    rising_count=71,
+                    falling_count=9,
+                ),),
+                content_hash="a" * 64,
+                raw_snapshot=b"{}",
+            ),)
+
+        def latest(self):
+            return self.history(limit=1)[0]
+
+    result = service(
+        Source(),
+        news_repository=NewsRepository([]),
+        sector_fund_flow_repository=SectorRepository(),
+    ).current(NOW)
+
+    assert result.sectors == (
+        OverviewSector(
+            sector_id="BK1036",
+            name="人工智能",
+            change_percent=Decimal("2.36"),
+            amount_yi=Decimal("388.00"),
+            rising_count=71,
+            falling_count=9,
+            stock_count=80,
+            industry_system="待核验",
+        ),
+    )
+    assert result.data_scope.sector_sample == "strong_sector"
+
+
+def test_overview_keeps_same_day_verified_sector_snapshot_during_source_outage() -> None:
+    class SectorRepository:
+        def history(self, *, limit=60):
+            return (self.latest(),)
+
+        def latest(self):
+            return SectorFundFlowSnapshot(
+                snapshot_id="sector-flow-1234567890abcdef12345678",
+                observed_at=NOW - timedelta(minutes=10),
+                items=(SectorFundFlowItem(
+                    sector_code="BK1036",
+                    sector_name="人工智能",
+                    change_percent=Decimal("2.36"),
+                    amount_yi=Decimal("388.00"),
+                    main_net_yi=Decimal("23.80"),
+                    rising_count=71,
+                    falling_count=9,
+                ),),
+                content_hash="a" * 64,
+                raw_snapshot=b"{}",
+            )
+
+    result = service(
+        Source(),
+        news_repository=NewsRepository([]),
+        sector_fund_flow_repository=SectorRepository(),
+    ).current(NOW)
+
+    assert [item.name for item in result.sectors] == ["人工智能"]
+    assert "板块行情更新暂时中断，正在显示今日最近一次已验证数据" in result.warnings
+
+
+def test_slow_full_refresh_does_not_blank_same_day_verified_sector_heatmap() -> None:
+    overview = service(Source())
+    current = overview.current(NOW)
+    without_sectors = current.model_copy(update={"sectors": (), "sector_stocks": {}})
+
+    preserved = MarketOverviewService._preserve_newer_core(without_sectors, current)
+
+    assert preserved.sectors == current.sectors
+    assert preserved.sector_stocks == current.sector_stocks
+    assert "sector_snapshot_refresh_failed_using_previous" in preserved.warnings
+
+
 def test_overview_excludes_news_without_verified_a_share_association() -> None:
     a_share_news = event(0, event_type="market_news")
     convertible_bond_news = event(
@@ -660,6 +803,37 @@ def test_overview_exposes_cached_real_large_order_direction_without_amount_proxy
     assert result.data_scope.large_order_sample_count == 1
 
 
+def test_overview_prefers_current_intraday_fund_flow_over_previous_daily_close() -> None:
+    class IntradayFundFlowRepository(FundFlowRepository):
+        def latest(self, symbol, as_of, *, cutoff=None):
+            snapshot = super().latest(symbol, as_of, cutoff=cutoff)
+            if snapshot is None:
+                return None
+            payload = vars(snapshot).copy()
+            payload.update(
+                latest_trade_date=date(2026, 7, 28),
+                intraday_sample_count=100,
+                intraday_main_net=Decimal("-420000000"),
+                intraday_large_net=Decimal("-250000000"),
+                intraday_super_net=Decimal("-170000000"),
+            )
+            return SimpleNamespace(**payload)
+
+    result = service(
+        Source(),
+        local_market_source=LocalMarketSource(),
+        fund_flow_repository=IntradayFundFlowRepository(),
+    ).current(NOW)
+
+    flow = result.large_order_flows[0]
+    assert flow.latest_trade_date == date(2026, 7, 29)
+    assert flow.main_net_yi == Decimal("-4.20")
+    assert flow.large_net_yi == Decimal("-2.50")
+    assert flow.super_net_yi == Decimal("-1.70")
+    assert flow.direction == "outflow"
+    assert flow.quality == "ready"
+
+
 def test_overview_exposes_real_sector_net_flow_time_series_with_sample_scope() -> None:
     result = service(
         Source(),
@@ -673,6 +847,50 @@ def test_overview_exposes_real_sector_net_flow_time_series_with_sample_scope() -
     assert result.sector_fund_flow[-1].quality == "ready"
     assert result.data_scope.sector_fund_flow_sample_count == 2
     assert result.data_scope.sector_fund_flow_snapshot_count == 2
+
+
+def test_overview_keeps_both_inflow_and_outflow_sectors_when_one_side_dominates() -> None:
+    class DominatedSectorRepository:
+        def history(self, *, limit=60):
+            items = tuple(
+                SectorFundFlowItem(
+                    sector_code=f"BK{index:04d}",
+                    sector_name=f"强势板块{index}",
+                    change_percent=Decimal("1.0"),
+                    amount_yi=Decimal("100"),
+                    main_net_yi=Decimal(str(100 - index)),
+                    large_net_yi=None,
+                    super_net_yi=None,
+                )
+                for index in range(12)
+            ) + (
+                SectorFundFlowItem(
+                    sector_code="BK9001", sector_name="流出板块甲",
+                    change_percent=Decimal("-0.8"), amount_yi=Decimal("80"),
+                    main_net_yi=Decimal("-12"), large_net_yi=None, super_net_yi=None,
+                ),
+                SectorFundFlowItem(
+                    sector_code="BK9002", sector_name="流出板块乙",
+                    change_percent=Decimal("-0.6"), amount_yi=Decimal("70"),
+                    main_net_yi=Decimal("-8"), large_net_yi=None, super_net_yi=None,
+                ),
+            )
+            return (SectorFundFlowSnapshot(
+                snapshot_id="sector-flow-1234567890abcdef12345678",
+                observed_at=NOW,
+                items=items,
+                content_hash="b" * 64,
+                raw_snapshot=b"{}",
+            ),)
+
+    result = service(
+        Source(),
+        news_repository=NewsRepository([]),
+        sector_fund_flow_repository=DominatedSectorRepository(),
+    ).current(NOW)
+
+    codes = {item.sector_code for item in result.sector_fund_flow}
+    assert {"BK9001", "BK9002"}.issubset(codes)
 
 
 def test_overview_marks_each_sector_flow_point_by_its_own_freshness() -> None:

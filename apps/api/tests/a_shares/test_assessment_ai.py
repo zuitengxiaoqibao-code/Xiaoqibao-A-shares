@@ -7,6 +7,7 @@ import pytest
 
 from qibao_api.a_shares.assessment import StockAssessment
 from qibao_api.a_shares.assessment_ai import (
+    ASSESSMENT_AI_TIMEOUT_SECONDS,
     OpenAICompatibleAssessmentGateway,
     ReloadableAssessmentGateway,
 )
@@ -20,6 +21,10 @@ from qibao_api.settings_repository import (
 
 NOW = datetime(2026, 7, 15, 6, tzinfo=UTC)
 SECRET = "sk-secret-must-never-leak"
+
+
+def test_assessment_ai_default_timeout_allows_slow_model_responses() -> None:
+    assert ASSESSMENT_AI_TIMEOUT_SECONDS == 60
 
 
 def evidence(evidence_id: str = "evidence-1") -> EvidenceReference:

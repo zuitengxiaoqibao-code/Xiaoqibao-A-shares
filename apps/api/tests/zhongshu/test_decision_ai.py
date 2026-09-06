@@ -118,12 +118,12 @@ def test_provider_failure_keeps_precise_ai_connection_state() -> None:
     assert limited_gateway.explain(request()).ai_state == "rate_limited"
 
 
-def test_rejects_number_even_when_same_token_exists_in_evidence() -> None:
+def test_allows_number_when_same_token_exists_in_frozen_evidence() -> None:
     subject, _ = gateway(json.dumps({
         "summary": "已核验数值为 10",
         "statements": [{"kind": "fact", "text": "数值 10", "evidence_ids": ["ev-1"]}],
     }, ensure_ascii=False))
-    assert subject.explain(numeric_request()).status == "unavailable"
+    assert subject.explain(numeric_request()).status == "ready"
 
 
 @pytest.mark.parametrize("text", ["增长10%", "上涨12.3%", "回撤-3.5%"])
@@ -200,3 +200,22 @@ def test_reloadable_gateway_uses_saved_settings_without_restart(tmp_path) -> Non
     assert "top-secret" not in json.dumps(second_identity)
     assert "top-secret" not in repr(subject)
     client.close()
+
+
+def test_reloadable_gateway_uses_long_read_timeout_for_real_model_latency(tmp_path) -> None:
+    repository = AISettingsRepository(tmp_path)
+    repository.save(AISettings(
+        base_url="https://provider.example/v1",
+        model="model-first",
+        api_key="top-secret",
+    ))
+    subject = ReloadableDecisionAIGateway(
+        EffectiveAISettingsResolver(repository),
+        client=httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": valid_payload()}}]},
+        ))),
+    )
+
+    assert subject._timeout >= 45
+    subject._client.close()

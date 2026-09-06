@@ -1,6 +1,8 @@
 import asyncio
 from datetime import date, datetime, timezone
 from decimal import Decimal
+import sqlite3
+import time
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -15,7 +17,9 @@ from qibao_api.contracts.company_research import (
 )
 from qibao_api.dependencies import get_company_research_service
 from qibao_api.dependencies import get_company_research_ai_task_service
+from qibao_api.a_shares.company_research_versions import CompanyResearchVersionRepository
 from qibao_api.routes.research import router
+import qibao_api.routes.research as research_routes
 from qibao_api.contracts.company_research_ai_task import CompanyResearchAITaskSnapshot
 from qibao_api.contracts.task_progress import TaskProgress
 
@@ -140,6 +144,31 @@ def test_company_research_route_supports_a_cache_only_probe() -> None:
     assert response.status_code == 404
     assert response.json()["detail"]["code"] == "company_research_cache_miss"
     assert service.calls == []
+
+
+def test_company_research_route_does_not_wait_forever_on_a_locked_cache_lookup(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(research_routes, "COMPANY_RESEARCH_CACHE_TIMEOUT_SECONDS", 0.05)
+    service = Service()
+    app = application(service)
+    database = tmp_path / "company-research.sqlite3"
+    repository = CompanyResearchVersionRepository(database)
+    locker = sqlite3.connect(database)
+    locker.execute("BEGIN EXCLUSIVE")
+    app.state.company_research_version_repository = repository
+
+    started = time.perf_counter()
+    try:
+        response = TestClient(app).get("/api/v1/a-shares/600519/company-research")
+        elapsed = time.perf_counter() - started
+    finally:
+        locker.rollback()
+        locker.close()
+        repository.close()
+
+    assert response.status_code == 200
+    assert response.json()["symbol"] == "600519"
+    assert elapsed < 0.80
+    assert service.calls == [("600519", date.today())]
 
 
 def test_company_research_ai_task_routes_start_and_read_independent_supplement() -> None:

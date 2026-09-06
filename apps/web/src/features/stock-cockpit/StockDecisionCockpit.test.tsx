@@ -198,6 +198,15 @@ describe("StockDecisionCockpit", () => {
     expect(await screen.findByRole("status", { name: "个股观察数据刷新状态" })).toHaveTextContent("继续显示当日缓存");
   });
 
+  it("shows a cached refresh failure only once instead of duplicating the timeout alert", async () => {
+    writeDailySnapshot("stock-cockpit", "600000", snapshot(), new Date());
+    renderCockpit(() => Promise.reject(new Error("请求超时，请稍后重试。")));
+
+    const status = await screen.findByRole("status", { name: "个股观察数据刷新状态" });
+    await waitFor(() => expect(status).toHaveTextContent("最新数据更新失败，继续显示当日缓存"));
+    expect(screen.getAllByText("请求超时，请稍后重试。")).toHaveLength(1);
+  });
+
   it("opens company research for the currently observed stock", async () => {
     const openCompanyResearch = vi.fn();
     window.history.replaceState({}, "", "/?symbol=600000");
@@ -249,7 +258,10 @@ describe("StockDecisionCockpit", () => {
     render(<SelectedInstrumentProvider><StockDecisionCockpit load={() => Promise.resolve(snapshot())} loadTimeline={loadTimeline} /></SelectedInstrumentProvider>);
 
     const eventKline = await screen.findByRole("region", { name: "个股新闻与热点事件 K 线" });
+    const timeframeCharts = await screen.findByRole("region", { name: "个股分时与近三十日行情" });
     const summary = screen.getByRole("region", { name: "证据决策摘要" });
+    expect(eventKline.nextElementSibling).toBe(timeframeCharts);
+    expect(timeframeCharts.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(eventKline.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await waitFor(() => expect(loadTimeline).toHaveBeenCalledWith("600000", undefined, expect.any(AbortSignal)));
   });
@@ -714,9 +726,9 @@ describe("StockDecisionCockpit", () => {
     renderCockpit(() => Promise.resolve(detailed));
     fireEvent.click(await screen.findByText("数据详情"));
 
-    const industry = screen.getByRole("region", { name: "行业与题材" });
+    const industry = screen.getByRole("region", { name: "申万行业与题材" });
     expect(within(industry).getByText(
-      "东方财富行业与板块暂未返回可核验数据，本项未参与当前研判。",
+      "申万行业分类暂未返回可核验数据，本项未参与当前研判。",
     )).toBeInTheDocument();
     expect(within(industry).queryByText("该分区数据暂不可用")).not.toBeInTheDocument();
   });
@@ -751,9 +763,9 @@ describe("StockDecisionCockpit", () => {
     expect(screen.getByText("新闻事件行业标签")).toBeInTheDocument();
     expect(screen.getByText(allBoardTags)).toBeInTheDocument();
     expect(screen.getByText(/已核验板块29$/)).toBeInTheDocument();
-    expect(screen.getByText("来源：东方财富行业与板块")).toBeInTheDocument();
+    expect(screen.getByText("来源：申万行业分类（来源：东方财富）")).toBeInTheDocument();
     expect(screen.getByText("来源：已核验新闻事件")).toBeInTheDocument();
-    const industrySection = screen.getByRole("region", { name: "行业与题材" });
+    const industrySection = screen.getByRole("region", { name: "申万行业与题材" });
     const newsSection = screen.getByRole("region", { name: "新闻与事件" });
     fireEvent.click(within(industrySection).getByText("1 条证据编号"));
     fireEvent.click(within(newsSection).getByText("1 条证据编号"));
@@ -796,14 +808,14 @@ describe("StockDecisionCockpit", () => {
     expect(screen.queryByText("尚未执行自动补齐")).not.toBeInTheDocument();
   });
 
-  it("keeps the last snapshot visible and marks it stale after refresh failure", async () => {
+  it("keeps the last snapshot visible and reports the failed refresh", async () => {
     const load = vi.fn().mockResolvedValueOnce(snapshot()).mockRejectedValueOnce(new Error("offline"));
     renderCockpit(load);
     await screen.findByText("浦发银行");
     fireEvent.click(screen.getByRole("button", { name: "刷新驾驶舱" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("股票分析暂不可用，请稍后重试。");
+    expect(await screen.findByRole("status", { name: "个股观察数据刷新状态" })).toHaveTextContent("最新数据更新失败，继续显示当日缓存");
     expect(screen.queryByText("offline")).not.toBeInTheDocument();
-    expect(screen.getByText("当前内容已陈旧")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByText("浦发银行")).toBeInTheDocument();
   });
 

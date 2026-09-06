@@ -17,6 +17,34 @@ export type AISettingsView = {
 };
 
 export type AISettingsInput = { base_url: string; model: string; api_key: string };
+export type ExternalDataSourceView = {
+  source_id: "tickflow" | "fuyao" | "tushare";
+  name: string;
+  description: string;
+  capabilities: string[];
+  key_label: string;
+  key_url: string;
+  configured: boolean;
+  enabled: boolean;
+  api_key_hint: string | null;
+  status: "unconfigured" | "configured" | "ready" | "limited" | "unavailable";
+  capability_checks?: Array<{
+    key: string;
+    label: string;
+    status: "ready" | "limited" | "unavailable" | "unverified";
+    detail: string;
+    reason_code?: string | null;
+    tested_at?: string | null;
+  }>;
+  last_tested_at?: string | null;
+  last_error?: string | null;
+  reason?: string | null;
+};
+export type ExternalDataSourceResponse = { sources: ExternalDataSourceView[] };
+export type ExternalDataSourceLoader = (signal?: AbortSignal) => Promise<ExternalDataSourceResponse>;
+export type ExternalDataSourceSaver = (sourceId: string, apiKey: string, enabled: boolean, signal?: AbortSignal) => Promise<ExternalDataSourceView>;
+export type ExternalDataSourceClearer = (sourceId: string, signal?: AbortSignal) => Promise<ExternalDataSourceView>;
+export type ExternalDataSourceTester = (sourceId: string, signal?: AbortSignal) => Promise<ExternalDataSourceView>;
 export type PreparationLoader = (symbol: string, signal?: AbortSignal) => Promise<StockPreparation>;
 export type AShareUniverseSyncResult = { status: "ready"; count: number; observed_at: string; source: string };
 export type AShareUniverseSyncLoader = () => Promise<AShareUniverseSyncResult>;

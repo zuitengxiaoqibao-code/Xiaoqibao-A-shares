@@ -154,6 +154,11 @@ class RealtimeAITriggerQueue:
                 result_message = getattr(result, "ai_message", None)
                 if result_state and result_message:
                     ai_status = type(ai_status)(result_state, result_message)
+                elif getattr(result, "invalid_output_count", 0) > 0:
+                    ai_status = type(ai_status)(
+                        "output_invalid",
+                        "AI 接口已连接，但返回内容未通过证据校验，已保留规则分析",
+                    )
                 else:
                     ai_status = classify_ai_status(
                         configured=True, error=OSError("AI request unavailable"),
@@ -168,6 +173,8 @@ class RealtimeAITriggerQueue:
                 "prompt_version": result.prompt_version if result is not None else "realtime-ai-v1",
                 "generated_at": result.generated_at.isoformat() if result is not None else datetime.now(timezone.utc).isoformat(),
                 "evidence_ids": list(result.evidence_ids) if result is not None else [item["evidence_id"] for item in trigger["evidence"]],
+                "invalid_output_count": getattr(result, "invalid_output_count", 0),
+                "provider_error_count": getattr(result, "provider_error_count", 0),
                 "fallback": result is None or result.status != "ready",
                 "ai_state": ai_status.state,
                 "ai_message": (

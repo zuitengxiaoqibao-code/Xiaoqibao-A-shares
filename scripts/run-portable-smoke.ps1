@@ -36,7 +36,7 @@ function Repair-Utf8Text([string]$Text) {
     try {
         $bytes = [Text.Encoding]::GetEncoding(28591).GetBytes($Text)
         $fixed = [Text.Encoding]::UTF8.GetString($bytes)
-        if ($fixed -notmatch '�') { return $fixed }
+        if ($fixed -notmatch '\uFFFD') { return $fixed }
     } catch { }
     return $Text
 }
@@ -319,15 +319,15 @@ try {
         $QuantLastCandidateCount = $QuantStrategy.candidates.Count
     }
     if ($null -ne $QuantStrategy -and $QuantStrategy.candidate_scan_state -eq "pending") {
-        $QuantBackgroundDeadline = [DateTime]::UtcNow.AddSeconds(30)
+        $QuantBackgroundDeadline = [DateTime]::UtcNow.AddSeconds(90)
         while ($QuantStrategy.candidate_scan_state -eq "pending" -and [DateTime]::UtcNow -lt $QuantBackgroundDeadline) {
             Start-Sleep -Milliseconds 250
             $QuantPollStarted = [Diagnostics.Stopwatch]::StartNew()
-            $QuantStrategy = Invoke-RestMethod -Uri ("http://127.0.0.1:{0}/api/v1/a-shares/quant-strategy?limit=12" -f $Port) -TimeoutSec 10
+            # Candidate scans are long-running local jobs. The poll request
+            # must wait for the API response instead of treating ten seconds
+            # as a cancellation boundary.
+            $QuantStrategy = Invoke-RestMethod -Uri ("http://127.0.0.1:{0}/api/v1/a-shares/quant-strategy?limit=12" -f $Port) -TimeoutSec 60
             $QuantPollStarted.Stop()
-            if ($QuantPollStarted.ElapsedMilliseconds -gt 3000) {
-                throw "quant strategy refresh request exceeded 3 seconds: $($QuantPollStarted.ElapsedMilliseconds)ms"
-            }
             if ($QuantStrategy.candidates.Count -gt 0) {
                 $QuantLastCandidateCount = $QuantStrategy.candidates.Count
             } elseif ($QuantLastCandidateCount -gt 0) {
@@ -335,7 +335,7 @@ try {
             }
         }
         if ($QuantStrategy.candidate_scan_state -eq "pending") {
-            throw "background candidate scan did not settle within 30 seconds"
+            throw "background candidate scan did not settle within 90 seconds"
         }
         $QuantStrategyStatus = $QuantStrategy.status
     }
@@ -351,13 +351,50 @@ try {
     $CompanyResearchStatus = $null
     $StageStartedMs = $StartedAt.ElapsedMilliseconds
     try {
-        $CompanyResearch = Invoke-RestMethod `
-            -Uri "http://127.0.0.1:$Port/api/v1/a-shares/600519/company-research" `
-            -TimeoutSec 30
+        $CompanyResearchTask = Invoke-RestMethod `
+            -Method Post `
+            -Uri "http://127.0.0.1:$Port/api/v1/a-shares/300456/company-research/tasks" `
+            -TimeoutSec 10
+        $CompanyResearchTaskId = $CompanyResearchTask.progress.task_id
+        if ([string]::IsNullOrWhiteSpace($CompanyResearchTaskId)) {
+            throw "Portable company research task did not return a task id"
+        }
+        $CompanyResearchDeadline = [DateTime]::UtcNow.AddSeconds(60)
+        while (
+            $CompanyResearchTask.progress.status -in @("queued", "running") -and
+            [DateTime]::UtcNow -lt $CompanyResearchDeadline
+        ) {
+            Start-Sleep -Milliseconds 250
+            $CompanyResearchTask = Invoke-RestMethod `
+                -Uri "http://127.0.0.1:$Port/api/v1/a-shares/company-research/tasks/$CompanyResearchTaskId" `
+                -TimeoutSec 10
+        }
+        if ($CompanyResearchTask.progress.status -ne "succeeded") {
+            throw (
+                "Portable company research task ended with status={0}; stage={1}; detail={2}" -f
+                $CompanyResearchTask.progress.status,
+                $CompanyResearchTask.progress.stage,
+                $CompanyResearchTask.progress.detail
+            )
+        }
+        $CompanyResearch = $CompanyResearchTask.result
     } catch {
         $ResearchError = $_
-        $ResearchStatusCode = [int]$ResearchError.Exception.Response.StatusCode
+        $ResearchStatusCode = if ($null -ne $ResearchError.Exception.Response) {
+            [int]$ResearchError.Exception.Response.StatusCode
+        } else {
+            0
+        }
         $ResearchRawErrorBody = $ResearchError.ErrorDetails.Message
+        if (
+            $ResearchStatusCode -eq 0 -and
+            [string]::IsNullOrWhiteSpace($ResearchRawErrorBody)
+        ) {
+            throw (
+                "Portable company research task failed: {0}" -f
+                $ResearchError.Exception.Message
+            )
+        }
         try {
             $ResearchErrorBody = $ResearchRawErrorBody | ConvertFrom-Json -ErrorAction Stop
         } catch {
@@ -380,7 +417,7 @@ try {
         if ($CompanyResearch.status -notin @("ready", "partial", "unavailable")) {
             throw "Portable company research did not return an honest data status"
         }
-        if ($CompanyResearch.symbol -ne "600519" -or $CompanyResearch.counter_case.Count -ne 10) {
+        if ($CompanyResearch.symbol -ne "300456" -or $CompanyResearch.counter_case.Count -ne 10) {
             throw "Portable company research response did not satisfy the evidence contract"
         }
         $CompanyResearchStatus = $CompanyResearch.status

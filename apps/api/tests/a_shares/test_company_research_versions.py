@@ -260,3 +260,42 @@ def test_latest_skips_a_corrupt_newest_row_and_returns_previous_verified_cache(t
 
     assert repository.latest("600519") == stored
     repository.close()
+
+
+def test_append_skips_corrupt_newest_row_and_keeps_monotonic_version_number(tmp_path) -> None:
+    repository = CompanyResearchVersionRepository(tmp_path / "company-research-versions.sqlite3")
+    value = sample_response().model_copy(update={
+        "as_of": date(2026, 8, 14),
+        "generated_at": datetime(2026, 8, 14, 7, 36, tzinfo=timezone.utc),
+        "research_sections": sections("主营高端白酒"),
+    })
+    stored = repository.append(value)
+    payload = stored.model_dump_json()
+    canonical_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    with repository.connection:
+        repository.connection.execute(
+            """INSERT INTO company_research_versions(
+            snapshot_id,symbol,version_number,content_hash,canonical_hash,payload,generated_at
+            ) VALUES(?,?,?,?,?,?,?)""",
+            (
+                "company-research-600519-corrupt-newest",
+                "600519",
+                2,
+                "corrupt-semantic-hash",
+                canonical_hash,
+                payload,
+                value.generated_at.isoformat(),
+            ),
+        )
+
+    changed = value.model_copy(update={
+        "as_of": date(2026, 8, 15),
+        "generated_at": datetime(2026, 8, 15, 7, 36, tzinfo=timezone.utc),
+        "research_sections": sections("主营高端白酒，渠道结构出现变化", "partial"),
+    })
+    appended = repository.append(changed)
+
+    assert appended.research_version is not None
+    assert appended.research_version.version_number == 3
+    assert appended.research_version.previous_snapshot_id == stored.research_version.snapshot_id
+    repository.close()

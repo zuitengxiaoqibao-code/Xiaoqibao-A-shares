@@ -21,7 +21,7 @@ export function CompanyResearchAIInsight({ result = null, loading, error }: Prop
         : "AI 总结暂不可用，已保留完整确定性研究。"}</p>}
     {result?.status === "ready" && result.analysis && <div>
       <article className="company-research-ai-summary"><b>证据摘要</b><p>{result.analysis.executive_summary}</p></article>
-      <article><b>反方风险</b>{result.analysis.contrary_risks.length > 0 ? <ul>{result.analysis.contrary_risks.map((risk) => <li key={`${risk.title}-${risk.detail}`}><strong>{risk.title}</strong><span>{risk.detail}</span><small>证据 {risk.evidence_ids.join(" · ")}</small></li>)}</ul> : <p>AI 未在冻结证据中识别额外反方风险。</p>}</article>
+      <article><b>反方风险</b>{result.analysis.contrary_risks.length > 0 ? <ul>{result.analysis.contrary_risks.map((risk) => <li key={`${risk.title}-${risk.detail}`}><strong>{risk.title}</strong><span>{risk.detail}</span><small>已绑定 {risk.evidence_ids.length} 条研究证据</small></li>)}</ul> : <p>AI 未在冻结证据中识别额外反方风险。</p>}</article>
       <article><b>继续核验</b><ul>{result.analysis.verification_questions.map((question) => <li key={question}>{question}</li>)}</ul></article>
     </div>}
   </section>;

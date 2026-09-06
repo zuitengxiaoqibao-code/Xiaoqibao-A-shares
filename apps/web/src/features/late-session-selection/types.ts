@@ -31,7 +31,7 @@ export type LateSessionRule = {
 };
 
 export type LateSessionAIAnalysis = {
-  status: "ready" | "unconfigured" | "no_candidates" | "error";
+  status: "ready" | "unconfigured" | "no_candidates" | "output_invalid" | "error";
   mode: "ai" | "rule_interpretation" | "unavailable";
   title: string;
   summary: string;

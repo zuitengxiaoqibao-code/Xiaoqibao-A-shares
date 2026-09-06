@@ -1,10 +1,12 @@
 import asyncio
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+import threading
 
 import pytest
 
 from qibao_api.a_shares.company_research import CompanyResearchService
+import qibao_api.a_shares.company_research as company_research_module
 from qibao_api.a_shares.diagnosis import AShareDiagnosis, DiagnosisSection, SECTION_NAMES
 from qibao_api.contracts.company_research import (
     CompanyProfileEvidence,
@@ -290,6 +292,37 @@ async def test_company_research_returns_previous_cache_while_new_day_refreshes()
     finally:
         release.set()
         await asyncio.sleep(0)
+        service.close()
+
+
+@pytest.mark.asyncio
+async def test_company_research_skips_locked_cache_lookup_inside_service(monkeypatch) -> None:
+    lookup_started = threading.Event()
+    release_lookup = threading.Event()
+
+    class LockedVersions:
+        def latest(self, _symbol: str):
+            lookup_started.set()
+            release_lookup.wait(timeout=5)
+            return None
+
+        def append(self, value):
+            return value
+
+    monkeypatch.setattr(company_research_module, "COMPANY_RESEARCH_CACHE_TIMEOUT_SECONDS", 0.05)
+    service = CompanyResearchService(
+        DiagnosisService(diagnosis()), FinancialSource(financial_history()), ProfileSource(),
+        version_repository=LockedVersions(), clock=lambda: NOW,
+    )
+    try:
+        result = await asyncio.wait_for(
+            service.get("600519", date(2026, 8, 3)), timeout=0.8,
+        )
+        assert lookup_started.is_set()
+        assert result.symbol == "600519"
+        assert result.name == "贵州茅台"
+    finally:
+        release_lookup.set()
         service.close()
 
 

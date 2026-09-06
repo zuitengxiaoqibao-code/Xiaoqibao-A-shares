@@ -25,7 +25,7 @@ import type { StockTimelineLoader } from "../stock-timeline/types";
 import { useQuantLiveResource } from "./useQuantLiveRefresh";
 import { retainReadyStrategySnapshot } from "./strategySnapshot";
 import { useRealtimeFallbackTick, useRealtimeState, useRealtimeSubscription } from "../../shared/realtime/RealtimeProvider";
-import { equityPoints, factorRadar, signalMetrics } from "./metrics";
+import { backtestFactorRadar, equityPoints, factorRadar, signalMetrics } from "./metrics";
 import { shanghaiDay } from "../../shared/tradingDayContext";
 import type {
   DecisionJournalCreator,
@@ -124,15 +124,6 @@ export function tickOption(ticks: IntradayTick[]): EChartsOption {
       { name: "成交量", type: "bar", data: ticks.map((item) => Number(item.volume)), xAxisIndex: 1, yAxisIndex: 1, itemStyle: { color: (params: { dataIndex: number }) => Number(ticks[params.dataIndex]?.change_percent) >= 0 ? chartTheme.upColor : chartTheme.downColor } },
     ],
   };
-}
-
-function radarOption(candidate: FirstLimitUpCandidate): EChartsOption {
-  const radar = factorRadar(candidate);
-  return buildFactorOption({
-    indicators: radar.indicators.map((name) => ({ name, max: 100 })),
-    values: radar.values,
-    name: "规则因子",
-  });
 }
 
 function backtestOption(backtest: BacktestResult): EChartsOption {
@@ -411,20 +402,19 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
     await createDecisionJournal(request);
     await refreshDecisionJournal();
   }, [createDecisionJournal, refreshDecisionJournal]);
-  const boardAsOf = board?.as_of;
   const backtestLoader = useCallback(
-    (signal?: AbortSignal) => selected && boardAsOf ? runBacktest(selected, signal) : Promise.reject(new Error("backtest target unavailable")),
-    [boardAsOf, runBacktest, selected],
+    (signal?: AbortSignal) => selected ? runBacktest(selected, signal) : Promise.reject(new Error("backtest target unavailable")),
+    [runBacktest, selected],
   );
   const backtestResource = useQuantLiveResource({
     loader: backtestLoader,
     intervalMs: 300_000,
-    enabled: Boolean(selected && boardAsOf),
+    enabled: Boolean(selected),
     polling: false,
     errorMessage: "历史回测暂不可用",
     initialDelayMs: 600,
     cache: {
-      key: `quant-backtest:${selected ?? "none"}:${boardAsOf ?? "none"}`,
+      key: `quant-backtest:${selected ?? "none"}`,
       day: cacheDay,
       validate: (value): value is BacktestResult => hasMatchingSymbol(value, selected),
     },
@@ -438,31 +428,31 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
   const walkForwardResource = useQuantLiveResource({
     loader: walkForwardLoader,
     intervalMs: 300_000,
-    enabled: Boolean(selected && boardAsOf && loadWalkForward),
+    enabled: Boolean(selected && loadWalkForward),
     polling: false,
     errorMessage: "样本外验证暂不可用",
     initialDelayMs: 850,
     cache: {
-      key: `quant-walk-forward:${selected ?? "none"}:${boardAsOf ?? "none"}`,
+      key: `quant-walk-forward:${selected ?? "none"}`,
       day: cacheDay,
       validate: (value): value is Awaited<ReturnType<QuantWalkForwardLoader>> => hasMatchingSymbol(value, selected),
     },
   });
   const forecastLoader = useCallback(
-    () => selected && boardAsOf && loadKronosForecast
-      ? loadKronosForecast(selected, boardAsOf, 20)
+    () => selected && loadKronosForecast
+      ? loadKronosForecast(selected, undefined, 20)
       : Promise.reject(new Error("forecast target unavailable")),
-    [boardAsOf, loadKronosForecast, selected],
+    [loadKronosForecast, selected],
   );
   const forecastResource = useQuantLiveResource({
     loader: forecastLoader,
     intervalMs: 300_000,
-    enabled: Boolean(selected && boardAsOf && loadKronosForecast),
+    enabled: Boolean(selected && loadKronosForecast),
     polling: false,
     errorMessage: "价格路径预测暂不可用",
     initialDelayMs: 1_100,
     cache: {
-      key: `quant-kronos:${selected ?? "none"}:${boardAsOf ?? "none"}`,
+      key: `quant-kronos:${selected ?? "none"}:latest`,
       day: cacheDay,
       validate: (value): value is KronosForecastResponse => hasMatchingSymbol(value, selected),
     },
@@ -475,13 +465,18 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
   const candidatePullback = finiteNumber(candidate?.pullback_pct);
   const selectedBacktest = backtestResource.data?.symbol === selected ? backtestResource.data : null;
   const selectedForecast = forecastResource.data?.symbol === selected ? forecastResource.data : null;
+  const strategyCandidate = strategyDashboard?.candidates.find((item) => item.symbol === selected) ?? null;
   const tickEmptyMessage = !candidate
     ? selected ? tickResource.status === "loading" ? "正在读取盘中 TICK" : tickResource.error || "暂无已归档盘中 TICK" : "等待分析标的"
     : tickResource.status === "loading"
       ? "正在读取盘中 TICK"
       : tickResource.error || "暂无已归档盘中 TICK";
-  const metrics = signalMetrics(candidate, selectedBacktest);
-  const radar = candidate ? factorRadar(candidate) : null;
+  const metrics = signalMetrics(candidate, selectedBacktest, strategyCandidate);
+  const radar = candidate
+    ? factorRadar(candidate)
+    : selectedBacktest
+      ? backtestFactorRadar(selectedBacktest, strategyCandidate)
+      : null;
   const equity = equityPoints(selectedBacktest);
 
   return <main className="terminal-page quant-analysis-page" aria-label="首次涨停量化分析">
@@ -523,7 +518,7 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
         <div><span>当前回撤</span><strong className={candidatePullback !== null && candidatePullback > 0 ? "down" : "muted"}>{candidatePullback === null ? "--" : `${(candidatePullback * 100).toFixed(1)}%`}</strong><small>相对首次涨停收盘</small></div>
         <div><span>规则状态</span><strong className={candidate?.selection_status === "qualified" ? "up" : "muted"}>{candidate?.selection_status === "qualified" ? "已通过" : candidate ? "待核验" : "无候选规则"}</strong><small>{candidate?.stage ?? "custom"}</small></div>
       </div>
-      <StockEventKline symbol={selected} asOf={boardAsOf} load={loadTimeline} />
+      <StockEventKline symbol={selected} load={loadTimeline} />
     </section>}
 
     {boardResource.status === "error" && !board && <div className="quant-page-error"><ShieldAlert size={18} />首次涨停候选数据暂不可用</div>}
@@ -545,7 +540,7 @@ export function QuantAnalysisDashboard({ loadBoard, refreshBoard, loadTicks, run
 
       <section className="quant-panel quant-radar-panel" role="region" aria-label="量化因子雷达">
         <header><div><span>Q3 / FACTOR ARRAY</span><h2>量化因子雷达</h2></div><small>{radar ? `证据覆盖 ${radar.verifiedCount}/6` : "等待证据"}</small></header>
-        {candidate ? <><QuantChart option={radarOption(candidate)} ariaLabel={`${candidate.name}首次涨停规则因子雷达`} /><p className="quant-panel-note">雷达值由 PE、周/月线距低点、回撤阶段、盘整天数和规则分派生；缺失字段保持空缺并计入证据覆盖。</p></> : <div className="quant-empty"><b>{selected ? "未进入首次涨停候选池" : "暂无规则因子"}</b><p>{selected ? "该区域不使用其他股票的候选分或规则因子。" : "选择股票后再检查候选资格。"}</p></div>}
+        {radar ? <><QuantChart option={buildFactorOption({ indicators: radar.indicators.map((name) => ({ name, max: 100 })), values: radar.values, name: candidate ? "规则因子" : "历史回测因子" })} ariaLabel={`${selectedName ?? selected ?? "当前股票"}${candidate ? "首次涨停规则" : "历史回测"}因子雷达`} /><p className="quant-panel-note">{candidate ? "雷达值由 PE、周/月线距低点、回撤阶段、盘整天数和规则分派生；缺失字段保持空缺并计入证据覆盖。" : "历史回测因子由真实闭合交易、波动、回撤、Sharpe 与量化策略综合分派生；未进入首次涨停池也能独立分析。"}</p></> : <div className="quant-empty"><b>{selected ? "正在建立标的因子证据" : "暂无规则因子"}</b><p>{selected ? "优先读取该股票的真实回测与量化策略证据。" : "选择股票后再检查因子证据。"}</p></div>}
       </section>
 
       <section className="quant-panel quant-backtest-panel" role="region" aria-label="回测风险收益">

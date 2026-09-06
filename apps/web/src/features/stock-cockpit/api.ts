@@ -1,4 +1,4 @@
-import type { InstrumentDirectoryResponse, InstrumentSearchResponse, StockCockpitSnapshot, StockPreparation } from "./types";
+import type { InstrumentDirectoryResponse, InstrumentSearchResponse, StockCockpitSnapshot, StockPreparation, StockQuotePulse } from "./types";
 import { fetchJsonWithProgress, type LoadProgressCallback } from "../../shared/fetchJsonWithProgress";
 import { createInstrumentDirectory, type InstrumentDirectory } from "../../shared/instruments/instrumentDirectory";
 import { apiClient } from "../../shared/apiClient";
@@ -51,6 +51,13 @@ export function loadStockCockpitAI(symbol: string, asOf?: string, signal?: Abort
     { signal },
     onProgress,
     (status) => `A 股请求失败 (${status})`,
+  );
+}
+
+export function loadStockQuotePulse(symbol: string, signal?: AbortSignal): Promise<StockQuotePulse> {
+  return apiClient.get<StockQuotePulse>(
+    `/api/v1/a-shares/${symbol}/quote-pulse`,
+    { signal, context: "个股实时行情" },
   );
 }
 

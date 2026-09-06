@@ -463,7 +463,7 @@ function ReviewSummary({ data, variant, actions }: { data: MarketOverviewRespons
       { label: "历史覆盖", value: coverageLabel, source: `${review.history_ready_count}/${review.universe_count}`, unavailableReason: "当前接口仅返回历史覆盖聚合值，暂无缺失股票成员级明细。" },
     ];
   })();
-  return <><div className="review-summary-grid">{rows.map((item, index) => { const parsed = numberValue(item.value); const meter = index === 3 ? coverage : parsed; return <article key={item.label} data-state={meter === null ? "unavailable" : "ready"} style={{ "--meter": `${meter === null ? 0 : Math.min(100, Math.max(6, meter))}%` } as CSSProperties}><DrilldownMetric item={item} selected={selection?.label === item.label} onSelect={setSelection}><i /><span>{item.label}</span><b>{item.value}</b><small>{item.source}</small></DrilldownMetric></article>; })}</div><DrilldownRegion selection={selection} setSelection={setSelection} actions={actions} /></>;
+  return <><div className="review-summary-grid">{rows.map((item, index) => { const parsed = numberValue(item.value); const meter = index === 3 ? coverage : parsed; return <article key={item.label} data-state={meter === null ? "unavailable" : "ready"} style={{ "--meter": `${meter === null ? 0 : Math.min(100, Math.max(6, meter))}%` } as CSSProperties}><DrilldownMetric className="review-summary-metric" item={item} selected={selection?.label === item.label} onSelect={setSelection}><i /><span>{item.label}</span><b>{item.value}</b><small>{item.source}</small></DrilldownMetric></article>; })}</div><DrilldownRegion selection={selection} setSelection={setSelection} actions={actions} /></>;
 }
 
 function average(values: number[]): number | null {
@@ -681,7 +681,7 @@ function Distribution({ data, model, variant, actions }: { data: MarketOverviewR
       return { label, value: matched.length, source: variant === "feedback" ? "昨涨停次日反馈" : "百日新高突破幅度", itemTone, stocks: matched.map(({ item, value }) => reviewStock(item, `${label} · ${signedPercent(value)}`)) };
     });
     const max = Math.max(1, ...items.map((item) => Number(item.value)));
-    return <><div className="distribution-bars"><header className="distribution-heading"><b>{variant === "feedback" ? "昨涨停次日回撤/反弹" : "百日新高突破幅度"}</b><span>{valuedRows.length} 只有效样本</span></header>{items.map((item) => <article key={item.label}><DrilldownMetric item={item} selected={selection?.label === item.label} onSelect={setSelection}><span>{item.label}</span><div className={item.itemTone}><i style={{ width: `${Number(item.value) / max * 100}%` }} /></div><b>{item.value}</b></DrilldownMetric></article>)}<footer>{variant === "feedback" ? "回撤/反弹按当前收盘相对前一交易日收盘计算。" : "突破幅度按当前收盘相对前 100 个交易日最高收盘计算。"}</footer></div><DrilldownRegion selection={selection} setSelection={setSelection} actions={actions} /></>;
+    return <><div className="distribution-bars"><header className="distribution-heading"><b>{variant === "feedback" ? "昨涨停次日回撤/反弹" : "百日新高突破幅度"}</b><span>{valuedRows.length} 只有效样本</span></header>{items.map((item) => <article key={item.label}><DrilldownMetric className="distribution-metric" item={item} selected={selection?.label === item.label} onSelect={setSelection}><span>{item.label}</span><div className={`distribution-track ${item.itemTone}`}><i style={{ width: `${Number(item.value) / max * 100}%` }} /></div><b>{item.value}</b></DrilldownMetric></article>)}<footer>{variant === "feedback" ? "回撤/反弹按当前收盘相对前一交易日收盘计算。" : "突破幅度按当前收盘相对前 100 个交易日最高收盘计算。"}</footer></div><DrilldownRegion selection={selection} setSelection={setSelection} actions={actions} /></>;
   }
   const stockBins = variant === "score-parts" ? [
     ["人气分 0-20", (stock: DerivedStock) => known(stock.attentionScore) && stock.attentionScore < 20, "flat"],
@@ -715,7 +715,7 @@ function Distribution({ data, model, variant, actions }: { data: MarketOverviewR
     : variant === "sector-bands"
       ? "板块强度由涨跌幅、上涨广度和涨停密度确定性派生，只覆盖本地板块快照。"
       : `全市场广度：上涨 ${data.breadth.rising_count} / 下跌 ${data.breadth.falling_count}；柱状分布仅覆盖接口代表股票。`;
-  return <><div className="distribution-bars">{items.map((item) => <article key={item.label}><DrilldownMetric item={item} selected={selection?.label === item.label} onSelect={setSelection}><span>{item.label}</span><div className={item.itemTone}><i style={{ width: `${Number(item.value) / max * 100}%` }} /></div><b>{item.value}</b></DrilldownMetric></article>)}<footer>{footer}</footer></div><DrilldownRegion selection={selection} setSelection={setSelection} actions={actions} /></>;
+  return <><div className="distribution-bars">{items.map((item) => <article key={item.label}><DrilldownMetric className="distribution-metric" item={item} selected={selection?.label === item.label} onSelect={setSelection}><span>{item.label}</span><div className={`distribution-track ${item.itemTone}`}><i style={{ width: `${Number(item.value) / max * 100}%` }} /></div><b>{item.value}</b></DrilldownMetric></article>)}<footer>{footer}</footer></div><DrilldownRegion selection={selection} setSelection={setSelection} actions={actions} /></>;
 }
 
 function SevenRankings({ model, onOpenAShare }: { model: WorkspaceMarketModel; onOpenAShare?: (symbol: string) => void }) {
@@ -758,7 +758,7 @@ function StatisticsPivot({ data, model, variant, actions }: { data: MarketOvervi
     { label: "板块样本", value: model.sectors.length, source: "本地板块", unavailableReason: "该数值对应板块样本，不是股票数量；请进入板块相关菜单查看板块及已加载成分股。" },
     { label: "A 股资讯", value: model.news.length, source: "已关联代码", stocks: [...new Set(model.news.flatMap((item) => item.symbols))].map((symbol) => ({ symbol, name: stockNameForSymbol(model, symbol), reason: "本地资讯已关联该 A 股代码" })) },
   ];
-  return <><div className={`statistics-pivot${isAnomalyPivot ? " statistics-pivot-four" : ""}`}>{rows.map((item) => <article key={item.label}><DrilldownMetric item={item} selected={selection?.label === item.label} onSelect={setSelection}><span>{item.label}</span><b>{item.value}</b><small>{item.source}</small></DrilldownMetric></article>)}</div><DrilldownRegion selection={selection} setSelection={setSelection} actions={actions} /></>;
+  return <><div className={`statistics-pivot${isAnomalyPivot ? " statistics-pivot-four" : ""}`}>{rows.map((item) => <article className="statistics-pivot-metric" key={item.label}><DrilldownMetric item={item} selected={selection?.label === item.label} onSelect={setSelection}><span>{item.label}</span><b>{item.value}</b><small>{item.source}</small></DrilldownMetric></article>)}</div><DrilldownRegion selection={selection} setSelection={setSelection} actions={actions} /></>;
 }
 
 function EventCalendar({ data, model, onOpenAShare }: { data: MarketOverviewResponse; model: WorkspaceMarketModel; onOpenAShare?: (symbol: string) => void }) {

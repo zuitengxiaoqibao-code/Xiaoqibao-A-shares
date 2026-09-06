@@ -1,7 +1,7 @@
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from qibao_api.dependencies import (
     get_decision_calendar,
@@ -10,6 +10,7 @@ from qibao_api.dependencies import (
     get_news_repository,
     get_scheduler,
     get_server_time,
+    run_latency_critical_read,
 )
 from qibao_api.shangshu.decision_repository import DecisionIntegrityError
 from qibao_api.shangshu.phase_lifecycle import resolve_phase_execution
@@ -316,31 +317,35 @@ def _response(
 
 
 @router.get("/current")
-def current_decisions(
+async def current_decisions(
+    request: Request,
     repository=Depends(get_decision_repository), calendar=Depends(get_decision_calendar),
     now: datetime = Depends(get_server_time), poll_state=Depends(get_decision_poll_state),
     scheduler=Depends(get_scheduler), news_repository=Depends(get_news_repository),
 ):
-    local_now = now.astimezone(CHINA_TZ)
-    trading_date = local_now.date()
-    if calendar.is_trading_day(trading_date):
-        phase = _phase(local_now)
-        return _response(
-            repository, trading_date, phase, now,
-            "open" if phase == "intraday" else "closed", poll_state, scheduler,
-            news_repository,
-        )
-    for offset in range(1, 367):
-        candidate = trading_date - timedelta(days=offset)
-        if calendar.is_trading_day(candidate):
+    def build_response():
+        local_now = now.astimezone(CHINA_TZ)
+        trading_date = local_now.date()
+        if calendar.is_trading_day(trading_date):
+            phase = _phase(local_now)
             return _response(
-                repository, candidate, "postclose", now, "closed", poll_state,
-                scheduler, news_repository,
+                repository, trading_date, phase, now,
+                "open" if phase == "intraday" else "closed", poll_state, scheduler,
+                news_repository,
             )
-    return _response(
-        repository, trading_date, "postclose", now, "closed", poll_state,
-        scheduler, news_repository,
-    )
+        for offset in range(1, 367):
+            candidate = trading_date - timedelta(days=offset)
+            if calendar.is_trading_day(candidate):
+                return _response(
+                    repository, candidate, "postclose", now, "closed", poll_state,
+                    scheduler, news_repository,
+                )
+        return _response(
+            repository, trading_date, "postclose", now, "closed", poll_state,
+            scheduler, news_repository,
+        )
+
+    return await run_latency_critical_read(request, build_response)
 
 
 @router.get("/{trading_date}")

@@ -11,6 +11,7 @@ AIConnectionState = Literal[
     "configured_unverified",
     "connected",
     "connection_failed",
+    "output_invalid",
     "timeout",
     "rate_limited",
     "model_not_found",

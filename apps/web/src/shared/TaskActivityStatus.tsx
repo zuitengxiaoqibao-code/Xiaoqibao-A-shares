@@ -1,13 +1,14 @@
-import { Activity, AlertTriangle, Bot, CheckCircle2, Clock3, LoaderCircle } from "lucide-react";
+import { Activity, AlertTriangle, BookmarkCheck, Bot, CheckCircle2, Clock3, LoaderCircle } from "lucide-react";
 import { useSyncExternalStore } from "react";
 import { readTaskActivities, subscribeTaskActivity, type TaskActivity } from "./taskActivity";
 
-type AIState = "unconfigured" | "configured_unverified" | "connected" | "connection_failed" | "timeout" | "rate_limited" | "model_not_found";
+type AIState = "unconfigured" | "configured_unverified" | "connected" | "connection_failed" | "output_invalid" | "timeout" | "rate_limited" | "model_not_found";
 type Props = { ai?: { configured: boolean; state?: AIState; message?: string } | null };
 
 const aiCopy: Record<AIState, { label: string; tone: string }> = {
   unconfigured: { label: "离线", tone: "muted" }, configured_unverified: { label: "在线", tone: "ok" },
   connected: { label: "在线", tone: "ok" }, connection_failed: { label: "异常", tone: "bad" },
+  output_invalid: { label: "异常", tone: "bad" },
   timeout: { label: "异常", tone: "bad" }, rate_limited: { label: "异常", tone: "bad" }, model_not_found: { label: "异常", tone: "bad" },
 };
 
@@ -16,11 +17,14 @@ function taskTone(task: TaskActivity): string { return task.state === "failed" ?
 export function TaskActivityStatus({ ai }: Props) {
   const tasks = useSyncExternalStore(subscribeTaskActivity, readTaskActivities, readTaskActivities);
   const aiView = aiCopy[ai?.state ?? (ai?.configured ? "configured_unverified" : "unconfigured")];
-  const active = tasks.filter((task) => task.state === "queued" || task.state === "running").slice(0, 3);
-  const failed = tasks.find((task) => task.state === "failed");
+  const watchlist = tasks.find((task) => task.id === "a-share-watchlist-monitor");
+  const regularTasks = tasks.filter((task) => task.id !== "a-share-watchlist-monitor");
+  const active = regularTasks.filter((task) => task.state === "queued" || task.state === "running").slice(0, 3);
+  const failed = regularTasks.find((task) => task.state === "failed");
   return <section className="task-activity-status" aria-label="系统状态与数据任务">
     <header><span><Activity size={14} /><b>系统状态</b></span><small>{active.length ? `处理中 ${active.length}` : failed ? "有任务异常" : "当前空闲"}</small></header>
     <div className={`task-activity-ai ${aiView.tone}`}><Bot size={14} /><span>AI 状态</span><small>{aiView.label}</small></div>
+    {watchlist && <div className={`task-activity-ai watchlist ${taskTone(watchlist)}`}><BookmarkCheck size={14} /><span>个股自选</span><small>{watchlist.stage}</small><em>{watchlist.detail}</em></div>}
     {active.map((task) => <article className="task-activity-row" key={task.id}>
       <span className={`task-activity-dot ${taskTone(task)}`} />
       <div><b>{task.stage}</b><small>{task.label}{task.detail ? ` · ${task.detail}` : ""}</small></div>

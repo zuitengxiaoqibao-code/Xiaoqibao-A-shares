@@ -75,12 +75,13 @@ export function ResearchEnrichmentPanel({
       <header>
         <div><p className="eyebrow">VERIFIED INDUSTRY PEERS</p><h3>系统自动筛选同行</h3></div>
         <div className="research-peer-tags">
-          <span>{enrichment.industry_name ?? "行业待核验"}</span>
-          <span>{enrichment.industry_board_code ?? enrichment.industry_code ?? "板块代码待补"}</span>
+          <span>{enrichment.shenwan_industry?.name ?? "申万行业待核验"}</span>
+          <span>{enrichment.shenwan_industry?.code ?? "申万行业代码待核验"}</span>
+          <small>{enrichment.shenwan_industry ? `申万${enrichment.shenwan_industry.level} · ${enrichment.shenwan_industry.version}` : "来源分类仅作映射证据"}</small>
           <span>{enrichment.industry_reports.length ? `${enrichment.industry_reports.length} 份行业研报` : "行业研报待补"}</span>
         </div>
       </header>
-      <p className="research-peer-method">同行只取东方财富同一行业板块真实成分股，并按总市值排序；不是按名称相似或主观故事匹配。{latestIndustryReport ? ` 最近行业证据：${latestIndustryReport.publish_date}《${latestIndustryReport.title}》。` : " 当前尚无行业研报缓存。"}</p>
+    <p className="research-peer-method">同行只取已映射到同一申万行业的真实成分股，并按总市值排序；其它来源分类仅作为映射证据，不直接作为行业口径。{latestIndustryReport ? ` 最近行业证据：${latestIndustryReport.publish_date}《${latestIndustryReport.title}》。` : " 当前尚无行业研报缓存。"}</p>
       {peerCandidates.length ? <div className="research-peer-grid">{peerCandidates.map((peer) => {
         const change = number(peer.change_percent);
         return <article key={peer.symbol}>

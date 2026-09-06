@@ -162,6 +162,16 @@ function metric(key: MetricKey, data: MarketOverviewResponse, model: WorkspaceMa
     .sort((left, right) => Number(right.main_net_yi) - Number(left.main_net_yi))[0];
   const sectorFlowPersistent = [...sectorFlowCounts.values()].filter((count) => count >= 2).length;
   const sectorFlowQuality = latestSectorFlow.length > 0 && latestSectorFlow.every((point) => point.quality === "ready") ? "positive" : "warning";
+  const largeOrderFlows = (data.large_order_flows ?? []).filter((item) => Number.isFinite(Number(item.main_net_yi)));
+  const largeOrderNet = largeOrderFlows.reduce((sum, item) => sum + Number(item.main_net_yi), 0);
+  const largeOrderInflowCount = largeOrderFlows.filter((item) => Number(item.main_net_yi) > 0).length;
+  const largeOrderOutflowCount = largeOrderFlows.filter((item) => Number(item.main_net_yi) < 0).length;
+  const largeOrderDetail = `${largeOrderFlows.length} 只真实资金流样本 · ${largeOrderInflowCount} 只流入 / ${largeOrderOutflowCount} 只流出`;
+  const withLargeOrderFreshness = (insight: WorkspaceInsight): WorkspaceInsight => (
+    largeOrderFlows.every((item) => item.quality === "ready")
+      ? insight
+      : { ...insight, quality: "partial", tone: "warning", detail: `${insight.detail} · 部分缓存待刷新` }
+  );
 
   if ((data.status === "unavailable" || data.market_data.quality === "unavailable") && MARKET_DEPENDENT_METRICS[key]) {
     return unavailable(key, MARKET_DEPENDENT_METRICS[key], "行情主源不可用，暂不计算该指标", "data");
@@ -247,10 +257,32 @@ function metric(key: MetricKey, data: MarketOverviewResponse, model: WorkspaceMa
     case "seat-count": return seatEvidenceReady ? ready(key, "可验证席位", String(seats.length), "含席位名称及买卖金额", "neutral", "seat") : unavailable(key, "可验证席位", "龙虎榜席位尚未取得", "seat");
     case "seat-net": return seatEvidenceReady && seatNet !== null ? ready(key, "席位净买额", signedMoney(seatNet), "按公开席位净额合计", seatNet >= 0 ? "positive" : "danger", "seat") : unavailable(key, "席位净买额", "龙虎榜席位净额字段不足", "seat");
     case "top-seat": return seatEvidenceReady && topSeat ? ready(key, "净额最大席位", topSeat.seat_name, signedMoney(numberValue(topSeat.net_amount_yi) as number), "neutral", "seat") : unavailable(key, "净额最大席位", "龙虎榜席位净额字段不足", "seat");
-    case "large-order": return unavailable(key, "逐笔大单方向", "当前响应没有逐笔方向和真实净流入", "data");
-    case "large-order-buy": return unavailable(key, "大单买入额", "缺少逐笔方向，不能从总成交额推算", "data");
-    case "large-order-sell": return unavailable(key, "大单卖出额", "缺少逐笔方向，不能从总成交额推算", "data");
-    case "large-order-net": return unavailable(key, "大单净流入", "买卖方向字段未接入，保持不可用", "data");
+    case "large-order": return largeOrderFlows.length
+      ? withLargeOrderFreshness(ready(
+        key,
+        "样本主力方向",
+        largeOrderNet > 0 ? "净流入" : largeOrderNet < 0 ? "净流出" : "均衡",
+        largeOrderDetail,
+        largeOrderNet > 0 ? "positive" : largeOrderNet < 0 ? "danger" : "neutral",
+        "data",
+        "derived",
+        "按真实个股主力净额合计判定方向；主力净额为大单与超大单净额之和",
+      ))
+      : unavailable(key, "样本主力方向", "尚未取得真实个股资金流样本，后台将按高成交活跃股票分批补齐", "data");
+    case "large-order-buy": return unavailable(key, "大单买入额", "东财资金流仅提供大单净额，未提供可核验的买入总额", "data");
+    case "large-order-sell": return unavailable(key, "大单卖出额", "东财资金流仅提供大单净额，未提供可核验的卖出总额", "data");
+    case "large-order-net": return largeOrderFlows.length
+      ? withLargeOrderFreshness(ready(
+        key,
+        "大单净流入",
+        signedMoney(largeOrderNet),
+        `${largeOrderFlows.length} 只真实样本主力净额合计`,
+        largeOrderNet > 0 ? "positive" : largeOrderNet < 0 ? "danger" : "neutral",
+        "data",
+        "derived",
+        "样本内各股主力净额求和；主力净额为大单与超大单净额之和",
+      ))
+      : unavailable(key, "大单净流入", "尚未取得真实个股大单与超大单净额", "data");
     case "sector-flow": return latestSectorFlow.length
       ? ready(key, "板块净流入合计", signedMoney(sectorFlowNet), `${latestSectorFlow.length} 个板块最新主力净流入`, sectorFlowNet >= 0 ? "positive" : "danger", "sector", "raw", "最新各板块主力净流入求和")
       : unavailable(key, "板块净流入合计", "没有取得真实板块主力净流入快照", "data");
@@ -325,24 +357,30 @@ function workspaceMetricContract(
 ): MetricContract {
   const reviewMetric = REVIEW_KEYS.has(key);
   const sectorFlowMetric = key.startsWith("sector-flow");
+  const largeOrderMetric = key.startsWith("large-order");
   const members = drilldown.stocks ?? [];
   const parsedTotal = COUNT_KEYS.has(key) ? integerValue(insight.value) : null;
   const totalCount = parsedTotal !== null && parsedTotal >= members.length ? parsedTotal : null;
   const latestSectorFlowPoint = sectorFlowMetric
     ? [...(data.sector_fund_flow ?? [])].sort((left, right) => right.observed_at.localeCompare(left.observed_at))[0]
     : undefined;
+  const latestLargeOrderPoint = largeOrderMetric
+    ? [...(data.large_order_flows ?? [])].sort((left, right) => right.observed_at.localeCompare(left.observed_at))[0]
+    : undefined;
   const observedAt = reviewMetric
     ? data.review?.observed_at ?? data.market_data.observed_at ?? data.observed_at ?? data.sentiment.observed_at
-    : latestSectorFlowPoint?.observed_at ?? data.market_data.observed_at ?? data.observed_at ?? data.sentiment.observed_at;
+    : latestLargeOrderPoint?.observed_at ?? latestSectorFlowPoint?.observed_at ?? data.market_data.observed_at ?? data.observed_at ?? data.sentiment.observed_at;
   const tradeDate = reviewMetric
     ? data.review?.latest_trade_date ?? data.as_of ?? observedAt?.slice(0, 10)
     : data.as_of ?? observedAt?.slice(0, 10);
   const source = reviewMetric
     ? data.review?.source ?? "本地日线复盘未接入"
-    : latestSectorFlowPoint?.source ?? (data.market_data.source || data.sources?.join(" / ") || "数据源未提供");
+    : latestLargeOrderPoint?.source ?? latestSectorFlowPoint?.source ?? (data.market_data.source || data.sources?.join(" / ") || "数据源未提供");
   const sampleCount = reviewMetric
     ? data.review?.history_ready_count ?? null
-    : data.market_data.quote_count || data.breadth.valid_count || null;
+    : largeOrderMetric
+      ? data.large_order_flows?.length ?? null
+      : data.market_data.quote_count || data.breadth.valid_count || null;
   const unavailableReason = drilldown.unavailableReason
     ?? (insight.quality === "unavailable" ? insight.detail : null);
   return createMetricContract({
@@ -440,7 +478,8 @@ function insightDrilldown(key: MetricKey, insight: WorkspaceInsight, data: Marke
     case "low-volume": return data.review ? exact((data.review.low_position_volume ?? []).map((item) => reviewStock(item, "120 日区间下部且出现放量"))) : aggregate("本地日线复盘尚未完成。");
     case "seat-stocks": return data.review ? exact((data.review.dragon_tiger ?? []).map((item) => listedStock(item, `龙虎榜原因：${item.reason}`))) : aggregate("龙虎榜接口和本地缓存均不可用。");
     case "seat-count": return data.review ? exact((data.review.dragon_tiger ?? []).map((item) => listedStock(item, `包含 ${item.seats.length} 条可验证席位明细`)), "席位明细统计") : aggregate("龙虎榜席位尚未取得。");
-    case "large-order": return data.large_order_flows?.length ? exact(data.large_order_flows.map((item) => ({ symbol: item.symbol, name: item.name?.trim() || "名称待补齐", reason: "真实大单资金流缓存样本", value: signedMoney(Number(item.main_net_yi)) }))) : aggregate("当前响应没有逐笔方向和真实净流入。");
+    case "large-order":
+    case "large-order-net": return data.large_order_flows?.length ? exact(data.large_order_flows.map((item) => ({ symbol: item.symbol, name: item.name?.trim() || "名称待补齐", reason: "真实大单与超大单净额样本", value: signedMoney(Number(item.main_net_yi)) }))) : aggregate("当前响应没有真实个股资金流样本。");
     case "rising": return aggregate("当前接口仅返回全市场聚合值，暂无成员级明细；不会用代表股票样本冒充全部上涨股票。");
     case "falling": return aggregate("当前接口仅返回全市场聚合值，暂无成员级明细；不会用代表股票样本冒充全部下跌股票。");
     case "market-amount": return aggregate("两市成交是全市场聚合金额，不存在可逐股等价展开的成员名单。");

@@ -184,10 +184,11 @@ class TonghuashunHotspotSource:
 
 
 class HotspotIngestionService:
-    def __init__(self, source, repository, compliance) -> None:
+    def __init__(self, source, repository, compliance, realtime_snapshot_bus=None) -> None:
         self.source = source
         self.repository = repository
         self.compliance = compliance
+        self.realtime_snapshot_bus = realtime_snapshot_bus
 
     def sync(
         self,
@@ -217,11 +218,46 @@ class HotspotIngestionService:
             event = _event_from_observation(observation, article)
             event_inserted, _ = self.repository.reconcile_event(event)
             events += int(event_inserted)
-        return HotspotSyncResult(
+        result = HotspotSyncResult(
             fetched=len(observations),
             inserted=inserted,
             clusters=len(clusters),
             events=events,
+        )
+        self._publish_realtime_snapshot(fetched_at)
+        return result
+
+    def _publish_realtime_snapshot(self, observed_at: datetime) -> None:
+        bus = self.realtime_snapshot_bus
+        if bus is None or not hasattr(bus, "publish"):
+            return
+        verified = tuple(
+            event for event in self.repository.effective_events(cutoff=observed_at)
+            if event.review_state == "verified"
+        )
+        encoded = json.dumps(
+            [event.model_dump(mode="json") for event in verified],
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        snapshot_id = hashlib.sha256(encoded).hexdigest()
+        latest = bus.latest("news_events") if hasattr(bus, "latest") else None
+        previous = latest.get("payload") if isinstance(latest, dict) else None
+        if isinstance(previous, dict) and previous.get("snapshot_id") == snapshot_id:
+            return
+        latest_observed = max((event.normalized_at for event in verified), default=observed_at)
+        bus.publish(
+            "news_events",
+            {
+                "snapshot_id": snapshot_id,
+                "events": [event.model_dump(mode="json") for event in verified[-50:]],
+                "event_count": len(verified),
+                "verified_count": len(verified),
+            },
+            observed_at=latest_observed,
+            source="news-repository",
+            freshness="verified",
         )
 
 

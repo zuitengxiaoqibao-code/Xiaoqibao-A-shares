@@ -1,6 +1,7 @@
 import type { StockTimelineResponse } from "./types";
 import { updateTaskActivity } from "../../shared/taskActivity";
 import { apiClient } from "../../shared/apiClient";
+import { registerStockObservationFocus } from "../quant-analysis/api";
 
 
 export async function loadStockTimeline(
@@ -8,6 +9,7 @@ export async function loadStockTimeline(
   asOf?: string,
   signal?: AbortSignal,
 ): Promise<StockTimelineResponse> {
+  void registerStockObservationFocus(symbol).catch(() => undefined);
   const query = asOf ? `?as_of=${encodeURIComponent(asOf)}` : "";
   const taskId = `timeline:${symbol}:${asOf ?? "current"}`;
   updateTaskActivity({ id: taskId, label: `个股事件 K 线 ${symbol}`, stage: "正在读取日线与事件", state: "running", percent: 8 });

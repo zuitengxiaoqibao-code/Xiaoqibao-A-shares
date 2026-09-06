@@ -338,6 +338,41 @@ async def test_cockpit_starts_preparation_and_diagnosis_together() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cockpit_keeps_diagnosis_when_preparation_executor_is_unavailable() -> None:
+    class UnavailablePreparation(ReadOnlyPreparation):
+        async def inspect(self, symbol, *, as_of, cutoff=None):
+            raise RuntimeError("cannot schedule new futures after shutdown")
+
+    result = await service(preparation=UnavailablePreparation()).get(
+        "600000", TRADE_DATE, CUTOFF
+    )
+
+    assert result.sections["market"].status == "ready"
+    assert result.preparation.status == "partial"
+    assert any(
+        source.reason == "cannot schedule new futures after shutdown"
+        for source in result.preparation.sources
+    )
+
+
+@pytest.mark.asyncio
+async def test_cockpit_keeps_data_when_decision_history_store_is_unavailable() -> None:
+    class UnavailableDecisions(Decisions):
+        def cycles(self, as_of, phase):
+            raise RuntimeError("本地决策历史数据库暂不可用")
+
+    result = await service(decisions=UnavailableDecisions()).get(
+        "600000", TRADE_DATE, CUTOFF
+    )
+
+    assert result.sections["market"].status == "ready"
+    assert result.phases["intraday"].phase_status == "partial"
+    assert result.phases["intraday"].quality_reasons == (
+        "本地决策历史数据库暂不可用",
+    )
+
+
+@pytest.mark.asyncio
 async def test_cockpit_exposes_completed_phase_execution_from_real_snapshot() -> None:
     calendar = type("Calendar", (), {"is_trading_day": lambda self, value: True})()
     operations = type("Operations", (), {"jobs": lambda self: []})()

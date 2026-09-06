@@ -85,6 +85,36 @@ def test_registered_focus_symbols_are_deduplicated_and_expire(tmp_path) -> None:
     assert repository.registered_focus_symbols(NOW + timedelta(minutes=21)) == ()
 
 
+def test_registering_focus_symbol_makes_focus_poll_due_without_resetting_failure_state(
+    tmp_path,
+) -> None:
+    repository = PollStateRepository(tmp_path / "focus-registration-due.sqlite3")
+    previous = PollState(
+        consecutive_focus_failures=4,
+        focus_interval_seconds=300,
+        next_focus_due_at=NOW + timedelta(minutes=5),
+        next_universe_due_at=NOW + timedelta(minutes=2),
+        mode="degraded",
+        focus_error_code="incomplete_quote_batch_error",
+        last_error_code="incomplete_quote_batch_error",
+    )
+    repository.append(previous, NOW - timedelta(seconds=1))
+
+    repository.register_focus_symbol(
+        "600519", source="quant_analysis", registered_at=NOW,
+        expires_at=NOW + timedelta(minutes=15),
+    )
+
+    updated = repository.latest()
+    assert updated is not None
+    assert updated.next_focus_due_at == NOW
+    assert updated.next_universe_due_at == previous.next_universe_due_at
+    assert updated.consecutive_focus_failures == 4
+    assert updated.focus_interval_seconds == 300
+    assert updated.focus_error_code == "incomplete_quote_batch_error"
+    assert updated.last_error_code == "incomplete_quote_batch_error"
+
+
 def test_registered_focus_symbol_rejects_non_a_share_code(tmp_path) -> None:
     repository = PollStateRepository(tmp_path / "invalid-focus-registration.sqlite3")
 

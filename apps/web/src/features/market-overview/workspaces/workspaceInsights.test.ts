@@ -64,6 +64,37 @@ describe("workspace insights", () => {
     expect(insights.map((item) => item.label)).not.toContain("成交活跃");
   });
 
+  it("shows verified sampled direction and net flow when real fund-flow snapshots exist", () => {
+    const withFundFlow = {
+      ...data,
+      data_scope: { ...data.data_scope, large_order_sample_count: 2 },
+      large_order_flows: [
+        { symbol: "600001", name: "样本股", latest_trade_date: "2026-07-30", observed_at: "2026-07-30T10:30:00+08:00", main_net_yi: "2.80", large_net_yi: "1.50", super_net_yi: "1.30", direction: "inflow", source: "eastmoney-fund-flow", quality: "ready" },
+        { symbol: "000001", name: "平安银行", latest_trade_date: "2026-07-30", observed_at: "2026-07-30T10:30:10+08:00", main_net_yi: "-1.20", large_net_yi: "-0.70", super_net_yi: "-0.50", direction: "outflow", source: "eastmoney-fund-flow", quality: "ready" },
+      ],
+    } as unknown as MarketOverviewResponse;
+
+    const insights = buildWorkspaceInsights("主力大单监控", withFundFlow, buildWorkspaceMarketModel(withFundFlow));
+
+    expect(insights.find((item) => item.key === "large-order")).toMatchObject({
+      label: "样本主力方向",
+      value: "净流入",
+      quality: "ready",
+      detail: "2 只真实资金流样本 · 1 只流入 / 1 只流出",
+    });
+    expect(insights.find((item) => item.key === "large-order-net")).toMatchObject({
+      value: "+1.60亿",
+      quality: "ready",
+    });
+    expect(insights.find((item) => item.key === "large-order-buy")?.quality).toBe("unavailable");
+    expect(insights.find((item) => item.key === "large-order-sell")?.quality).toBe("unavailable");
+    expect(insights.find((item) => item.key === "large-order-net")?.contract).toMatchObject({
+      source: "eastmoney-fund-flow",
+      observedAt: "2026-07-30T10:30:10+08:00",
+      sampleCount: 2,
+    });
+  });
+
   it("derives sector-flow instruments from the real fund-flow series when present", () => {
     const withSectorFlow = {
       ...data,

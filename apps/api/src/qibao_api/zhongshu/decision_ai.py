@@ -11,6 +11,11 @@ from qibao_api.ai_status import AIConnectionState, classify_ai_exception
 from qibao_api.settings_repository import AISettings, EffectiveAISettingsResolver
 
 
+# Model responses can legitimately take longer than a normal market-data read.
+# This is a task-level guard, not the UI startup target.
+DECISION_AI_TIMEOUT_SECONDS = 60
+
+
 class DecisionAIProvider(Protocol):
     def complete(self, request: dict[str, object]) -> str: ...
 
@@ -28,7 +33,7 @@ class OpenAICompatibleDecisionProvider:
         api_key: str,
         model: str,
         client: httpx.Client,
-        timeout: float = 10,
+        timeout: float = DECISION_AI_TIMEOUT_SECONDS,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -56,7 +61,7 @@ class OpenAICompatibleDecisionProvider:
                         "content": (
                             "Return one strict JSON object matching the supplied schema. "
                             "Explain only the frozen evidence and deterministic conclusions. "
-                            "Never add numbers, prices, scores, positions, or trade plans."
+                            "Never invent or change numbers, prices, scores, positions, or trade plans."
                         ),
                     },
                     {
@@ -205,8 +210,13 @@ class DecisionAIGateway:
         text = " ".join([payload.summary, *(item.text for item in payload.statements)])
         if _PLAN_LANGUAGE.search(text):
             raise ValueError("provider attempted to create a numeric decision")
-        if _NUMBER.search(text):
-            raise ValueError("provider introduced a numeric fact")
+        supported_text = " ".join([
+            *(item.summary for item in request.evidence),
+            *request.deterministic_conclusions,
+        ])
+        supported_numbers = set(_NUMBER.findall(supported_text))
+        if not set(_NUMBER.findall(text)).issubset(supported_numbers):
+            raise ValueError("provider introduced a numeric fact outside frozen evidence")
 
     def _unavailable(
         self, request: DecisionAIRequest, *, invalid: int = 0, provider_errors: int = 0,
@@ -230,7 +240,7 @@ class ReloadableDecisionAIGateway:
         *,
         client: httpx.Client | None = None,
         client_factory: Callable[[], httpx.Client] | None = None,
-        timeout: float = 10,
+        timeout: float = DECISION_AI_TIMEOUT_SECONDS,
         prompt_version: str = "decision-v1",
     ) -> None:
         self._settings = settings

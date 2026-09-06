@@ -5,7 +5,7 @@ import type { CockpitSection } from "./types";
 const definitions = [
   ["market", "实时行情"], ["price_volume", "量价"], ["trend", "趋势"], ["valuation", "估值"],
   ["fundamentals", "基本面"], ["funds", "资金流"], ["news", "新闻与事件"],
-  ["industry", "行业与题材"], ["risk", "风险"],
+  ["industry", "申万行业与题材"], ["risk", "风险"],
 ] as const;
 
 const statusNames: Record<CockpitSection["status"], string> = {
@@ -22,7 +22,7 @@ const sourceNames: Record<string, string> = {
   tencent: "腾讯行情", mootdx: "通达信数据", eastmoney: "东方财富公开数据", baidu: "百度行情",
   "mootdx-finance": "通达信财务快照",
   "eastmoney-fund-flow": "东方财富资金流",
-  "eastmoney-stock-classification": "东方财富行业与板块",
+  "eastmoney-stock-classification": "申万行业分类（来源：东方财富）",
   "frozen-news-events": "已核验新闻事件",
   cockpit: "本地研判数据", assessment: "本地研判数据",
 };
@@ -59,7 +59,7 @@ const flowDirectionNames: Record<string, string> = {
 };
 const unavailableSourceReasons: Record<string, string> = {
   funds: "东方财富资金流暂未返回可核验数据，本项未参与当前研判。",
-  industry: "东方财富行业与板块暂未返回可核验数据，本项未参与当前研判。",
+  industry: "申万行业分类暂未返回可核验数据，本项未参与当前研判。",
 };
 
 function formatTime(value: string | null): string {

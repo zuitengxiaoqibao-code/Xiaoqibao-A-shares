@@ -8,6 +8,7 @@ from typing import Literal
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from qibao_api.contracts.instruments import AShareCode
+from qibao_api.contracts.industry import ShenwanIndustry
 from qibao_api.contracts.market import AssetKind
 from qibao_api.gongbu.tencent_quotes import market_prefix
 
@@ -27,6 +28,7 @@ class AShareInstrument(BaseModel):
     historical_names: tuple[str, ...] = ()
     search_aliases: tuple[str, ...] = ()
     industry: str | None = None
+    shenwan_industry: ShenwanIndustry | None = None
     sectors: tuple[str, ...] = ()
     trading_status: Literal["active", "suspended", "delisted", "unknown"] = "unknown"
 
@@ -63,6 +65,7 @@ class AShareInstrumentDirectory:
                 historical_names TEXT NOT NULL DEFAULT '[]',
                 search_aliases TEXT NOT NULL DEFAULT '[]',
                 industry TEXT,
+                shenwan_industry TEXT,
                 sectors TEXT NOT NULL DEFAULT '[]',
                 trading_status TEXT NOT NULL DEFAULT 'unknown'
             )
@@ -86,6 +89,7 @@ class AShareInstrumentDirectory:
                 historical_names TEXT NOT NULL DEFAULT '[]',
                 search_aliases TEXT NOT NULL DEFAULT '[]',
                 industry TEXT,
+                shenwan_industry TEXT,
                 sectors TEXT NOT NULL DEFAULT '[]',
                 trading_status TEXT NOT NULL DEFAULT 'unknown'
             )
@@ -104,6 +108,7 @@ class AShareInstrumentDirectory:
             "historical_names": "TEXT NOT NULL DEFAULT '[]'",
             "search_aliases": "TEXT NOT NULL DEFAULT '[]'",
             "industry": "TEXT",
+            "shenwan_industry": "TEXT",
             "sectors": "TEXT NOT NULL DEFAULT '[]'",
             "trading_status": "TEXT NOT NULL DEFAULT 'unknown'",
         }
@@ -118,6 +123,10 @@ class AShareInstrumentDirectory:
             json.dumps(instrument.historical_names, ensure_ascii=False),
             json.dumps(instrument.search_aliases, ensure_ascii=False),
             instrument.industry,
+            json.dumps(
+                instrument.shenwan_industry.model_dump(mode="json"),
+                ensure_ascii=False,
+            ) if instrument.shenwan_industry is not None else None,
             json.dumps(instrument.sectors, ensure_ascii=False),
             instrument.trading_status,
         )
@@ -128,8 +137,9 @@ class AShareInstrumentDirectory:
                 """
                 INSERT INTO a_share_instrument_observations
                     (symbol, name, exchange, observed_at, quote_quality, short_name,
-                     historical_names, search_aliases, industry, sectors, trading_status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     historical_names, search_aliases, industry, shenwan_industry,
+                     sectors, trading_status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     instrument.symbol,
@@ -149,8 +159,9 @@ class AShareInstrumentDirectory:
                 """
                 INSERT INTO a_share_instrument_observations
                     (symbol, name, exchange, observed_at, quote_quality, short_name,
-                     historical_names, search_aliases, industry, sectors, trading_status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     historical_names, search_aliases, industry, shenwan_industry,
+                     sectors, trading_status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -169,8 +180,9 @@ class AShareInstrumentDirectory:
                 """
                 INSERT INTO a_share_active_universe
                     (symbol, name, exchange, observed_at, quote_quality, short_name,
-                     historical_names, search_aliases, industry, sectors, trading_status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     historical_names, search_aliases, industry, shenwan_industry,
+                     sectors, trading_status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -200,7 +212,8 @@ class AShareInstrumentDirectory:
             row = self._connection.execute(
                 """
                 SELECT symbol, name, exchange, observed_at, quote_quality, short_name,
-                       historical_names, search_aliases, industry, sectors, trading_status
+                       historical_names, search_aliases, industry, shenwan_industry,
+                       sectors, trading_status
                 FROM a_share_instrument_observations
                 WHERE symbol = ? AND (? IS NULL OR observed_at <= ?)
                 ORDER BY observed_at DESC, id DESC
@@ -280,7 +293,8 @@ class AShareInstrumentDirectory:
             rows = self._connection.execute(
                 """
                 SELECT symbol, name, exchange, observed_at, quote_quality, short_name,
-                       historical_names, search_aliases, industry, sectors, trading_status
+                       historical_names, search_aliases, industry, shenwan_industry,
+                       sectors, trading_status
                 FROM (
                     SELECT *, row_number() OVER (
                         PARTITION BY symbol ORDER BY observed_at DESC, id DESC
@@ -304,7 +318,8 @@ class AShareInstrumentDirectory:
             rows = self._connection.execute(
                 """
                 SELECT symbol, name, exchange, observed_at, quote_quality, short_name,
-                       historical_names, search_aliases, industry, sectors, trading_status
+                       historical_names, search_aliases, industry, shenwan_industry,
+                       sectors, trading_status
                 FROM a_share_active_universe ORDER BY symbol
                 """
             ).fetchall()
@@ -315,7 +330,8 @@ class AShareInstrumentDirectory:
             row = self._connection.execute(
                 """
                 SELECT symbol, name, exchange, observed_at, quote_quality, short_name,
-                       historical_names, search_aliases, industry, sectors, trading_status
+                       historical_names, search_aliases, industry, shenwan_industry,
+                       sectors, trading_status
                 FROM a_share_active_universe WHERE symbol = ?
                 """,
                 (symbol,),
@@ -334,8 +350,12 @@ class AShareInstrumentDirectory:
             historical_names=tuple(json.loads(row[6] or "[]")),
             search_aliases=tuple(json.loads(row[7] or "[]")),
             industry=row[8],
-            sectors=tuple(json.loads(row[9] or "[]")),
-            trading_status=row[10] or "unknown",
+            shenwan_industry=(
+                ShenwanIndustry.model_validate(json.loads(row[9]))
+                if row[9] else None
+            ),
+            sectors=tuple(json.loads(row[10] or "[]")),
+            trading_status=row[11] or "unknown",
         )
 
     def close(self) -> None:

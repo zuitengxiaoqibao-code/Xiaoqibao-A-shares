@@ -28,17 +28,18 @@ export type StockResearchActions = {
   onOpenQuantAnalysis?: (symbol: string) => void;
 };
 
-export function DrilldownMetric({ item, selected, onSelect, children, ariaLabelPrefix }: {
+export function DrilldownMetric({ item, selected, onSelect, children, ariaLabelPrefix, className }: {
   item: MetricDrilldownSelection;
   selected: boolean;
   onSelect: (item: MetricDrilldownSelection) => void;
   children: ReactNode;
   ariaLabelPrefix?: string;
+  className?: string;
 }) {
   const action = item.stocks ? "筛选" : "查看口径";
   return <button
     type="button"
-    className="metric-drilldown-trigger"
+    className={`metric-drilldown-trigger${className ? ` ${className}` : ""}`}
     aria-label={`${ariaLabelPrefix ?? action}：${item.label} ${item.value}`}
     aria-pressed={selected}
     onClick={() => onSelect(item)}

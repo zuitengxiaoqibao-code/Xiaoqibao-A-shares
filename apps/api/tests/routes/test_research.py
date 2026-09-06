@@ -39,6 +39,7 @@ from qibao_api.dependencies import (
     get_a_share_quote_source,
     get_candidate_sentiment_service,
     get_pipeline,
+    get_poll_state_repository,
     get_server_time,
     get_stock_timeline_service,
 )
@@ -791,7 +792,35 @@ def test_stock_timeline_delegates_to_local_read_only_service() -> None:
     assert response.status_code == 200
     assert response.json()["bars"][0]["close"] == "10.2"
     assert response.json()["events"] == []
+    assert response.json()["intraday_status"] == "unavailable"
+    assert response.json()["intraday_points"] == []
+    assert response.json()["intraday_sources"] == []
+    assert response.json()["intraday_warnings"] == []
     assert service.calls == [("600000", date(2026, 7, 15), SEARCH_NOW)]
+
+
+def test_stock_observation_can_register_intraday_focus() -> None:
+    class FocusRepository:
+        def __init__(self):
+            self.calls = []
+
+        def register_focus_symbol(self, symbol, *, source, registered_at, expires_at):
+            self.calls.append((symbol, source, registered_at, expires_at))
+
+    repository = FocusRepository()
+    application = FastAPI()
+    application.include_router(research_router)
+    application.dependency_overrides[get_poll_state_repository] = lambda: repository
+    application.dependency_overrides[get_server_time] = lambda: SEARCH_NOW
+
+    response = TestClient(application).post(
+        "/api/v1/a-shares/600519/intraday-focus",
+        json={"source": "stock_observation", "ttl_seconds": 900},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["source"] == "stock_observation"
+    assert repository.calls[0][0:2] == ("600519", "stock_observation")
 
 
 class SearchDirectory:
@@ -1008,9 +1037,10 @@ class CorruptCockpit:
         raise DecisionIntegrityError("corrupt advice payload containing secret advice")
 
 
-def cockpit_client(service, preparation_service=None) -> TestClient:
+def cockpit_client(service, preparation_service=None, *, shutting_down=False) -> TestClient:
     application = FastAPI()
     application.include_router(research_router)
+    application.state.shutting_down = shutting_down
     application.dependency_overrides[get_a_share_cockpit_service] = lambda: service
     if preparation_service is not None:
         application.dependency_overrides[get_a_share_preparation_service] = (
@@ -1036,6 +1066,18 @@ def test_cockpit_hides_corrupt_decision_payload() -> None:
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "decision_integrity_error"
     assert "advice" not in response.text
+
+
+def test_cockpit_rejects_requests_during_application_shutdown() -> None:
+    response = cockpit_client(UnknownCockpit(), shutting_down=True).get(
+        "/api/v1/a-shares/600000/cockpit"
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == {
+        "code": "service_shutting_down",
+        "message": "服务正在关闭，请重新打开观测台后再加载数据",
+    }
 
 
 def test_cockpit_rejects_future_as_of_using_server_beijing_time() -> None:

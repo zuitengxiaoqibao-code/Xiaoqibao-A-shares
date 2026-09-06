@@ -50,6 +50,21 @@ class StockTimelineEvent(BaseModel):
     follow_up_indicators: tuple[str, ...]
 
 
+class StockTimelineMinutePoint(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    symbol: AShareCode
+    price: Decimal = Field(gt=0)
+    change: Decimal
+    change_percent: Decimal
+    volume: Decimal = Field(ge=0)
+    source: str = Field(min_length=1)
+    observed_at: AwareDatetime
+    fetched_at: AwareDatetime
+    quality: Literal["ready", "partial", "blocked"]
+    source_snapshot_id: str = Field(min_length=1)
+
+
 class StockTimelineResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -61,3 +76,7 @@ class StockTimelineResponse(BaseModel):
     events: tuple[StockTimelineEvent, ...]
     sources: tuple[str, ...]
     warnings: tuple[str, ...] = ()
+    intraday_status: Literal["ready", "waiting", "unavailable"] = "unavailable"
+    intraday_points: tuple[StockTimelineMinutePoint, ...] = ()
+    intraday_sources: tuple[str, ...] = ()
+    intraday_warnings: tuple[str, ...] = ()

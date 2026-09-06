@@ -37,7 +37,7 @@ const metricNames: Record<string, string> = {
 const sourceNames: Record<string, string> = {
   tencent: "腾讯行情", mootdx: "通达信日线", "mootdx-finance": "通达信财务",
   "frozen-news-events": "冻结新闻事件", "qibao-risk-v1": "刑部规则 v1",
-  "eastmoney-stock-classification": "东方财富行业与板块",
+  "eastmoney-stock-classification": "申万行业分类（来源：东方财富）",
   "local-daily-bars": "本地日线仓",
 };
 const percentMetrics = new Set(["change_percent", "turnover_rate", "return_5d", "distance_ma20", "return_20d", "volatility_20d", "drawdown_60d", "roe"]);

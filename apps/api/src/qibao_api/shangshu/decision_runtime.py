@@ -4,7 +4,7 @@ import json
 from collections import Counter
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 import httpx
 from pydantic import AwareDatetime, BaseModel, ConfigDict
@@ -219,8 +219,9 @@ class RepositoryRiskSource:
                 )
             except Exception:
                 continue
-            if snapshot is not None and getattr(snapshot, "industry", None):
-                values.append(snapshot.industry)
+            canonical = getattr(snapshot, "shenwan_industry", None) if snapshot is not None else None
+            if canonical is not None:
+                values.append(canonical.name)
         return tuple(dict.fromkeys(values))
 
     def _candidate_fund_flow(self, entries, trading_date, cutoff):
@@ -303,9 +304,18 @@ class IncompleteQuoteBatchError(ValueError):
 class TencentPollingMarketFeed:
     capabilities = frozenset({"snapshot", "snapshot_many"})
 
-    def __init__(self, client: httpx.Client, compliance_repository) -> None:
+    def __init__(
+        self,
+        client: httpx.Client,
+        compliance_repository,
+        *,
+        fallback_client_factory: Callable[[], httpx.Client] | None = None,
+    ) -> None:
         self.client = client
         self.compliance_repository = compliance_repository
+        self.fallback_client_factory = fallback_client_factory or (
+            lambda: httpx.Client(timeout=10, trust_env=False)
+        )
 
     def snapshot_many(self, symbols: tuple[str, ...], *, cutoff: datetime | None = None):
         self.compliance_repository.require_feature_sources("realtime_quotes", AssetKind.A_SHARE)
@@ -320,9 +330,25 @@ class TencentPollingMarketFeed:
         snapshots = self._valid_snapshots(symbols, payloads, cutoff=cutoff)
         retry_symbols = tuple(symbol for symbol in symbols if symbol not in snapshots)
         if retry_symbols:
-            retry_payloads = self._request_payloads(retry_symbols)
+            try:
+                retry_payloads = self._request_payloads(retry_symbols)
+            except (httpx.HTTPError, UnicodeError):
+                retry_payloads = {}
             snapshots.update(
                 self._valid_snapshots(retry_symbols, retry_payloads, cutoff=cutoff)
+            )
+        direct_symbols = tuple(symbol for symbol in symbols if symbol not in snapshots)
+        if direct_symbols:
+            try:
+                with self.fallback_client_factory() as direct_client:
+                    direct_payloads = self._request_payloads(
+                        direct_symbols,
+                        client=direct_client,
+                    )
+            except (httpx.HTTPError, UnicodeError):
+                direct_payloads = {}
+            snapshots.update(
+                self._valid_snapshots(direct_symbols, direct_payloads, cutoff=cutoff)
             )
         missing = tuple(symbol for symbol in symbols if symbol not in snapshots)
         if missing:
@@ -331,9 +357,14 @@ class TencentPollingMarketFeed:
             )
         return tuple(snapshots[symbol] for symbol in symbols)
 
-    def _request_payloads(self, symbols: tuple[str, ...]) -> dict[str, str]:
+    def _request_payloads(
+        self,
+        symbols: tuple[str, ...],
+        *,
+        client: httpx.Client | None = None,
+    ) -> dict[str, str]:
         instruments = tuple(f"{market_prefix(symbol)}{symbol}" for symbol in symbols)
-        response = self.client.get(
+        response = (client or self.client).get(
             f"https://qt.gtimg.cn/q={','.join(instruments)}"
         )
         response.raise_for_status()

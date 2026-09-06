@@ -90,6 +90,28 @@ def test_shadow_ledger_tracks_sixty_days_and_decision_cohort(tmp_path) -> None:
     assert record.outcomes[-1].status == "pending"
 
 
+def test_shadow_analytics_refreshes_mature_pending_outcomes_from_local_history(tmp_path) -> None:
+    class BarRepository:
+        def latest(self, symbol, limit):
+            assert symbol == "600001"
+            assert limit == 2000
+            return [_bar(day, str(10 + day / 10)) for day in range(1, 6)]
+
+    store = QuantShadowLedgerStore(
+        tmp_path / "shadow.sqlite3",
+        clock=lambda: NOW,
+        bar_repository=BarRepository(),
+    )
+    store.freeze(_dashboard())
+
+    analytics = store.analytics(horizon=5)
+
+    assert analytics.mature_sample_count == 1
+    assert analytics.pending_sample_count == 0
+    record = store.recent(limit=1)[0]
+    assert next(item for item in record.outcomes if item.horizon == 5).status == "ready"
+
+
 def test_shadow_analytics_filters_by_decision_source_without_mixing_cohorts(tmp_path) -> None:
     store = QuantShadowLedgerStore(tmp_path / "shadow.sqlite3", clock=lambda: NOW)
     _seed_analytics_rows(

@@ -29,7 +29,7 @@ import { featureDisplayLabel, featureMeta } from "./featureCatalog";
 import { appendUniqueEntities, mergeEntitySnapshot, resolveIncrementalResponse } from "../../shared/incrementalResource";
 import { loadWorkspaceState, updateWorkspaceFilter } from "../../shared/workspace/workspaceState";
 import { SectionRefreshState } from "../../shared/SectionRefreshState";
-import { useRealtimeFallback, useRealtimeFallbackTick, useRealtimeProviderAvailable, useRealtimeState, useRealtimeSubscription } from "../../shared/realtime/RealtimeProvider";
+import { useRealtimeFallback, useRealtimeState, useRealtimeSubscription } from "../../shared/realtime/RealtimeProvider";
 import "./overview.css";
 
 const expectedIndices = [
@@ -170,8 +170,6 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, onOpenCompa
   dataRef.current = data;
   const realtimeState = useRealtimeState();
   const realtimeFallback = useRealtimeFallback();
-  const realtimeFallbackTick = useRealtimeFallbackTick();
-  const realtimeProviderAvailable = useRealtimeProviderAvailable();
   const alertState = useBreakingNewsAlerts(loadAlerts, undefined, 6);
   const aShareAlertState = useMemo(() => ({
     ...alertState,
@@ -250,13 +248,9 @@ export function MarketOverviewView({ load, loadAlerts, onOpenAShare, onOpenCompa
 
   useEffect(() => {
     if (!autoRefresh || !visible) return;
-    if (realtimeProviderAvailable) {
-      if (realtimeFallbackTick > 0) void refresh();
-      return;
-    }
     const timer = window.setInterval(() => void refresh(), 5_000);
     return () => window.clearInterval(timer);
-  }, [autoRefresh, realtimeFallbackTick, realtimeProviderAvailable, refresh, visible]);
+  }, [autoRefresh, refresh, visible]);
 
   useEffect(() => {
     if (

@@ -105,3 +105,31 @@ class TencentQuoteSource:
 
     async def fetch_snapshot(self, symbol: str) -> TencentMarketSnapshot:
         return parse_tencent_snapshot(await self._payload(symbol), "tencent")
+
+    async def fetch_snapshots(
+        self, symbols: tuple[str, ...]
+    ) -> tuple[TencentMarketSnapshot, ...]:
+        """Read up to sixty A-share quotes in one Tencent request."""
+        ordered = tuple(dict.fromkeys(symbols))
+        snapshots: list[TencentMarketSnapshot] = []
+        for offset in range(0, len(ordered), 60):
+            batch = ordered[offset : offset + 60]
+            instruments = tuple(f"{market_prefix(symbol)}{symbol}" for symbol in batch)
+            url = f"https://qt.gtimg.cn/q={','.join(instruments)}"
+            try:
+                response = await self._request(self.client, url)
+            except httpx.TransportError:
+                async with self.fallback_client_factory() as fallback_client:
+                    response = await self._request(fallback_client, url)
+            text = response.content.decode("gbk", errors="strict")
+            for line in text.splitlines():
+                if '="' not in line:
+                    continue
+                payload = line.split('="', 1)[1].rsplit('"', 1)[0]
+                try:
+                    snapshot = parse_tencent_snapshot(payload, "tencent")
+                except (ValueError, ArithmeticError):
+                    continue
+                if snapshot.symbol in batch:
+                    snapshots.append(snapshot)
+        return tuple(snapshots)

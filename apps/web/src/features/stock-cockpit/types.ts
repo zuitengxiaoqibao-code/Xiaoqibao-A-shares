@@ -103,6 +103,25 @@ export type StockCockpitSnapshot = {
   field_evidence?: FieldEvidence[];
 };
 
+export type StockQuotePulse = {
+  symbol: string;
+  name: string;
+  price: string | number | null;
+  previous_close: string | number | null;
+  change: string | number | null;
+  change_percent: string | number | null;
+  volume: string | number | null;
+  turnover_rate: string | number | null;
+  market_cap_yi: string | number | null;
+  observed_at: string | null;
+  fetched_at: string;
+  source: string;
+  status: "ready" | "stale" | "unavailable";
+  freshness: "live" | "stale" | "unavailable";
+  age_seconds: number | null;
+  reason: string | null;
+};
+
 export type DecisionVersion = {
   snapshot_id: string;
   sequence: number;

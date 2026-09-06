@@ -1,5 +1,7 @@
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from concurrent.futures import ThreadPoolExecutor
+import threading
 
 import pytest
 from fastapi import FastAPI
@@ -47,8 +49,10 @@ class Service:
     def __init__(self, error: Exception | None = None) -> None:
         self.error = error
         self.calls = []
+        self.thread_names = []
 
     def current(self, now):
+        self.thread_names.append(threading.current_thread().name)
         self.calls.append(("current", now))
         if self.error:
             raise self.error
@@ -75,12 +79,25 @@ class Service:
         return snapshot()
 
 
-def client(service: Service) -> TestClient:
+def client(service: Service, *, read_executor=None) -> TestClient:
     application = FastAPI()
     application.include_router(router)
     application.dependency_overrides[get_market_sentiment_service] = lambda: service
     application.dependency_overrides[get_server_time] = lambda: NOW
+    if read_executor is not None:
+        application.state.read_executor = read_executor
     return TestClient(application)
+
+
+def test_current_uses_the_latency_critical_read_executor() -> None:
+    service = Service()
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="latency-critical-read") as executor:
+        response = client(service, read_executor=executor).get(
+            "/api/v1/a-shares/market-sentiment/current"
+        )
+
+    assert response.status_code == 200
+    assert service.thread_names == ["latency-critical-read_0"]
 
 
 def test_current_history_and_refresh_return_frozen_sentiment() -> None:

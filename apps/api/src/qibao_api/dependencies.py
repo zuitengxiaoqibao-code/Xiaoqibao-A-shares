@@ -1,6 +1,10 @@
+import asyncio
+from collections.abc import Callable
 from datetime import datetime, timezone
+from functools import partial
 import os
 from pathlib import Path
+from typing import TypeVar
 
 from fastapi import Request
 
@@ -14,6 +18,24 @@ from qibao_api.settings_repository import EffectiveAISettingsResolver
 
 
 _fallback_task_progress_registry = TaskProgressRegistry()
+T = TypeVar("T")
+
+
+async def run_latency_critical_read(
+    request: Request,
+    callback: Callable[..., T],
+    *args,
+    **kwargs,
+) -> T:
+    executor = getattr(request.app.state, "read_executor", None)
+    loop = asyncio.get_running_loop()
+    invocation = partial(callback, *args, **kwargs)
+    try:
+        return await loop.run_in_executor(executor, invocation)
+    except RuntimeError as error:
+        if executor is None or "after shutdown" not in str(error):
+            raise
+        return await loop.run_in_executor(None, invocation)
 
 
 class _DisabledTdxAutoImportMonitor:
@@ -85,7 +107,7 @@ def get_hotspot_service(request: Request):
     return request.app.state.hotspot_service
 
 
-def get_news_repository(request: Request):
+async def get_news_repository(request: Request):
     return request.app.state.news_repository
 
 
@@ -105,7 +127,7 @@ def get_briefing_repository(request: Request):
     return request.app.state.briefing_repository
 
 
-def get_scheduler(request: Request):
+async def get_scheduler(request: Request):
     return request.app.state.scheduler
 
 
@@ -184,6 +206,10 @@ def get_a_share_cockpit_service(request: Request):
     return request.app.state.a_share_cockpit_service
 
 
+def get_stock_realtime_quote_service(request: Request):
+    return request.app.state.stock_realtime_quote_service
+
+
 def get_company_research_service(request: Request):
     return request.app.state.company_research_service
 
@@ -198,6 +224,10 @@ def get_company_research_ai_task_service(request: Request):
 
 def get_company_research_version_repository(request: Request):
     return request.app.state.company_research_version_repository
+
+
+def get_watchlist_repository(request: Request):
+    return request.app.state.watchlist_repository
 
 
 def get_a_share_preparation_service(request: Request):
@@ -216,11 +246,15 @@ def get_a_share_quote_source(request: Request):
     return request.app.state.a_share_quote_source
 
 
+def get_overseas_market_service(request: Request):
+    return request.app.state.overseas_market_service
+
+
 def get_a_share_universe_source(request: Request):
     return request.app.state.a_share_universe_source
 
 
-def get_market_sentiment_service(request: Request):
+async def get_market_sentiment_service(request: Request):
     return request.app.state.market_sentiment_service
 
 
@@ -228,7 +262,7 @@ def get_market_sentiment_repository(request: Request):
     return request.app.state.market_sentiment_repository
 
 
-def get_market_overview_service(request: Request):
+async def get_market_overview_service(request: Request):
     return request.app.state.market_overview_service
 
 
@@ -292,15 +326,15 @@ def get_tdx_professional_source(request: Request):
     return request.app.state.tdx_professional_source
 
 
-def get_decision_repository(request: Request):
+async def get_decision_repository(request: Request):
     return request.app.state.decision_repository
 
 
-def get_decision_calendar(request: Request):
+async def get_decision_calendar(request: Request):
     return request.app.state.decision_calendar
 
 
-def get_decision_poll_state(request: Request):
+async def get_decision_poll_state(request: Request):
     repository = getattr(request.app.state, "poll_state_repository", None)
     return repository.latest() if repository is not None else None
 
@@ -309,5 +343,5 @@ def get_poll_state_repository(request: Request):
     return getattr(request.app.state, "poll_state_repository", None)
 
 
-def get_server_time() -> datetime:
+async def get_server_time() -> datetime:
     return datetime.now(timezone.utc)

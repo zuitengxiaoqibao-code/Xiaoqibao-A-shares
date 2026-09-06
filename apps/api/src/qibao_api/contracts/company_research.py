@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from qibao_api.contracts.evidence_ledger import EvidenceLedgerEntry
 from qibao_api.contracts.field_evidence import FieldEvidence
 from qibao_api.ai_status import AIConnectionState
+from qibao_api.contracts.industry import ShenwanIndustry
 
 
 ResearchStatus = Literal["ready", "partial", "unavailable"]
@@ -220,6 +221,8 @@ class ResearchEnrichmentEvidence(BaseModel):
     industry_name: str | None = None
     industry_code: str | None = None
     industry_board_code: str | None = None
+    shenwan_industry: ShenwanIndustry | None = None
+    shenwan_mapping_status: str = "unmapped"
     peer_candidates: tuple[PeerCandidateEvidence, ...] = ()
     unlocks: tuple[UnlockEvidence, ...] = ()
     margin: tuple[MarginEvidence, ...] = ()

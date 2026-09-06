@@ -13,12 +13,13 @@ from qibao_api.a_shares.assessment import DeterministicStockAssessor, StockAsses
 from qibao_api.a_shares.assessment_ai import AIStatus, AssessmentAIExplanation
 from qibao_api.a_shares.diagnosis import DiagnosisUnavailableError
 from qibao_api.a_shares.instrument_directory import AShareInstrument
-from qibao_api.a_shares.preparation import StockPreparation
+from qibao_api.a_shares.preparation import PreparationSource, StockPreparation
 from qibao_api.contracts.decision import AdviceCard, DecisionPhase, EvidenceReference
 from qibao_api.contracts.field_evidence import FieldEvidence
 from qibao_api.contracts.instruments import AShareCode
 from qibao_api.contracts.market import AssetKind
 from qibao_api.libu_compliance.repository import SourceAuthorizationError
+from qibao_api.shangshu.decision_repository import DecisionIntegrityError
 from qibao_api.shangshu.phase_lifecycle import PhaseExecution, resolve_phase_execution
 
 
@@ -164,18 +165,36 @@ class StockDecisionCockpitService:
             raise UnknownAShareError(symbol)
 
         live_request = as_of == cutoff.astimezone(ZoneInfo("Asia/Shanghai")).date()
-        preparation, sections = await asyncio.gather(
+        preparation_result, sections_result = await asyncio.gather(
             self.preparation_service.inspect(
                 symbol, as_of=as_of, cutoff=None if live_request else cutoff
             ),
             self._diagnosis_sections(
                 symbol, as_of, None if live_request else cutoff
             ),
+            return_exceptions=True,
         )
-        sections = self._merge_preparation_failures(sections, preparation)
+        if isinstance(sections_result, Exception):
+            sections = self._unavailable_sections(
+                "diagnosis", f"个股数据分析失败：{sections_result}"
+            )
+        else:
+            sections = sections_result
+        if isinstance(preparation_result, Exception):
+            preparation = self._preparation_after_failure(
+                symbol, sections, preparation_result
+            )
+        else:
+            preparation = preparation_result
+            sections = self._merge_preparation_failures(sections, preparation)
         effective_cutoff = self.clock() if live_request else cutoff
         sections = self._enforce_cutoff(sections, effective_cutoff)
-        phases = self._phases(symbol, as_of, effective_cutoff)
+        try:
+            phases = self._phases(symbol, as_of, effective_cutoff)
+        except DecisionIntegrityError:
+            raise
+        except Exception as error:
+            phases = self._unavailable_phases(str(error) or type(error).__name__)
         current = self._current_advice(phases)
         membership = self._candidate_membership(current)
         assessment = self.assessor.assess(symbol, sections, membership, effective_cutoff)
@@ -205,6 +224,56 @@ class StockDecisionCockpitService:
                 assessment=assessment,
             ),
         )
+
+    @staticmethod
+    def _unavailable_sections(source: str, reason: str) -> dict[str, CockpitSection]:
+        return {name: _unavailable(source, reason) for name in SECTION_NAMES}
+
+    @staticmethod
+    def _preparation_after_failure(
+        symbol: str, sections: dict[str, CockpitSection], error: Exception
+    ) -> StockPreparation:
+        reason = str(error) or type(error).__name__
+        mappings = (
+            ("quote", "market"), ("history", "trend"),
+            ("finance", "fundamentals"), ("news", "news"),
+            ("classification", "industry"), ("fund_flow", "funds"),
+        )
+        sources = tuple(
+            PreparationSource(
+                name=name,
+                status=(
+                    "ready"
+                    if sections.get(section) is not None
+                    and sections[section].status == "ready"
+                    else "partial"
+                ),
+                observed_at=(
+                    sections[section].observed_at
+                    if sections.get(section) is not None else None
+                ),
+                reason=(
+                    reason if index == 0
+                    else sections[section].reason
+                    if sections.get(section) is not None else None
+                ),
+            )
+            for index, (name, section) in enumerate(mappings)
+        )
+        now = datetime.now(timezone.utc)
+        return StockPreparation(
+            symbol=symbol, status="partial", sources=sources, refreshed=False,
+            started_at=now, completed_at=now,
+        )
+
+    @staticmethod
+    def _unavailable_phases(reason: str) -> dict[DecisionPhase, StockPhaseHistory]:
+        return {
+            phase: StockPhaseHistory(
+                phase_status="partial", quality_reasons=(reason,)
+            )
+            for phase in PHASES
+        }
 
     @staticmethod
     def _field_evidence(

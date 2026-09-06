@@ -125,3 +125,13 @@ class CompanyResearchTaskService:
         self._tasks.clear()
         self._task_keys.clear()
         self._keys_by_task.clear()
+
+    async def aclose(self) -> None:
+        tasks = tuple(self._tasks.values())
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._tasks.clear()
+        self._task_keys.clear()
+        self._keys_by_task.clear()

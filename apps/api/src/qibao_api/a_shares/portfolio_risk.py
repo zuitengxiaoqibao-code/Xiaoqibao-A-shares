@@ -20,6 +20,7 @@ from qibao_api.contracts.portfolio_risk import (
     PortfolioRiskResponse,
     PortfolioStressScenario,
 )
+from qibao_api.gongbu.shenwan_industry import resolve_shenwan_industry
 
 
 TWO = Decimal("0.01")
@@ -151,7 +152,13 @@ class PortfolioRiskService:
                 for detail in quality_details:
                     quality_warnings.append(f"{position.symbol} 日线质量警告：{detail}")
             enrichment = self.enrichment_repository.latest(position.symbol)
-            industry = getattr(enrichment, "industry_name", None) if enrichment is not None else None
+            canonical = getattr(enrichment, "shenwan_industry", None) if enrichment is not None else None
+            if canonical is not None:
+                industry = getattr(canonical, "name", None)
+            else:
+                legacy_name = getattr(enrichment, "industry_name", None) if enrichment is not None else None
+                mapped = resolve_shenwan_industry(legacy_name, "legacy-enrichment")
+                industry = mapped.industry.name if mapped.is_verified else None
             if enrichment is not None:
                 sources.extend(getattr(enrichment, "sources", ()))
             if latest is not None and not industry:

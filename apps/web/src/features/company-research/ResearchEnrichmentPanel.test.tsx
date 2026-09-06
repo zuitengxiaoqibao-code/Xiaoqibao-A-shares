@@ -10,6 +10,8 @@ describe("ResearchEnrichmentPanel", () => {
       stock_reports: [{ report_id: "r1", title: "盈利预测更新", publish_date: "2026-08-08", organization: "测试机构", rating: "增持", industry: "软件开发", eps_this_year: "1.2", eps_next_year: "1.5", eps_next_two_year: "1.8", pdf_url: "https://example.com/r1.pdf" }],
       industry_reports: [{ report_id: "i1", title: "软件行业周报", publish_date: "2026-08-07", organization: "行业机构", rating: "中性", industry: "软件开发", eps_this_year: null, eps_next_year: null, eps_next_two_year: null, pdf_url: null }],
       industry_name: "软件开发", industry_code: "1238", industry_board_code: "BK0737",
+      shenwan_industry: { code: "SW801750", name: "计算机", level: "一级", version: "SW2021" },
+      shenwan_mapping_status: "verified",
       peer_candidates: [],
       unlocks: [{ free_date: "2099-09-01", stock_type: "首发限售", shares: "100000000", ratio_percent: "2.5" }],
       margin: [{ trade_date: "2026-08-08", financing_balance: "200000000", financing_buy: "10000000", securities_lending_balance: "1000000", total_balance: "201000000" }],
@@ -37,6 +39,8 @@ describe("ResearchEnrichmentPanel", () => {
       status: "ready", observed_at: "2026-08-10T10:00:00+08:00",
       stock_reports: [], industry_reports: [],
       industry_name: "软件开发", industry_code: "1238", industry_board_code: "BK0737",
+      shenwan_industry: { code: "SW801750", name: "计算机", level: "一级", version: "SW2021" },
+      shenwan_mapping_status: "verified",
       peer_candidates: [
         { symbol: "600001", name: "当前公司", industry: "软件开发", price: "20", change_percent: "1.2", pe_ttm: "25", pb: "3.2", market_cap_yi: "120" },
         { symbol: "600002", name: "同行甲", industry: "软件开发", price: "18", change_percent: "-0.5", pe_ttm: "30", pb: "2.8", market_cap_yi: "90" },
@@ -45,8 +49,9 @@ describe("ResearchEnrichmentPanel", () => {
     }} />);
 
     const peers = screen.getByRole("region", { name: "系统自动筛选同行" });
-    expect(peers).toHaveTextContent("软件开发");
-    expect(peers).toHaveTextContent("BK0737");
+    expect(peers).toHaveTextContent("计算机");
+    expect(peers).toHaveTextContent("SW801750");
+    expect(peers).toHaveTextContent("申万一级 · SW2021");
     expect(peers).toHaveTextContent("同行甲");
     expect(peers).not.toHaveTextContent("当前公司");
     screen.getByRole("button", { name: "将同行甲加入同行比较" }).click();

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { loadStockCockpit, loadStockCockpitAI } from "./api";
+import { loadStockCockpit, loadStockCockpitAI, loadStockQuotePulse } from "./api";
 
 
 describe("stock cockpit API", () => {
@@ -38,5 +38,17 @@ describe("stock cockpit API", () => {
 
     expect(updates[0]).toBe(1);
     expect(updates.at(-1)).toBe(100);
+  });
+
+  it("reads the lightweight realtime quote pulse endpoint", async () => {
+    const payload = { symbol: "600000", status: "ready", freshness: "live" };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify(payload),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(loadStockQuotePulse("600000")).resolves.toEqual(payload);
+    const requested = new URL(fetchMock.mock.calls[0][0], "http://localhost");
+    expect(requested.pathname).toBe("/api/v1/a-shares/600000/quote-pulse");
   });
 });

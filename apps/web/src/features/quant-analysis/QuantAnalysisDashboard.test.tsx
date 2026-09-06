@@ -213,8 +213,65 @@ describe("QuantAnalysisDashboard", () => {
     expect(onSelectSymbol).toHaveBeenCalledWith("600519");
     expect(await screen.findByText("600519", { selector: ".quant-selected-symbol" })).toBeInTheDocument();
     expect(screen.getByText("贵州茅台", { selector: ".quant-selected-name" })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "量化因子雷达" }))
-      .toHaveTextContent("未进入首次涨停候选池");
+    await waitFor(() => expect(screen.getByRole("region", { name: "量化因子雷达" }))
+      .toHaveTextContent("历史回测因子"));
+  });
+
+  it("uses real backtest and strategy evidence for a stock outside the first-limit-up pool", async () => {
+    const customStrategy: QuantStrategyDashboard = {
+      ...strategyDashboard,
+      candidates: [{
+        symbol: "600519", name: "贵州茅台", model: "权重容量低吸模型",
+        strategy_score: "81.25", regime_match: "0.9", stock_score: "0.8",
+        trigger_score: "0.7", rr_score: "0.6", risk_penalty: "2",
+        status: "pending_trigger", trigger_confirmed: false, position: "0",
+        planned_position: "0.2", evidence_coverage_percent: "85",
+        buy_triggers: [], invalidation_rules: [], risk_flags: [],
+        missing_evidence: ["等待盘中触发"], factor_as_of: "2026-07-31",
+        sources: ["本地日线"],
+      }],
+    };
+    render(<QuantAnalysisDashboard
+      loadBoard={async () => board}
+      loadTicks={async (symbol) => ticks(symbol)}
+      runBacktest={async (symbol) => backtest(symbol)}
+      loadQuantStrategy={async () => customStrategy}
+      selectedSymbol="600519"
+    />);
+
+    const signalEngine = await screen.findByRole("region", { name: "信号引擎" });
+    await waitFor(() => expect(signalEngine).toHaveTextContent("81.3"));
+    expect(signalEngine).toHaveTextContent("量化策略综合分");
+    await waitFor(() => expect(screen.getByRole("region", { name: "量化因子雷达" }))
+      .toHaveTextContent("历史回测因子"));
+  });
+
+  it("loads stock-specific evidence even when the first-limit-up board is unavailable", async () => {
+    const runBacktest = vi.fn(async (symbol: string) => backtest(symbol));
+    const loadWalkForward = vi.fn(async (symbol: string) => ({
+      symbol, status: "unavailable" as const, generated_at: "2026-07-31T14:00:00+08:00",
+      source: "本地日线", window_count: 0, windows: [], closed_trade_count: 0,
+      minimum_closed_trades: 5, win_rate: null, profit_loss_ratio: null,
+      max_drawdown: null, sharpe_ratio: null, average_test_return: null,
+      strategy_score: null, score_formula: null, factor_decay: [],
+      parameter_policy: "frozen_before_validation" as const,
+      out_of_sample_tuning: "prohibited" as const,
+      parameter_snapshot_hash: "fixture", limitations: ["样本不足"],
+    }));
+    const loadKronosForecast = vi.fn(async (symbol: string) => unavailableForecast(symbol));
+    render(<QuantAnalysisDashboard
+      loadBoard={async () => { throw new Error("board unavailable"); }}
+      loadTicks={async () => []}
+      runBacktest={runBacktest}
+      loadWalkForward={loadWalkForward}
+      loadKronosForecast={loadKronosForecast}
+      selectedSymbol="600519"
+    />);
+
+    await waitFor(() => expect(runBacktest).toHaveBeenCalledWith("600519", expect.any(AbortSignal)));
+    await waitFor(() => expect(loadWalkForward).toHaveBeenCalledWith("600519", expect.any(AbortSignal)));
+    await waitFor(() => expect(loadKronosForecast).toHaveBeenCalledWith("600519", undefined, 20));
+    expect(await screen.findByRole("region", { name: "回测风险收益" })).toHaveTextContent("总收益");
   });
 
   it("refuses backtest and Kronos evidence returned for another stock", async () => {
@@ -306,16 +363,20 @@ describe("QuantAnalysisDashboard", () => {
   });
 
   it("adds a detailed TDX-style event K-line workspace when the local timeline is available", async () => {
+    const loadTimeline = vi.fn(async (symbol: string) => timeline(symbol));
     render(<QuantAnalysisDashboard
       loadBoard={async () => board}
       loadTicks={async (symbol) => ticks(symbol)}
       runBacktest={async (symbol) => backtest(symbol)}
-      loadTimeline={async (symbol) => timeline(symbol)}
+      loadTimeline={loadTimeline}
     />);
 
     expect(await screen.findByRole("region", { name: "通达信式研究总览" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "个股新闻与热点事件 K 线" })).toHaveTextContent("事件 K 线");
     expect(screen.getByRole("region", { name: "通达信式研究总览" })).toHaveTextContent("PE(TTM)");
+    await waitFor(() => expect(loadTimeline).toHaveBeenCalledWith(
+      "600001", undefined, expect.any(AbortSignal),
+    ));
   });
 
   it("loads the short-term strategy workbench independently below the Kronos forecast", async () => {
@@ -510,11 +571,11 @@ describe("QuantAnalysisDashboard", () => {
       loadKronosForecast={loadKronosForecast}
     />);
 
-    await waitFor(() => expect(loadKronosForecast).toHaveBeenCalledWith("600001", "2026-07-24", 20), { timeout: 2_000 });
+    await waitFor(() => expect(loadKronosForecast).toHaveBeenCalledWith("600001", undefined, 20), { timeout: 2_000 });
     expect(screen.getByRole("region", { name: "Kronos 价格路径预测" })).toHaveTextContent("模型未启用");
 
     fireEvent.change(screen.getByRole("combobox", { name: "量化分析股票" }), { target: { value: "000001" } });
-    await waitFor(() => expect(loadKronosForecast).toHaveBeenCalledWith("000001", "2026-07-24", 20), { timeout: 2_000 });
+    await waitFor(() => expect(loadKronosForecast).toHaveBeenCalledWith("000001", undefined, 20), { timeout: 2_000 });
   });
 
   it("loads each data layer once and avoids duplicate timer-driven requests", async () => {

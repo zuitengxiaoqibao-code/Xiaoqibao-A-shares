@@ -264,16 +264,33 @@ class PollStateRepository:
         normalized_source = source.strip()
         if not normalized_source:
             raise ValueError("focus source is required")
+        registered_at_utc = registered_at.astimezone(timezone.utc)
         with self._lock, self.connection:
             self.connection.execute(
                 """INSERT INTO intraday_focus_symbol_events(
                 symbol,source,registered_at,expires_at) VALUES(?,?,?,?)""",
                 (
                     validated_symbol, normalized_source,
-                    registered_at.astimezone(timezone.utc).isoformat(),
+                    registered_at_utc.isoformat(),
                     expires_at.astimezone(timezone.utc).isoformat(),
                 ),
             )
+            row = self.connection.execute(
+                "SELECT payload FROM intraday_poll_state_events ORDER BY sequence DESC LIMIT 1"
+            ).fetchone()
+            if row is not None:
+                state = PollState.model_validate_json(row["payload"])
+                if state.next_focus_due_at > registered_at_utc:
+                    due_state = state.model_copy(update={"next_focus_due_at": registered_at_utc})
+                    payload = json.dumps(
+                        due_state.model_dump(mode="json"),
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    self.connection.execute(
+                        "INSERT INTO intraday_poll_state_events(occurred_at,payload) VALUES(?,?)",
+                        (registered_at_utc.isoformat(), payload),
+                    )
 
     def registered_focus_symbols(self, now: datetime) -> tuple[str, ...]:
         if now.tzinfo is None or now.utcoffset() is None:

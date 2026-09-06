@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict
 
 from qibao_api.a_shares.market_sentiment import (
@@ -13,7 +13,11 @@ from qibao_api.a_shares.market_sentiment_repository import (
     MarketSentimentStoreError,
 )
 from qibao_api.contracts.market_sentiment import MarketSentimentSnapshot
-from qibao_api.dependencies import get_market_sentiment_service, get_server_time
+from qibao_api.dependencies import (
+    get_market_sentiment_service,
+    get_server_time,
+    run_latency_critical_read,
+)
 from qibao_api.gongbu.tencent_market_sentiment import (
     MarketSentimentSourceUnavailable,
 )
@@ -34,12 +38,13 @@ class MarketSentimentHistoryResponse(BaseModel):
 
 
 @router.get("/current", response_model=MarketSentimentResponse)
-def current_market_sentiment(
+async def current_market_sentiment(
+    request: Request,
     service: Annotated[object, Depends(get_market_sentiment_service)],
     now: Annotated[datetime, Depends(get_server_time)],
 ) -> MarketSentimentResponse:
     try:
-        return service.current(now)
+        return await run_latency_critical_read(request, service.current, now)
     except Exception as error:
         _raise_safe_error(error)
 

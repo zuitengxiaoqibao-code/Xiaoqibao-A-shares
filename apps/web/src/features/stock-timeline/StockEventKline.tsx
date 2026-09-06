@@ -11,6 +11,7 @@ import type {
   StockTimelineLoader,
   StockTimelineResponse,
 } from "./types";
+import { StockTimeframeCharts } from "./StockTimeframeCharts";
 import { useRealtimeFallbackTick, useRealtimeState, useRealtimeSubscription } from "../../shared/realtime/RealtimeProvider";
 
 
@@ -344,11 +345,13 @@ export function StockEventKline({
   symbol,
   asOf,
   refreshToken,
+  showTimeframeCharts = false,
   load = loadStockTimeline,
 }: {
   symbol: string;
   asOf?: string;
   refreshToken?: string | number | null;
+  showTimeframeCharts?: boolean;
   load?: StockTimelineLoader;
 }) {
   const cacheKey = `${symbol}:${asOf ?? "current"}`;
@@ -474,7 +477,7 @@ export function StockEventKline({
     });
   }, [chartEvents, data]);
 
-  return <section className="terminal-panel stock-event-kline" aria-label="个股新闻与热点事件 K 线">
+  return <><section className="terminal-panel stock-event-kline" aria-label="个股新闻与热点事件 K 线">
     <header className="stock-event-kline-header">
       <div><span className="event-kline-icon"><Newspaper size={18} /></span><div><p>NEWS / PRICE EVIDENCE</p><h2>事件 K 线</h2></div></div>
       <div className="event-kline-legend"><span className="up">红涨</span><span className="down">绿跌</span><span className="uncertain">灰色·方向待核验</span>{liveSelection && <span className={`stock-event-live-state ${realtimeState}`}>{realtimeState === "connected" ? "实时联动" : realtimeState === "error" ? "实时断线·轮询保底" : "连接实时联动"}</span>}{loading && <RefreshCw className="spin" size={14} />}</div>
@@ -575,5 +578,5 @@ export function StockEventKline({
     </>}
     {error && data && <div className="stock-timeline-stale"><AlertTriangle size={14} />更新失败：{error}当前保留上次的本地快照</div>}
     <footer className="stock-event-kline-footer"><span>日线：本地历史库</span><span>事件：已核验个股新闻原始发布时间</span><span>批量热点采集时间不落图</span></footer>
-  </section>;
+  </section>{showTimeframeCharts && data && <StockTimeframeCharts data={data} />}</>;
 }

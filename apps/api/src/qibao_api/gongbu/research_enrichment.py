@@ -12,6 +12,8 @@ from typing import Any
 
 import httpx
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from qibao_api.contracts.industry import CanonicalIndustryAssignment, ShenwanIndustry
+from qibao_api.gongbu.shenwan_industry import resolve_shenwan_industry
 
 
 REPORT_API = "https://reportapi.eastmoney.com/report/list"
@@ -107,6 +109,8 @@ class ResearchEnrichmentSnapshot(BaseModel):
     industry_name: str | None = None
     industry_code: str | None = None
     industry_board_code: str | None = None
+    shenwan_industry: ShenwanIndustry | None = None
+    shenwan_mapping_status: str = "unmapped"
     peer_candidates: tuple[PeerCandidateRecord, ...] = ()
     unlocks: tuple[UnlockRecord, ...] = ()
     margin: tuple[MarginRecord, ...] = ()
@@ -183,6 +187,18 @@ class EastmoneyResearchEnrichmentSource:
             "RPT_HOLDERNUMLATEST", f'(SECURITY_CODE="{symbol}")', "END_DATE", "-1", 12,
         )
         observed_at = self.clock()
+        assignment = resolve_shenwan_industry(
+            industry_name, "eastmoney-research", industry_code, observed_at=observed_at,
+        )
+        peer_candidates, peer_mapping_warning = self._verify_peer_candidates(
+            peer_candidates,
+            assignment=assignment,
+            industry_name=industry_name,
+            industry_board_code=industry_board_code,
+            observed_at=observed_at,
+        )
+        if peer_mapping_warning:
+            warnings.append(peer_mapping_warning)
         semantic = {
             "symbol": symbol,
             "observed_at": observed_at.isoformat(),
@@ -191,6 +207,8 @@ class EastmoneyResearchEnrichmentSource:
             "industry_name": industry_name,
             "industry_code": industry_code or None,
             "industry_board_code": industry_board_code,
+            "shenwan_industry": assignment.industry.model_dump(mode="json") if assignment.industry else None,
+            "shenwan_mapping_status": "verified" if assignment.is_verified else "unmapped",
             "peer_candidates": [item.model_dump(mode="json") for item in peer_candidates],
             "unlocks": [item.model_dump(mode="json") for item in self._parse_unlocks(unlock_rows)],
             "margin": [item.model_dump(mode="json") for item in self._parse_margin(margin_rows)],
@@ -301,6 +319,45 @@ class EastmoneyResearchEnrichmentSource:
                 market_cap_yi=(market_cap / Decimal("100000000") if market_cap is not None else None),
             ))
         return industry_name, industry_board_code, tuple(parsed), None if parsed else "industry_peer_sample_unavailable"
+
+    @staticmethod
+    def _verify_peer_candidates(
+        candidates: tuple[PeerCandidateRecord, ...],
+        *,
+        assignment: CanonicalIndustryAssignment,
+        industry_name: str | None,
+        industry_board_code: str | None,
+        observed_at: datetime,
+    ) -> tuple[tuple[PeerCandidateRecord, ...], str | None]:
+        """Promote board constituents only after an explicit 申万 mapping check.
+
+        Eastmoney's board constituent endpoint is useful for discovery, but its
+        board names are not the project's canonical taxonomy.  When the target
+        industry or board cannot be mapped to 申万, returning those rows as
+        formal peers would overstate the evidence, so they are discarded and a
+        warning is emitted instead.
+        """
+        if not candidates:
+            return (), None
+        target = getattr(assignment, "industry", None)
+        if target is None or not industry_name or not industry_board_code:
+            return (), "industry_peer_mapping_unverified"
+
+        verified: list[PeerCandidateRecord] = []
+        for candidate in candidates:
+            peer_assignment = resolve_shenwan_industry(
+                candidate.industry,
+                "eastmoney-industry-board",
+                industry_board_code,
+                observed_at=observed_at,
+            )
+            peer_industry = getattr(peer_assignment, "industry", None)
+            if peer_industry is None or peer_industry.code != target.code:
+                continue
+            verified.append(candidate.model_copy(update={"industry": peer_industry.name}))
+
+        warning = "industry_peer_mapping_unverified" if len(verified) != len(candidates) else None
+        return tuple(verified), warning
 
     async def _get_json(self, url: str, params: dict[str, str], *, referer: str) -> Any:
         async with self._lock:

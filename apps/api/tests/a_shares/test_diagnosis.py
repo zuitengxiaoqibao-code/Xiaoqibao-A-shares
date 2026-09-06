@@ -13,6 +13,7 @@ from qibao_api.a_shares.instrument_directory import AShareInstrument
 from qibao_api.contracts.bars import DailyBar
 from qibao_api.contracts.market import AssetKind
 from qibao_api.contracts.news import EvidenceCitation, NormalizedNewsEvent
+from qibao_api.contracts.industry import ShenwanIndustry
 from qibao_api.gongbu.tencent_quotes import TencentMarketSnapshot
 from qibao_api.gongbu.stock_classification import (
     StockBoard,
@@ -48,6 +49,29 @@ async def test_source_inspection_fetches_quote_and_finance_concurrently() -> Non
         "quote": ("quote", None),
         "finance": ("finance", None),
     }
+
+
+@pytest.mark.asyncio
+async def test_source_inspection_bounds_blocking_finance_source() -> None:
+    service = object.__new__(AShareDiagnosisService)
+    service.realtime_source_timeout_seconds = 0.02
+
+    async def market(*args, **kwargs):
+        return "quote", None
+
+    async def finance(*args, **kwargs):
+        await asyncio.sleep(10)
+
+    service._market = market
+    service._finance = finance
+
+    result = await asyncio.wait_for(
+        service.inspect_sources("600000", AS_OF), timeout=0.2
+    )
+
+    assert result["quote"] == ("quote", None)
+    assert result["finance"][0] is None
+    assert "超时" in result["finance"][1]
 
 
 def bars(symbol: str = "600000", count: int = 80) -> list[DailyBar]:
@@ -142,6 +166,10 @@ class Classifications:
             symbol=symbol,
             observed_at=self.observed_at,
             industry="食品饮料",
+            shenwan_industry=ShenwanIndustry(
+                code="SW801120", name="食品饮料", level="一级", version="SW2021"
+            ),
+            shenwan_mapping_status="verified",
             boards=(
                 StockBoard(code="BK0477", name="酿酒行业"),
                 StockBoard(code="BK0896", name="白酒概念"),
@@ -518,6 +546,8 @@ async def test_diagnosis_only_uses_frozen_events_linked_to_symbol() -> None:
     assert result.sections["industry"].metrics == {
         "industry": "食品饮料",
         "board_tags": "酿酒行业、白酒概念",
+        "industry_code": "SW801120",
+        "industry_system": "申万",
     }
     assert result.sections["industry"].source == "eastmoney-stock-classification"
     assert result.sections["industry"].observed_at == datetime(
@@ -681,6 +711,8 @@ async def test_news_failure_does_not_hide_structured_classification() -> None:
     assert result.sections["industry"].metrics == {
         "industry": "食品饮料",
         "board_tags": "酿酒行业、白酒概念",
+        "industry_code": "SW801120",
+        "industry_system": "申万",
     }
 
 

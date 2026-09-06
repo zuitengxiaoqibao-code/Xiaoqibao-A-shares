@@ -99,5 +99,6 @@ describe("QuantShadowLedgerPanel", () => {
     }} />);
     expect(screen.getByRole("region", { name: "量化走样校准报告" })).toHaveTextContent("未来函数检查通过");
     expect(screen.getByRole("region", { name: "量化走样校准报告" })).toHaveTextContent("生存者偏差检查不可用");
+    expect(screen.getAllByText("样本不足")).toHaveLength(1);
   });
 });

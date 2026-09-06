@@ -16,6 +16,8 @@ from qibao_api.contracts.company_research import (
     CompanyResearchVersionChange,
 )
 
+SQLITE_LOCK_TIMEOUT_SECONDS = 0.25
+
 
 class CompanyResearchVersionStoreError(RuntimeError):
     pass
@@ -141,7 +143,11 @@ class CompanyResearchVersionRepository:
         self._lock = threading.RLock()
         self.shared_snapshot_registry = shared_snapshot_registry
         self.realtime_snapshot_bus = realtime_snapshot_bus
-        self.connection = sqlite3.connect(database, check_same_thread=False)
+        self.connection = sqlite3.connect(
+            database,
+            check_same_thread=False,
+            timeout=SQLITE_LOCK_TIMEOUT_SECONDS,
+        )
         self.connection.row_factory = sqlite3.Row
         self.connection.executescript("""
         CREATE TABLE IF NOT EXISTS company_research_versions (
@@ -178,12 +184,21 @@ class CompanyResearchVersionRepository:
                     stored = self._verified(existing)
                     self._record_shared_snapshot(stored, reused=True)
                     return stored
-                previous_row = self.connection.execute(
-                    "SELECT * FROM company_research_versions WHERE symbol=? ORDER BY version_number DESC LIMIT 1",
+                rows = self.connection.execute(
+                    "SELECT * FROM company_research_versions WHERE symbol=? ORDER BY version_number DESC",
                     (value.symbol,),
-                ).fetchone()
-                previous = self._verified(previous_row) if previous_row is not None else None
-                version_number = 1 if previous is None or previous.research_version is None else previous.research_version.version_number + 1
+                ).fetchall()
+                previous = None
+                for row in rows:
+                    try:
+                        previous = self._verified(row)
+                        break
+                    except (CompanyResearchVersionIntegrityError, ValidationError):
+                        # Keep legacy corrupt rows for audit, but never let one
+                        # block a new verified append.
+                        continue
+                max_version = max((int(row["version_number"]) for row in rows), default=0)
+                version_number = max_version + 1
                 snapshot_id = f"company-research-{value.symbol}-{uuid4().hex}"
                 version = CompanyResearchVersion(
                     snapshot_id=snapshot_id,

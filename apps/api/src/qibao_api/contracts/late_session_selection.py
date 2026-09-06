@@ -8,7 +8,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validato
 LateSessionPhase = Literal["pre_screen", "live_monitor", "post_close"]
 RuleStatus = Literal["passed", "failed", "unavailable", "disabled"]
 LateSessionDataState = Literal["ready", "partial", "no_candidates", "no_market_data"]
-LateSessionAIStatus = Literal["ready", "unconfigured", "no_candidates", "error"]
+LateSessionAIStatus = Literal["ready", "unconfigured", "no_candidates", "output_invalid", "error"]
 LateSessionAIMode = Literal["ai", "rule_interpretation", "unavailable"]
 LateSessionMonitorStage = Literal[
     "idle", "precompute", "reduce_pool", "monitor", "confirm", "closing_auction", "frozen",

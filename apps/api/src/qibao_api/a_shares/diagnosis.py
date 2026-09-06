@@ -163,7 +163,7 @@ class AShareDiagnosisService:
             self._market(
                 symbol, as_of, cutoff=cutoff, degrade_authorization=True
             ),
-            self._finance(
+            self._bounded_finance(
                 symbol, as_of, cutoff=cutoff, degrade_authorization=True
             ),
         )
@@ -447,6 +447,7 @@ class AShareDiagnosisService:
         degrade_authorization: bool = False,
     ) -> tuple[FundamentalSnapshot | None, str | None]:
         try:
+            timeout_seconds = getattr(self, "realtime_source_timeout_seconds", 3.0)
             return await asyncio.wait_for(
                 self._finance(
                     symbol,
@@ -454,12 +455,13 @@ class AShareDiagnosisService:
                     cutoff=cutoff,
                     degrade_authorization=degrade_authorization,
                 ),
-                timeout=self.realtime_source_timeout_seconds,
+                timeout=timeout_seconds,
             )
         except TimeoutError:
+            timeout_seconds = getattr(self, "realtime_source_timeout_seconds", 3.0)
             return (
                 None,
-                f"通达信财务读取超时（{self.realtime_source_timeout_seconds:g}秒），已保留本地行情分析。",
+                f"通达信财务读取超时（{timeout_seconds:g}秒），已保留本地行情分析。",
             )
 
     async def _market(
@@ -730,7 +732,9 @@ class AShareDiagnosisService:
                     finance.data_updated_on.isoformat()
                     if finance.data_updated_on is not None else None
                 ),
-                "industry": finance.industry,
+                "industry": finance.shenwan_industry.name if finance.shenwan_industry is not None else None,
+                "industry_code": finance.shenwan_industry.code if finance.shenwan_industry is not None else None,
+                "industry_system": "申万" if finance.shenwan_industry is not None else None,
                 "eps": finance.eps, "roe": finance.roe,
                 "net_profit": finance.net_profit, "revenue": finance.revenue,
                 "book_value_per_share": finance.book_value_per_share,
@@ -820,14 +824,17 @@ class AShareDiagnosisService:
                 "行业与板块数据不可用："
                 f"{classification_error or '未配置结构化分类仓储'}",
             )
-        partial = classification.quality == "partial" or classification.industry is None
+        canonical = getattr(classification, "shenwan_industry", None)
+        # Supplier industry names are evidence only; formal diagnosis uses申万 fields.
+        partial = classification.quality == "partial" or canonical is None
         return DiagnosisSection(
             status="partial" if partial else "ready",
             observed_at=classification.observed_at,
             source=classification.source,
             metrics={
-                "industry": classification.industry,
+                "industry": canonical.name if canonical is not None else None,
                 "board_tags": "、".join(board.name for board in classification.boards),
+                **({"industry_code": canonical.code, "industry_system": "申万"} if canonical is not None else {}),
             },
             evidence_ids=(classification.classification_id,),
             explanation=(

@@ -470,7 +470,15 @@ class AStockPreparationService:
         ).get(symbol, [])
 
     async def _expected_trading_day(self, as_of):
-        return await asyncio.to_thread(self._expected_trading_day_sync, as_of)
+        try:
+            return await asyncio.to_thread(self._expected_trading_day_sync, as_of)
+        except RuntimeError as error:
+            # During desktop teardown the default executor may already be
+            # closed. The calendar lookup is safe to finish synchronously in
+            # that narrow window so a read does not fail halfway through.
+            if "after shutdown" not in str(error).lower():
+                raise
+            return self._expected_trading_day_sync(as_of)
 
     def _expected_trading_day_sync(self, as_of):
         now = self._now().astimezone(ZoneInfo("Asia/Shanghai"))

@@ -79,6 +79,8 @@ def test_window_shell_is_created_before_waiting_for_api(monkeypatch) -> None:
     def create_window(title: str, **options):
         order.append("window-created")
         assert title == "一树电子商务-A股观测台"
+        assert options["maximized"] is True
+        assert options["fullscreen"] is False
         assert "正在启动一树电子商务-A股观测台" in options["html"]
         assert "一树-A股观测台" in options["html"]
         assert "1%" in options["html"]

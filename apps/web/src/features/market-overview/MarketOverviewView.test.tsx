@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MarketOverviewView } from "./MarketOverviewView";
 import { writeMarketOverviewCache } from "./marketOverviewCache";
+import { RealtimeProvider, type RealtimeConsumer } from "../../shared/realtime/RealtimeProvider";
 import { loadWorkspaceState } from "../../shared/workspace/workspaceState";
 import type { MarketOverviewResponse } from "./types";
 import type { BreakingNewsAlertResponse } from "../news-alerts/types";
@@ -598,6 +599,25 @@ describe("MarketOverviewView", () => {
     fireEvent(document, new Event("visibilitychange"));
     await act(async () => vi.advanceTimersByTime(10000));
     expect(load).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps the five-second safety refresh when the realtime stream is connected but silent", async () => {
+    const consume: RealtimeConsumer = vi.fn(async (_topics, _onEvent, signal, onState) => {
+      onState?.("connected");
+      await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+    });
+    const load = vi.fn(() => Promise.resolve(overview));
+
+    render(
+      <RealtimeProvider topics={["market_overview"]} consume={consume}>
+        <MarketOverviewView load={load} />
+      </RealtimeProvider>,
+    );
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(1));
+
+    await act(async () => vi.advanceTimersByTime(5000));
+
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
   });
 
   it("keeps the completed startup overlay hidden during a five-second background refresh", async () => {

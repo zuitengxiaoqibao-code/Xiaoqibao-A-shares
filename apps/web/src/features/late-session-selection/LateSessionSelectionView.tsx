@@ -23,6 +23,18 @@ function timeValue(value: string) {
   return value.slice(0, 5);
 }
 
+function aggregateItems(items: string[]) {
+  const counts = new Map<string, number>();
+  items.filter(Boolean).forEach((item) => counts.set(item, (counts.get(item) ?? 0) + 1));
+  return [...counts.entries()].map(([text, count]) => ({ text, count }));
+}
+
+function AnalysisList({ items, emptyText }: { items: string[]; emptyText: string }) {
+  const rows = aggregateItems(items);
+  if (rows.length === 0) return <p className="late-session-ai-empty">{emptyText}</p>;
+  return <ul className="late-session-ai-list">{rows.map(({ text, count }) => <li key={text}><span>{text}</span>{count > 1 && <b>{count} 项</b>}</li>)}</ul>;
+}
+
 function NumericRule({ label, enabled, minimum, maximum, onEnabled, onMinimum, onMaximum, suffix = "" }: {
   label: string;
   enabled: boolean;
@@ -158,7 +170,12 @@ export function LateSessionSelectionView({ load, analyze = loadLateSessionAIAnal
         </article>)}</div>}
       {snapshot.invalidated_candidates.length > 0 && <div className="late-session-invalidated"><b>最近失效</b>{snapshot.invalidated_candidates.map((candidate) => <span key={candidate.quote.symbol}>{candidate.quote.name} {candidate.quote.symbol} · {candidate.invalidation_reason}</span>)}</div>}
     </section>
-    <section className="late-session-ai-panel"><header><div><p className="eyebrow">AI / EVIDENCE PARSER</p><h2>筛选结果 AI 分析与解析</h2></div><small>只分析当前真实筛选结果，不补造股票和字段</small></header>{aiLoading ? <div className="late-session-ai-loading" role="status" aria-busy="true"><RefreshCw className="spin" size={17} />正在解析当前筛选结果…</div> : aiError ? <div className="late-session-ai-error"><ShieldAlert size={16} />{aiError}</div> : aiAnalysis ? <div className="late-session-ai-content"><div className={`late-session-ai-badge ${aiAnalysis.status}`}><b>{aiAnalysis.title}</b><span>{aiAnalysis.candidate_count} 只候选</span></div><p className="late-session-ai-summary">{aiAnalysis.summary}</p>{aiAnalysis.reason && <p className="late-session-ai-reason"><b>原因：</b>{aiAnalysis.reason}</p>}<div className="late-session-ai-columns"><div><b>重点解析</b>{aiAnalysis.key_points.map((item) => <span key={item}>• {item}</span>)}</div><div><b>风险与数据边界</b>{[...aiAnalysis.risk_points, ...aiAnalysis.data_gaps].map((item) => <span key={item}>• {item}</span>)}</div></div></div> : <div className="late-session-ai-loading">等待筛选结果解析</div>}</section>
+    <section className="late-session-ai-panel"><header><div><p className="eyebrow">AI / EVIDENCE PARSER</p><h2>筛选结果 AI 分析与解析</h2></div><small>只分析当前真实筛选结果，不补造股票和字段</small></header>{aiLoading ? <div className="late-session-ai-loading" role="status" aria-busy="true"><RefreshCw className="spin" size={17} />正在解析当前筛选结果…</div> : aiError ? <div className="late-session-ai-error"><ShieldAlert size={16} />{aiError}</div> : aiAnalysis ? <div className="late-session-ai-content">
+      <div className={`late-session-ai-badge ${aiAnalysis.status}`}><b>{aiAnalysis.title}</b><span>{aiAnalysis.candidate_count} 只候选</span></div>
+      <div className="late-session-ai-overview"><span>候选总数<b>{snapshot.candidate_count}</b></span><span>严格通过<b>{snapshot.candidates.filter((candidate) => candidate.passed).length}</b></span><span>观察候选<b>{snapshot.candidates.filter((candidate) => !candidate.passed).length}</b></span><span>数据状态<b>{snapshot.data_state === "ready" ? "完整" : snapshot.data_state === "partial" ? "部分" : "待补"}</b></span></div>
+      <p className="late-session-ai-summary">{aiAnalysis.summary}</p>{aiAnalysis.reason && <p className="late-session-ai-reason"><b>原因：</b>{aiAnalysis.reason}</p>}
+      <div className="late-session-ai-columns"><div><b>重点解析</b><AnalysisList items={aiAnalysis.key_points} emptyText={`当前 ${snapshot.candidate_count} 只候选已完成规则核验，其中 ${snapshot.candidates.filter((candidate) => candidate.passed).length} 只严格通过、${snapshot.candidates.filter((candidate) => !candidate.passed).length} 只仍需观察。`} /></div><div><b>风险与数据边界</b><AnalysisList items={[...aiAnalysis.risk_points, ...aiAnalysis.data_gaps]} emptyText="当前没有新增风险或数据缺口。" /></div></div>
+    </div> : <div className="late-session-ai-loading">等待筛选结果解析</div>}</section>
     <section className="late-session-behaviors"><header><div><p className="eyebrow">BEHAVIOR GUIDE</p><h2>六类尾盘行为</h2></div><small>仅作观察与风险提示，不构成买卖建议</small></header><div className="late-session-behavior-grid">{snapshot.behaviors.map(item => <article key={item.key} data-level={item.level}><header><b>{item.title}</b><span>{item.level === "risk" ? "风险提示" : item.level === "observe" ? "观察" : "待核验"}</span></header><p>{item.description}</p><small>{item.evidence.join("；")}</small></article>)}</div></section>
     <section className="late-session-rule-grid">{snapshot.rules.map(rule => <article key={rule.key} data-status={rule.status}><header><b>{rule.label}</b><span>{statusLabel(rule.status)}</span></header><strong>{rule.actual ?? "—"}</strong><small>目标：{rule.target}</small><p>{rule.detail}</p></article>)}</section>
     {draft && <RuleEditor draft={draft} defaultSettings={snapshot.default_settings} onChange={updateDraft} onApply={applyRules} onReset={resetRules} applying={applying} />}

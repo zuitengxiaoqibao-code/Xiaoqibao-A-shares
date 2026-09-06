@@ -11,6 +11,7 @@ from qibao_api.contracts.news import (
     InterpretationStatement,
     NormalizedNewsEvent,
 )
+from qibao_api.gongbu.market_feed import MarketFeedSnapshot
 
 
 CHINA_TZ = timezone(timedelta(hours=8))
@@ -188,6 +189,37 @@ class News:
         ]
 
 
+def minute_snapshot(observed_at: datetime, price: str, snapshot_id: str) -> MarketFeedSnapshot:
+    return MarketFeedSnapshot(
+        symbol="600519",
+        price=Decimal(price),
+        change=Decimal("1.5"),
+        change_percent=Decimal("0.11"),
+        volume=Decimal("1200"),
+        source="tencent-realtime",
+        observed_at=observed_at,
+        fetched_at=observed_at + timedelta(seconds=1),
+        quality="ready",
+        source_snapshot_id=snapshot_id,
+    )
+
+
+class IntradaySnapshots:
+    def intraday_snapshots(self, symbol, trading_date, *, cutoff):
+        assert symbol == "600519"
+        assert trading_date == date(2026, 7, 28)
+        assert cutoff == CUTOFF
+        return (
+            minute_snapshot(datetime(2026, 7, 28, 10, 2, tzinfo=CHINA_TZ), "1432", "minute-2"),
+            minute_snapshot(datetime(2026, 7, 28, 9, 31, tzinfo=CHINA_TZ), "1430", "minute-1"),
+        )
+
+
+class TradingCalendar:
+    def is_trading_day(self, value):
+        return value.weekday() < 5
+
+
 def test_timeline_reuses_symbol_candidates_without_global_alert_scan() -> None:
     result = StockTimelineService(Bars(), News()).get(
         "600519", date(2026, 7, 28), CUTOFF
@@ -226,6 +258,121 @@ def test_timeline_uses_real_bars_and_only_verified_timestamped_stock_news() -> N
         "观察板块成交额、涨停扩散和龙头持续性",
     )
     assert result.sources == ("local-daily-bars", "verified-market-news")
+
+
+def test_timeline_includes_sorted_real_intraday_snapshots_for_selected_date() -> None:
+    result = StockTimelineService(
+        Bars(),
+        News(),
+        poll_state_repository=IntradaySnapshots(),
+        trading_calendar=TradingCalendar(),
+    ).get("600519", date(2026, 7, 28), CUTOFF)
+
+    assert result.intraday_status == "ready"
+    assert [item.source_snapshot_id for item in result.intraday_points] == [
+        "minute-1",
+        "minute-2",
+    ]
+    assert result.intraday_sources == ("tencent-realtime",)
+    assert result.intraday_warnings == ()
+    assert result.status == "ready"
+    assert result.bars
+
+
+class EmptyIntradaySnapshots:
+    def intraday_snapshots(self, symbol, trading_date, *, cutoff):
+        return ()
+
+
+class LiveIntradayFallback:
+    def snapshot_many(self, symbols, *, cutoff=None):
+        assert symbols == ("600519",)
+        return (minute_snapshot(
+            datetime(2026, 7, 28, 14, 59, tzinfo=CHINA_TZ), "1435", "live-minute"),)
+
+
+class HistoricalMinuteSource:
+    def fetch_stock_minutes(self, symbol, *, cutoff=None):
+        assert symbol == "600519"
+        assert cutoff == CUTOFF
+        return (
+            minute_snapshot(datetime(2026, 7, 28, 9, 30, tzinfo=CHINA_TZ), "1428", "tencent-minute-1"),
+            minute_snapshot(datetime(2026, 7, 28, 10, 2, tzinfo=CHINA_TZ), "1432", "tencent-minute-2"),
+        )
+
+
+def test_current_day_merges_real_minute_history_when_archive_has_only_one_point() -> None:
+    class OneArchivedSnapshot:
+        def intraday_snapshots(self, symbol, trading_date, *, cutoff):
+            return (minute_snapshot(
+                datetime(2026, 7, 28, 10, 2, tzinfo=CHINA_TZ), "1432", "archived-latest"),)
+
+    result = StockTimelineService(
+        Bars(),
+        News(),
+        poll_state_repository=OneArchivedSnapshot(),
+        trading_calendar=TradingCalendar(),
+        minute_source=HistoricalMinuteSource(),
+    ).get("600519", date(2026, 7, 28), CUTOFF)
+
+    assert result.intraday_status == "ready"
+    assert [item.observed_at for item in result.intraday_points] == [
+        datetime(2026, 7, 28, 9, 30, tzinfo=CHINA_TZ),
+        datetime(2026, 7, 28, 10, 2, tzinfo=CHINA_TZ),
+    ]
+    assert [item.source_snapshot_id for item in result.intraday_points] == [
+        "tencent-minute-1", "archived-latest",
+    ]
+    assert result.intraday_warnings == ()
+
+
+def test_missing_intraday_snapshots_do_not_remove_daily_timeline() -> None:
+    result = StockTimelineService(
+        Bars(),
+        News(),
+        poll_state_repository=EmptyIntradaySnapshots(),
+        trading_calendar=TradingCalendar(),
+    ).get("600519", date(2026, 7, 28), CUTOFF)
+
+    assert result.intraday_status == "unavailable"
+    assert result.intraday_points == ()
+    assert result.intraday_warnings == ("intraday_snapshots_unavailable",)
+    assert result.status == "ready"
+    assert result.bars
+
+
+def test_current_day_uses_real_live_snapshot_when_archive_is_empty() -> None:
+    result = StockTimelineService(
+        Bars(),
+        News(),
+        poll_state_repository=EmptyIntradaySnapshots(),
+        trading_calendar=TradingCalendar(),
+        live_feed=LiveIntradayFallback(),
+    ).get("600519", date(2026, 7, 28), CUTOFF)
+
+    assert result.intraday_status == "ready"
+    assert [item.source_snapshot_id for item in result.intraday_points] == ["live-minute"]
+    assert result.intraday_sources == ("tencent-realtime",)
+
+
+class FailedIntradaySnapshots:
+    def intraday_snapshots(self, symbol, trading_date, *, cutoff):
+        raise RuntimeError("intraday store unavailable")
+
+
+def test_intraday_read_failure_does_not_remove_daily_timeline() -> None:
+    result = StockTimelineService(
+        Bars(),
+        News(),
+        poll_state_repository=FailedIntradaySnapshots(),
+        trading_calendar=TradingCalendar(),
+    ).get("600519", date(2026, 7, 28), CUTOFF)
+
+    assert result.intraday_status == "unavailable"
+    assert result.intraday_points == ()
+    assert result.intraday_warnings == ("intraday_snapshot_read_failed",)
+    assert result.status == "ready"
+    assert result.bars
 
 
 class NoBars:

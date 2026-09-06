@@ -61,6 +61,8 @@ export type OverviewSector = {
   rising_count: number;
   falling_count: number;
   stock_count: number;
+  industry_system?: string;
+  shenwan_industry?: { code: string; name: string; level: "一级" | "二级" | "三级"; version: string } | null;
 };
 
 export type OverviewSectorStock = {
@@ -84,6 +86,9 @@ export type OverviewFeatureStock = {
   low: string;
   volume: string;
   amount_yi: string;
+  volume_ratio?: string | null;
+  turnover_rate?: string | null;
+  market_cap_yi?: string | null;
   change_percent: string;
   state: "limit_up" | "broken_limit_up" | "limit_down" | "active";
   observed_at: string;
@@ -269,6 +274,7 @@ export type OverviewSectorFundFlowPoint = {
   sector_code: string;
   sector_name: string;
   observed_at: string;
+  change_percent?: string | null;
   main_net_yi: string;
   large_net_yi: string | null;
   super_net_yi: string | null;
@@ -322,6 +328,7 @@ export type MarketOverviewResponse = {
   data_scope?: OverviewDataScope;
   indices: OverviewIndexQuote[];
   minute_series: OverviewMinutePoint[];
+  minute_series_by_index?: Record<string, OverviewMinutePoint[]>;
   anomalies: OverviewAnomaly[];
   live_feed: OverviewLiveFeedItem[];
   sectors: OverviewSector[];

@@ -8,8 +8,11 @@ import type { StockTimelineResponse } from "./types";
 
 
 const setOption = vi.fn();
-vi.mock("echarts", () => ({
-  init: vi.fn(() => ({ setOption, resize: vi.fn(), dispose: vi.fn() })),
+vi.mock("../quant-analysis/QuantChart", () => ({
+  QuantChart: ({ option, ariaLabel }: { option: unknown; ariaLabel: string }) => {
+    setOption(option);
+    return <div className="quant-chart" role="img" aria-label={ariaLabel} />;
+  },
 }));
 
 const alertMeta = {
@@ -259,5 +262,38 @@ describe("StockEventKline", () => {
 
     await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
     vi.unstubAllGlobals();
+  });
+
+  it("renders the intraday and thirty-day charts immediately after the event panel from one timeline load", async () => {
+    const value: StockTimelineResponse = {
+      ...timeline(),
+      intraday_status: "ready",
+      intraday_points: [{
+        symbol: "600519", price: "1430", change: "40", change_percent: "2.88",
+        volume: "160", source: "tencent-realtime",
+        observed_at: "2026-07-28T10:01:00+08:00", fetched_at: "2026-07-28T10:01:01+08:00",
+        quality: "ready", source_snapshot_id: "minute-1",
+      }],
+      intraday_sources: ["tencent-realtime"],
+      intraday_warnings: [],
+    };
+    const load = vi.fn().mockResolvedValue(value);
+    render(<StockEventKline symbol="600519" asOf="2026-07-28" load={load} showTimeframeCharts />);
+
+    const eventPanel = await screen.findByRole("region", { name: "个股新闻与热点事件 K 线" });
+    const timeframePanel = await screen.findByRole("region", { name: "个股分时与近三十日行情" });
+    expect(eventPanel.nextElementSibling).toBe(timeframePanel);
+    expect(screen.getByRole("heading", { name: "当日分时" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "近 30 交易日" })).toBeInTheDocument();
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the reusable event panel compact when the host does not request timeframe charts", async () => {
+    const load = vi.fn().mockResolvedValue(timeline());
+    render(<StockEventKline symbol="601988" asOf="2026-07-28" load={load} />);
+
+    expect(await screen.findByRole("heading", { name: "事件 K 线" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "当日分时" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "近 30 交易日" })).not.toBeInTheDocument();
   });
 });

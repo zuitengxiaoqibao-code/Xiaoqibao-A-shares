@@ -6,6 +6,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validato
 
 from qibao_api.contracts.field_evidence import FieldEvidence
 from qibao_api.contracts.market_review import MarketReviewSnapshot
+from qibao_api.contracts.industry import ShenwanIndustry
 
 
 OverviewQuality = Literal["ready", "partial", "stale", "unavailable"]
@@ -13,6 +14,7 @@ OverviewMarketPhase = Literal["premarket", "intraday", "postclose", "closed"]
 OverviewMarketFreshness = Literal[
     "live", "previous_close", "final", "stale", "unavailable", "unknown"
 ]
+OverviewIndustrySystem = Literal["申万", "待核验"]
 
 
 class OverviewSentiment(BaseModel):
@@ -196,6 +198,9 @@ class OverviewFeatureStock(BaseModel):
     low: Decimal = Field(gt=0)
     volume: Decimal = Field(ge=0)
     amount_yi: Decimal = Field(ge=0)
+    volume_ratio: Decimal | None = Field(default=None, ge=0)
+    turnover_rate: Decimal | None = Field(default=None, ge=0)
+    market_cap_yi: Decimal | None = Field(default=None, ge=0)
     change_percent: Decimal
     state: Literal["limit_up", "broken_limit_up", "limit_down", "active"]
     observed_at: AwareDatetime
@@ -224,11 +229,14 @@ class OverviewSectorFundFlowPoint(BaseModel):
     sector_code: str = Field(pattern=r"^BK\d{4}$")
     sector_name: str = Field(min_length=1)
     observed_at: AwareDatetime
+    change_percent: Decimal | None = None
     main_net_yi: Decimal
     large_net_yi: Decimal | None = None
     super_net_yi: Decimal | None = None
     source: str = Field(min_length=1)
     quality: OverviewQuality
+    industry_system: OverviewIndustrySystem = "待核验"
+    shenwan_industry: ShenwanIndustry | None = None
 
 
 class OverviewOfficialEvent(BaseModel):
@@ -256,6 +264,8 @@ class OverviewSector(BaseModel):
     rising_count: int = Field(default=0, ge=0)
     falling_count: int = Field(default=0, ge=0)
     stock_count: int = Field(default=0, ge=0)
+    industry_system: OverviewIndustrySystem = "待核验"
+    shenwan_industry: ShenwanIndustry | None = None
 
 
 class OverviewMarketDataStatus(BaseModel):
@@ -329,6 +339,7 @@ class MarketOverviewResponse(BaseModel):
     data_scope: OverviewDataScope = Field(default_factory=OverviewDataScope)
     indices: tuple[OverviewIndexQuote, ...] = ()
     minute_series: tuple[OverviewMinutePoint, ...] = ()
+    minute_series_by_index: dict[str, tuple[OverviewMinutePoint, ...]] = Field(default_factory=dict)
     anomalies: tuple[OverviewAnomaly, ...] = ()
     live_feed: tuple[OverviewLiveFeedItem, ...] = ()
     sectors: tuple[OverviewSector, ...] = ()

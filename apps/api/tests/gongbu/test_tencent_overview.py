@@ -4,6 +4,7 @@ from decimal import Decimal
 import pytest
 
 from qibao_api.gongbu.tencent_overview import (
+    TencentOverviewSource,
     parse_index_minutes,
     parse_index_quotes,
     parse_stock_quotes,
@@ -95,3 +96,99 @@ def test_parse_stock_quotes_extracts_market_fields() -> None:
     assert quotes[0].change_percent == Decimal("10.00")
     assert quotes[0].amount_yi == Decimal("12.6500")
     assert quotes[0].market_cap_yi == Decimal("106.02")
+
+
+class FakeResponse:
+    def __init__(self, content: bytes):
+        self.content = content
+
+    def raise_for_status(self):
+        return None
+
+
+class FakeClient:
+    def __init__(self, minute: bytes, quote: bytes):
+        self.responses = [FakeResponse(minute), FakeResponse(quote)]
+
+    def get(self, *_args, **_kwargs):
+        return self.responses.pop(0)
+
+
+class IndexedMinuteClient:
+    def __init__(self, payloads: dict[str, bytes]):
+        self.payloads = payloads
+        self.requested: list[str] = []
+
+    def get(self, *_args, **kwargs):
+        instrument = kwargs.get("params", {}).get("code")
+        self.requested.append(instrument)
+        return FakeResponse(self.payloads[instrument])
+
+
+def minute_payload(instrument: str, price: str) -> bytes:
+    return (
+        '{"code":0,"data":{"%s":{"data":{"date":"20260729",'
+        '"data":["0930 %s 10 1000"]}}}}'
+    ).encode("utf-8") % (instrument.encode(), price.encode())
+
+
+def test_fetch_minutes_by_index_keeps_independent_series() -> None:
+    client = IndexedMinuteClient({
+        "sh000001": minute_payload("sh000001", "3200.00"),
+        "sz399001": minute_payload("sz399001", "10000.00"),
+        "sz399006": minute_payload("sz399006", "2000.00"),
+    })
+    source = TencentOverviewSource(client)
+
+    series, warnings = source.fetch_minutes_by_index()
+
+    assert warnings == ()
+    assert client.requested == ["sh000001", "sz399001", "sz399006"]
+    assert set(series) == {"sh000001", "sz399001", "sz399006"}
+    assert [series[key][0].price for key in ("sh000001", "sz399001", "sz399006")] == [
+        Decimal("3200.00"), Decimal("10000.00"), Decimal("2000.00"),
+    ]
+
+
+def test_fetch_minutes_by_index_reports_only_failed_index() -> None:
+    class FailingIndexedMinuteClient(IndexedMinuteClient):
+        def get(self, *_args, **kwargs):
+            instrument = kwargs.get("params", {}).get("code")
+            self.requested.append(instrument)
+            if instrument == "sz399001":
+                raise OSError("offline")
+            return FakeResponse(self.payloads[instrument])
+
+    client = FailingIndexedMinuteClient({
+        "sh000001": minute_payload("sh000001", "3200.00"),
+        "sz399001": minute_payload("sz399001", "10000.00"),
+        "sz399006": minute_payload("sz399006", "2000.00"),
+    })
+    source = TencentOverviewSource(client)
+
+    series, warnings = source.fetch_minutes_by_index()
+
+    assert series["sh000001"] and series["sz399006"]
+    assert series["sz399001"] == ()
+    assert "minute_series_unavailable:sz399001" in warnings
+
+
+def test_fetch_stock_minutes_builds_real_points_and_drops_post_close_rows() -> None:
+    minute = b'''{"code":0,"data":{"sh600519":{"data":{"date":"20260729","data":["0930 100.00 10 1000","1500 101.00 20 2020","1530 101.00 20 2020"]}}}}'''
+    fields = [""] * 50
+    fields[1] = "测试股"
+    fields[2] = "600519"
+    fields[3] = "101.00"
+    fields[4] = "99.00"
+    fields[30] = "20260729150000"
+    quote = f'v_sh600519="{"~".join(fields)}";'.encode("gbk")
+
+    source = TencentOverviewSource(FakeClient(minute, quote))
+    points = source.fetch_stock_minutes(
+        "600519", cutoff=datetime.fromisoformat("2026-07-29T16:00:00+08:00")
+    )
+
+    assert len(points) == 2
+    assert points[-1].observed_at.isoformat() == "2026-07-29T15:00:00+08:00"
+    assert points[-1].change == Decimal("2.00")
+    assert points[-1].change_percent == Decimal("2.020202020202020202020202020")

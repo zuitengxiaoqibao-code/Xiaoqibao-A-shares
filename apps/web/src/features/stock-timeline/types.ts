@@ -47,6 +47,23 @@ export type StockTimelineResponse = {
   events: StockTimelineEvent[];
   sources: string[];
   warnings: string[];
+  intraday_status?: "ready" | "waiting" | "unavailable";
+  intraday_points?: StockTimelineMinutePoint[];
+  intraday_sources?: string[];
+  intraday_warnings?: string[];
+};
+
+export type StockTimelineMinutePoint = {
+  symbol: string;
+  price: string;
+  change: string;
+  change_percent: string;
+  volume: string;
+  source: string;
+  observed_at: string;
+  fetched_at: string;
+  quality: "ready" | "partial" | "blocked";
+  source_snapshot_id: string;
 };
 
 export type StockTimelineLoader = (

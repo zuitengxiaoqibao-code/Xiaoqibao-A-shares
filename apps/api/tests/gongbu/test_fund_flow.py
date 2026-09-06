@@ -6,9 +6,11 @@ from decimal import Decimal
 import httpx
 import pytest
 
+import qibao_api.gongbu.fund_flow as fund_flow_module
 from qibao_api.gongbu.fund_flow import (
     EASTMONEY_FUND_FLOW_DAILY_URL,
     EASTMONEY_FUND_FLOW_DAILY_FALLBACK_URL,
+    EASTMONEY_FUND_FLOW_DAILY_HTTP_URL,
     EASTMONEY_FUND_FLOW_MINUTE_URL,
     EastmoneyFundFlowSource,
     FundFlowHttpResponse,
@@ -97,6 +99,8 @@ async def test_source_fetches_daily_and_minute_fund_flow_serially() -> None:
     assert snapshot.main_net_5d == Decimal("9000000000")
     assert snapshot.main_net_20d == Decimal("21000000000")
     assert snapshot.intraday_main_net == Decimal("75000000")
+    assert snapshot.intraday_large_net == Decimal("27000000")
+    assert snapshot.intraday_super_net == Decimal("36000000")
     assert snapshot.daily_sample_count == 20
     assert snapshot.intraday_sample_count == 2
     assert snapshot.flow_direction == "inflow"
@@ -164,6 +168,8 @@ async def test_source_records_minute_failure_while_preserving_daily_snapshot() -
     ).fetch("600519")
 
     assert snapshot.intraday_main_net is None
+    assert snapshot.intraday_large_net is None
+    assert snapshot.intraday_super_net is None
     assert [(item.operation, item.status, item.error_code) for item in events] == [
         ("daily", "ready", None),
         ("minute", "error", "OSError"),
@@ -247,6 +253,96 @@ async def test_source_uses_daily_fallback_after_transport_disconnect() -> None:
         EASTMONEY_FUND_FLOW_DAILY_URL,
         EASTMONEY_FUND_FLOW_DAILY_URL,
         EASTMONEY_FUND_FLOW_DAILY_FALLBACK_URL,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_source_falls_back_to_http_daily_and_remembers_working_transport() -> None:
+    daily_calls = []
+    http_headers = []
+
+    async def transport(url, params, headers):
+        if params.get("klt") == "1":
+            raise OSError("minute unavailable")
+        daily_calls.append(url)
+        if url == EASTMONEY_FUND_FLOW_DAILY_HTTP_URL:
+            http_headers.append(headers)
+            return response(daily_payload())
+        raise OSError("tls disconnected")
+
+    source = EastmoneyFundFlowSource(
+        transport=transport,
+        clock=lambda: OBSERVED,
+        minimum_interval=0,
+    )
+
+    first = await source.fetch("600519")
+    second = await source.fetch("600519")
+
+    assert first.latest_main_net == Decimal("2000000000")
+    assert second.latest_main_net == Decimal("2000000000")
+    assert first.daily_endpoint == "push2his-http/stock/fflow/daykline"
+    assert http_headers[0]["Referer"] == "http://quote.eastmoney.com/"
+    assert "Origin" not in http_headers[0]
+    assert daily_calls == [
+        EASTMONEY_FUND_FLOW_DAILY_URL,
+        EASTMONEY_FUND_FLOW_DAILY_URL,
+        EASTMONEY_FUND_FLOW_DAILY_FALLBACK_URL,
+        EASTMONEY_FUND_FLOW_DAILY_FALLBACK_URL,
+        EASTMONEY_FUND_FLOW_DAILY_HTTP_URL,
+        EASTMONEY_FUND_FLOW_DAILY_HTTP_URL,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_http_fallback_uses_an_isolated_client_after_tls_disconnect(
+    monkeypatch,
+) -> None:
+    isolated_calls = []
+
+    class SharedClient:
+        async def get(self, url, *, params, headers):
+            if params.get("klt") == "1":
+                return httpx.Response(
+                    200,
+                    content=response(minute_payload()).body,
+                    request=httpx.Request("GET", url),
+                )
+            if url.startswith("http://"):
+                raise AssertionError("HTTP fallback reused the failed TLS client")
+            raise httpx.ReadError(
+                "tls disconnected", request=httpx.Request("GET", url)
+            )
+
+    class IsolatedClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def get(self, url, *, params, headers):
+            isolated_calls.append((url, headers))
+            return httpx.Response(
+                200,
+                content=response(daily_payload()).body,
+                request=httpx.Request("GET", url),
+            )
+
+    monkeypatch.setattr(
+        fund_flow_module.httpx,
+        "AsyncClient",
+        lambda **_kwargs: IsolatedClient(),
+    )
+
+    snapshot = await EastmoneyFundFlowSource(
+        client=SharedClient(),
+        minimum_interval=0,
+    ).fetch("600519")
+
+    assert snapshot.daily_endpoint == "push2his-http/stock/fflow/daykline"
+    assert [call[0] for call in isolated_calls] == [
+        EASTMONEY_FUND_FLOW_DAILY_HTTP_URL
     ]
 
 

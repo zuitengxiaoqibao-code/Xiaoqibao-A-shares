@@ -126,6 +126,15 @@ describe("StockSelector", () => {
     expect(tabs[0]).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", "stock-selector-tab-watchlist");
     expect(screen.getByText("暂无自选股")).toBeInTheDocument();
+    expect(screen.getByText("自选股 0 只")).toBeInTheDocument();
+  });
+
+  it("labels the watchlist action clearly instead of exposing an icon alone", async () => {
+    renderSelector();
+    openShortTermCandidates();
+
+    const add = await screen.findByRole("button", { name: "将 600000 加入自选" });
+    expect(add).toHaveTextContent("加入自选");
   });
 
   it("shows today's loaded stocks and opens a cached stock again", async () => {

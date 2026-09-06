@@ -2,7 +2,9 @@ from datetime import date, datetime
 from typing import Annotated
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+import asyncio
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from qibao_api.contracts.first_limit_up import FirstLimitUpBoard
 from qibao_api.contracts.kronos_forecast import KronosForecastResponse
@@ -60,12 +62,35 @@ def current(
 
 @router.post("/refresh", response_model=FirstLimitUpBoard)
 async def refresh(
+    request: Request,
     service: Annotated[object, Depends(get_first_limit_up_service)],
     server_time: Annotated[datetime, Depends(get_server_time)],
     as_of: date | None = Query(default=None),
 ) -> FirstLimitUpBoard:
+    selected_date = _research_date(as_of, server_time)
+    tasks = getattr(request.app.state, "first_limit_up_refresh_tasks", None)
+    if tasks is None:
+        tasks = {}
+        request.app.state.first_limit_up_refresh_tasks = tasks
+    existing = tasks.get(selected_date)
+    if existing is None or existing.done():
+        async def run_refresh() -> FirstLimitUpBoard:
+            return await service.refresh(selected_date)
+
+        existing = asyncio.create_task(run_refresh(), name=f"first-limit-up-refresh-{selected_date}")
+        tasks[selected_date] = existing
+        existing.add_done_callback(lambda completed: tasks.pop(selected_date, None))
+    # Give a fast local implementation a scheduling turn so callers receive
+    # the refreshed result in tests and on warm caches; a full-market scan is
+    # intentionally allowed to continue after the short response budget.
     try:
-        return await service.refresh(_research_date(as_of, server_time))
+        await asyncio.wait_for(asyncio.shield(existing), timeout=0.25)
+        return existing.result()
+    except asyncio.TimeoutError:
+        try:
+            return service.current(selected_date)
+        except (SourceAuthorizationError, OSError, ValueError) as error:
+            raise _unavailable(error) from error
     except (SourceAuthorizationError, OSError, ValueError) as error:
         raise _unavailable(error) from error
 

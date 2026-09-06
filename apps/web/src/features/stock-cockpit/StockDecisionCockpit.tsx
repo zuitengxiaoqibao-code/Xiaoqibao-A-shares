@@ -5,7 +5,7 @@ import { useSelectedInstrument } from "../instrument-selection/SelectedInstrumen
 import { friendlyError } from "../../shared/friendlyError";
 import { isAutoSyncEnabled } from "../data-settings/syncPolicy";
 import type { Advice } from "../decision-workbench/types";
-import type { AssessmentAIExplanation, AssessmentAIStatus, StockCockpitSnapshot, StockPreparation } from "./types";
+import type { AssessmentAIExplanation, AssessmentAIStatus, StockCockpitSnapshot, StockPreparation, StockQuotePulse } from "./types";
 import { CockpitSections } from "./CockpitSections";
 import { KeySignalDashboard } from "./KeySignalDashboard";
 import { PhaseTimeline } from "./PhaseTimeline";
@@ -22,10 +22,11 @@ import { DailyRefreshStatus } from "../../shared/DailyRefreshStatus";
 import { readDailySnapshot, writeDailySnapshot, type DailySnapshotHit } from "../../shared/dailySnapshotCache";
 import type { LoadProgress, LoadProgressCallback } from "../../shared/fetchJsonWithProgress";
 import { FieldEvidenceDetails } from "../../shared/evidence/FieldEvidenceDetails";
+import { useRealtimeState, useRealtimeSubscription } from "../../shared/realtime/RealtimeProvider";
 
 type Loader = (symbol: string, asOf?: string, signal?: AbortSignal, onProgress?: LoadProgressCallback) => Promise<StockCockpitSnapshot>;
 type Preparer = (symbol: string, signal?: AbortSignal) => Promise<import("./types").StockPreparation>;
-type Props = { load: Loader; loadAI?: Loader; prepare?: Preparer; loadTimeline?: StockTimelineLoader; loadAlerts?: BreakingNewsAlertLoader; asOf?: string; refreshToken?: number; onRefreshRequest?: () => void; onSnapshot?: (snapshot: StockCockpitSnapshot) => void; candidateSentiment?: CandidateSentimentSnapshot | null; loadMarketSentiment?: () => Promise<MarketSentimentResponse>; onOpenCompanyResearch?: (symbol: string) => void };
+type Props = { load: Loader; loadAI?: Loader; loadQuotePulse?: (symbol: string, signal?: AbortSignal) => Promise<StockQuotePulse>; prepare?: Preparer; loadTimeline?: StockTimelineLoader; loadAlerts?: BreakingNewsAlertLoader; asOf?: string; refreshToken?: number; onRefreshRequest?: () => void; onSnapshot?: (snapshot: StockCockpitSnapshot) => void; candidateSentiment?: CandidateSentimentSnapshot | null; loadMarketSentiment?: () => Promise<MarketSentimentResponse>; onOpenCompanyResearch?: (symbol: string) => void };
 
 const qualityNames = { ready: "数据完整", partial: "部分可用", blocked: "数据已拦截" } as const;
 const sectionQualityNames = { ready: "行情有效", partial: "行情部分可用", stale: "行情陈旧", unavailable: "行情不可用", blocked: "行情已拦截" } as const;
@@ -266,8 +267,10 @@ function PreparationStatus({ data, preparing = false }: { data: StockCockpitSnap
   return <section className={`preparation-status ${preparation.status}`} aria-label="数据准备状态"><div><Database size={17} /><span><b>{title}</b><small>{detail}</small></span></div><div className="preparation-sources">{preparation.sources.map((source) => <span className={source.status} key={source.name}>{names[source.name]}<b>{source.status === "ready" ? "可用" : "待补齐"}</b></span>)}</div><small>{ready}/{preparation.sources.length} 类核心数据可用</small></section>;
 }
 
-export function StockDecisionCockpit({ load, loadAI, prepare, loadTimeline, loadAlerts, asOf, refreshToken = 0, onRefreshRequest, onSnapshot, candidateSentiment, loadMarketSentiment, onOpenCompanyResearch }: Props) {
+export function StockDecisionCockpit({ load, loadAI, loadQuotePulse, prepare, loadTimeline, loadAlerts, asOf, refreshToken = 0, onRefreshRequest, onSnapshot, candidateSentiment, loadMarketSentiment, onOpenCompanyResearch }: Props) {
   const { symbol, source } = useSelectedInstrument();
+  const realtimeState = useRealtimeState();
+  const [quotePulse, setQuotePulse] = useState<StockQuotePulse | null>(null);
   const alertState = useBreakingNewsAlerts(loadAlerts, symbol, 3);
   const [data, setData] = useState<StockCockpitSnapshot | null>(null);
   const [loading, setLoading] = useState(false);
@@ -379,6 +382,34 @@ export function StockDecisionCockpit({ load, loadAI, prepare, loadTimeline, load
   }, [asOf, cacheScope, contextKey, symbol]);
   refreshRef.current = refresh;
 
+  useRealtimeSubscription<{ quotes?: Record<string, StockQuotePulse> }>("stock_quotes", (event) => {
+    if (!symbol) return;
+    const next = event.payload?.quotes?.[symbol];
+    if (next) setQuotePulse(next);
+  });
+
+  useEffect(() => {
+    if (!symbol || asOf || !loadQuotePulse) {
+      setQuotePulse(null);
+      return undefined;
+    }
+    let active = true;
+    const controller = new AbortController();
+    const readPulse = async () => {
+      try {
+        const next = await loadQuotePulse(symbol, controller.signal);
+        if (active && !controller.signal.aborted) setQuotePulse(next);
+      } catch {
+        // The full cockpit remains visible when the lightweight pulse is unavailable.
+      }
+    };
+    void readPulse();
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible" && realtimeState !== "connected") void readPulse();
+    }, 3_000);
+    return () => { active = false; controller.abort(); window.clearInterval(timer); };
+  }, [asOf, loadQuotePulse, realtimeState, symbol]);
+
   useEffect(() => {
     if (!symbol) { generation.current += 1; controller.current?.abort(); setData(null); loadedContext.current = null; preparedContext.current = null; hasData.current = false; setError(""); setStale(false); setCachedAt(null); setUpdatedAt(null); setLoadProgress(null); return; }
     if (loadedContext.current !== contextKey) {
@@ -414,19 +445,20 @@ export function StockDecisionCockpit({ load, loadAI, prepare, loadTimeline, load
   if (!data && loading) return <main className="terminal-page stock-cockpit cockpit-loading" aria-busy="true"><RefreshCw size={22} /><h1>正在组装单股决策底稿</h1><p>{symbol}</p><DailyRefreshStatus label="个股观察" loading progress={loadProgress} /></main>;
   if (!data) return <main className="terminal-page stock-cockpit cockpit-loading"><AlertTriangle size={22} /><h1>驾驶舱暂不可用</h1><p role="alert">{error}</p><button type="button" onClick={() => void refresh()}>重试</button></main>;
 
-  const change = numericOrNull(metric(data, "change_percent"));
+  const change = numericOrNull(quotePulse?.change_percent ?? metric(data, "change_percent"));
   const positive = change !== null && change >= 0;
+  const latestPrice = quotePulse?.price ?? metric(data, "latest_price");
   const fallbackPreparationPartial = !data.preparation && ["market", "trend", "fundamentals", "news", "industry", "funds"]
     .some((section) => data.sections[section]?.status !== "ready");
   const preparationIncomplete = preparing || data.preparation?.status === "partial" || fallbackPreparationPartial;
   return <main className="terminal-page stock-cockpit">
-    <header className="cockpit-identity"><div><p className="eyebrow">个股观察 / {data.instrument.exchange.toUpperCase()}</p><h1>{data.instrument.name} <span>{data.symbol}</span></h1><div className="cockpit-quote"><strong>{displayNumber(metric(data, "latest_price"))}</strong><span className={change === null ? undefined : positive ? "positive" : "negative"}>{change !== null ? positive ? <TrendingUp size={15} /> : <TrendingDown size={15} /> : null}{displayPercent(metric(data, "change_percent"))}</span></div></div>
+    <header className="cockpit-identity"><div><p className="eyebrow">个股观察 / {data.instrument.exchange.toUpperCase()}</p><h1>{data.instrument.name} <span>{data.symbol}</span></h1><div className="cockpit-quote"><strong>{displayNumber(latestPrice)}</strong><span className={change === null ? undefined : positive ? "positive" : "negative"}>{change !== null ? positive ? <TrendingUp size={15} /> : <TrendingDown size={15} /> : null}{displayPercent(change)}</span>{quotePulse && <small className={`quote-pulse-state ${quotePulse.status}`}>{quotePulse.status === "ready" ? "秒级行情" : quotePulse.status === "stale" ? "行情陈旧" : "行情待接入"}</small>}</div></div>
       <div className="cockpit-tools">
-        <div className={`cockpit-quality quality-${data.overall_quality}`}>{onOpenCompanyResearch && <button className="company-research-jump" type="button" aria-label="进入公司研究" onClick={() => onOpenCompanyResearch(data.symbol)}><Building2 size={17} /><span>进入公司研究</span><small>同一只股票 · 一键切换</small></button>}<div><Clock3 size={15} /><span>行情时间</span><b>{data.sections.market?.observed_at ? new Date(data.sections.market.observed_at).toLocaleString("zh-CN", { hour12: false }) : "未提供"}</b></div><div className={`market-${data.sections.market?.status ?? "unavailable"}`}><span>快照质量</span><b>{qualityNames[data.overall_quality]}</b><small>{data.sections.market ? sectionQualityNames[data.sections.market.status] : "行情不可用"}</small>{loading && <small className="cockpit-refreshing">后台更新中</small>}</div><button type="button" aria-label="刷新驾驶舱" onClick={() => onRefreshRequest ? onRefreshRequest() : void refresh()} disabled={loading}><RefreshCw size={15} className={loading ? "spin" : ""} /></button></div>
+        <div className={`cockpit-quality quality-${data.overall_quality}`}>{onOpenCompanyResearch && <button className="company-research-jump" type="button" aria-label="进入公司研究" onClick={() => onOpenCompanyResearch(data.symbol)}><Building2 size={17} /><span>进入公司研究</span><small>同一只股票 · 一键切换</small></button>}<div><Clock3 size={15} /><span>行情时间</span><b>{(quotePulse?.observed_at ?? data.sections.market?.observed_at) ? new Date(quotePulse?.observed_at ?? data.sections.market!.observed_at!).toLocaleString("zh-CN", { hour12: false }) : "未提供"}</b></div><div className={`market-${quotePulse?.status ?? data.sections.market?.status ?? "unavailable"}`}><span>快照质量</span><b>{quotePulse ? quotePulse.status === "ready" ? "秒级行情" : quotePulse.status === "stale" ? "行情陈旧" : "行情不可用" : qualityNames[data.overall_quality]}</b><small>{quotePulse?.reason ?? (data.sections.market ? sectionQualityNames[data.sections.market.status] : "行情不可用")}</small>{loading && <small className="cockpit-refreshing">后台更新中</small>}</div><button type="button" aria-label="刷新驾驶舱" onClick={() => onRefreshRequest ? onRefreshRequest() : void refresh()} disabled={loading}><RefreshCw size={15} className={loading ? "spin" : ""} /></button></div>
       </div>
     </header>
     <DailyRefreshStatus label="个股观察" cachedAt={cachedAt} loading={loading} completion={preparationIncomplete ? "partial" : "live"} progress={loadProgress} error={data ? error : null} updatedAt={updatedAt} />
-    {error && <div className="cockpit-error" role="alert"><AlertTriangle size={16} /><span>{error}</span>{stale && <b>当前内容已陈旧</b>}</div>}
+    {error && !stale && <div className="cockpit-error" role="alert"><AlertTriangle size={16} /><span>{error}</span></div>}
     <PreparationStatus data={data} preparing={preparing} />
     {!!data.field_evidence?.length && <FieldEvidenceDetails entries={data.field_evidence} />}
     {loadAlerts && <BreakingNewsStrip {...alertState} />}
@@ -434,6 +466,7 @@ export function StockDecisionCockpit({ load, loadAI, prepare, loadTimeline, load
       symbol={data.symbol}
       asOf={asOf}
       refreshToken={data.sections.news?.snapshot_id ?? refreshToken}
+      showTimeframeCharts
       load={loadTimeline}
     />}
     <EvidenceDecisionSummary data={data} candidateSentiment={candidateSentiment?.symbol === data.symbol ? candidateSentiment : null} />

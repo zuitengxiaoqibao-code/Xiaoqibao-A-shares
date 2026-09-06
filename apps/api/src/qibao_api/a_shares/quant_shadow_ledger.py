@@ -43,10 +43,12 @@ class QuantShadowLedgerStore:
         database_path: Path,
         *,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        bar_repository=None,
     ) -> None:
         self.database_path = database_path
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self.clock = clock
+        self.bar_repository = bar_repository
         self._create_schema()
 
     def _connect(self) -> sqlite3.Connection:
@@ -364,6 +366,7 @@ class QuantShadowLedgerStore:
     ) -> QuantShadowAnalytics:
         if horizon not in HORIZONS:
             raise ValueError(f"horizon must be one of {HORIZONS}")
+        self._refresh_pending_outcomes(horizon)
         if decision_source is not None and decision_source not in {
             "quant_strategy", "opportunity_scan", "ai_hypothesis", "manual_watch",
         }:
@@ -451,6 +454,22 @@ class QuantShadowLedgerStore:
             generated_at=self.clock(),
             limitations=tuple(limitations),
         )
+
+    def _refresh_pending_outcomes(self, horizon: int) -> None:
+        if self.bar_repository is None:
+            return
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT d.decision_id, d.symbol
+                   FROM quant_shadow_decisions AS d
+                   JOIN quant_shadow_outcomes AS o ON o.decision_id = d.decision_id
+                   WHERE o.horizon = ? AND o.status = 'pending'
+                   ORDER BY d.as_of, d.symbol""",
+                (horizon,),
+            ).fetchall()
+        for row in rows:
+            bars = self.bar_repository.latest(row["symbol"], 2000)
+            self.evaluate(row["decision_id"], bars)
 
 
 def _decision_id(as_of: date, symbol: str, formula_version: str) -> str:

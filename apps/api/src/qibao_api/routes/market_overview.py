@@ -13,6 +13,7 @@ from qibao_api.dependencies import (
     get_market_overview_service,
     get_realtime_snapshot_bus,
     get_server_time,
+    run_latency_critical_read,
 )
 
 
@@ -23,12 +24,13 @@ router = APIRouter(
 
 
 @router.get("", response_model=MarketOverviewResponse)
-def current_market_overview(
+async def current_market_overview(
+    request: Request,
     service: Annotated[object, Depends(get_market_overview_service)],
     now: Annotated[datetime, Depends(get_server_time)],
 ) -> MarketOverviewResponse:
     try:
-        return service.current(now)
+        return await run_latency_critical_read(request, service.current, now)
     except (OSError, ValueError) as error:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

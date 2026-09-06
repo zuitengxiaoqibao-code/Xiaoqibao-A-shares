@@ -16,6 +16,8 @@ import type {
   TdxDirectoriesView,
   DataImportPreview,
   DataImportTask,
+  ExternalDataSourceResponse,
+  ExternalDataSourceView,
 } from "./types";
 import { apiClient } from "../../shared/apiClient";
 
@@ -28,6 +30,20 @@ export const saveAISettings = (input: AISettingsInput, signal?: AbortSignal) => 
   method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input), signal,
 });
 export const deleteAISettings = (signal?: AbortSignal) => settingsRequest("/api/v1/settings/ai", { method: "DELETE", signal });
+
+export const loadExternalDataSources = (signal?: AbortSignal) => apiClient.get<ExternalDataSourceResponse>(
+  "/api/v1/settings/external-data-sources", { signal, context: "备用数据源设置" },
+);
+export const saveExternalDataSource = (sourceId: string, apiKey: string, enabled = true, signal?: AbortSignal) => apiClient.request<ExternalDataSourceView>(
+  `/api/v1/settings/external-data-sources/${encodeURIComponent(sourceId)}`,
+  { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ api_key: apiKey, enabled }), signal, context: "备用数据源设置" },
+).then((response) => response.data);
+export const clearExternalDataSource = (sourceId: string, signal?: AbortSignal) => apiClient.request<ExternalDataSourceView>(
+  `/api/v1/settings/external-data-sources/${encodeURIComponent(sourceId)}`, { method: "DELETE", signal, context: "备用数据源设置" },
+).then((response) => response.data);
+export const testExternalDataSource = (sourceId: string, signal?: AbortSignal) => apiClient.request<ExternalDataSourceView>(
+  `/api/v1/settings/external-data-sources/${encodeURIComponent(sourceId)}/test`, { method: "POST", signal, context: "备用数据源连接测试" },
+).then((response) => response.data);
 
 async function localSourceRequest(
   path: string,

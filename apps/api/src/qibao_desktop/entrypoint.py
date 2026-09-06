@@ -43,6 +43,19 @@ def _defer_pending_update(manifest: Path) -> Path | None:
     return deferred
 
 
+def _restore_deferred_pending_update(root: Path) -> Path | None:
+    """Requeue a deferred update so a later launch can apply it."""
+    manifest = root / "pending-update.json"
+    deferred = root / "pending-update.deferred.json"
+    if manifest.exists() or not deferred.is_file():
+        return manifest if manifest.is_file() else None
+    try:
+        os.replace(deferred, manifest)
+    except OSError:
+        return None
+    return manifest
+
+
 def _launch_release(root: Path) -> bool:
     executable = root / "xiaoqibao.exe"
     if not executable.is_file():
@@ -203,6 +216,7 @@ def _run_update_helper(manifest: Path, parent_pid: int | None) -> int:
             return 3
         update.apply()
         manifest.unlink(missing_ok=True)
+        manifest.with_name("pending-update.deferred.json").unlink(missing_ok=True)
         _launch_release(update.target_root)
         return 0
     except Exception as error:
@@ -222,7 +236,9 @@ def update_dist_root(manifest: Path) -> Path:
 
 def _handoff_pending_update(portable_root: Path | None) -> bool:
     layout = desktop_layout(portable_root)
-    manifest = layout.root / "pending-update.json"
+    manifest = _restore_deferred_pending_update(layout.root)
+    if manifest is None:
+        manifest = layout.root / "pending-update.json"
     if not manifest.is_file():
         return False
     try:

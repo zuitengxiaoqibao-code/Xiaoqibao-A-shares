@@ -23,7 +23,7 @@ const newsTruth = "只展示已写入本地新闻库且已关联 A 股代码的�
 const historyTruth = "只有本地日线窗口完整时才给出历史结论，覆盖不足时保持未验证。";
 const seatTruth = "只采用东方财富公开龙虎榜的上榜日期、席位名称和买卖金额；缺失时不使用成交额替代。";
 const orderTruth = "当前接口没有逐笔委托队列，开盘缺口不能解释为真实隔夜单或封单金额。";
-const flowTruth = "当前接口未提供真实大单净流入，成交额只表示活跃度，不能解释为主力方向。";
+const flowTruth = "后台按高成交活跃股票分批采集真实大单与超大单净额；净额可判断样本方向，但不能反推出买入总额和卖出总额。";
 
 const b = (kind: WorkspaceBlock["kind"], title: string, variant: string, size: WorkspaceBlock["size"] = "half"): WorkspaceBlock => ({ kind, title, variant, size });
 
@@ -149,7 +149,7 @@ export const WORKSPACE_DEFINITIONS: WorkspaceDefinition[] = [
   define("个股详情", "资讯与研究", "stock-dossier", "所选股票当前量价、状态、题材和新闻证据是什么？", "先核对代码和时间，再看价格状态与关联资讯；代表列表不是完整股票目录。", `${quoteTruth}${newsTruth}`, ["realtime-quotes", "local-news"], [
     b("stock-inspector", "个股实时档案", "ohlc", "wide"), b("evidence-map", "个股证据链", "stock-news", "half"), b("risk-board", "个股状态提醒", "stock-risk", "half"),
   ]),
-  define("主力大单监控", "资金与席位", "large-order-audit", "是否获得逐笔大单方向和真实净流入字段？", "大单净流入缺失时只展示数据审计，不能把高成交额称为主力买入。", flowTruth, ["large-order-flow"], [
+  define("主力大单监控", "资金与席位", "large-order-audit", "是否获得真实大单与超大单净流入字段？", "净流入缺失时只展示数据审计；净额不能反推出买入总额和卖出总额。", flowTruth, ["large-order-flow"], [
     b("capital-audit", "主力大单字段审计", "large-order", "wide"), b("data-audit", "主力结论禁区", "no-proxy", "wide"),
   ]),
   define("问财选股", "资讯与研究", "local-rule-composer", "本地可复核规则筛出了哪些股票，和问财官方接口有何区别？", "这里是本地规则筛选器；每个条件都可见，不冒充问财官方语义结果。", `${quoteTruth}当前没有调用问财官方语义接口。`, ["realtime-quotes"], [

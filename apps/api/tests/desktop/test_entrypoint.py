@@ -248,6 +248,7 @@ def test_update_helper_waits_for_residual_release_processes_before_replacing(
 ) -> None:
     manifest = tmp_path / "pending-update.json"
     manifest.write_text("{}", encoding="utf-8")
+    (tmp_path / "pending-update.deferred.json").write_text("old", encoding="utf-8")
     target_root = tmp_path / "XiaoQiBao-Portable"
     target_root.mkdir()
     applied = []
@@ -274,6 +275,7 @@ def test_update_helper_waits_for_residual_release_processes_before_replacing(
 
     assert entrypoint._run_update_helper(manifest, parent_pid=42) == 0
     assert applied == [True]
+    assert not (tmp_path / "pending-update.deferred.json").exists()
 
 
 def test_update_helper_defers_manifest_and_logs_chinese_error_on_failure(
@@ -358,6 +360,41 @@ def test_handoff_keeps_current_startup_when_pending_manifest_is_invalid(
 
     assert manifest.exists()
     assert "待更新清单无效" in caplog.text
+
+
+def test_handoff_retries_deferred_update_on_next_launch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    deferred = tmp_path / "pending-update.deferred.json"
+    deferred.write_text("{}", encoding="utf-8")
+    staged = tmp_path / "staged" / "XiaoQiBao-Portable"
+    staged.mkdir(parents=True)
+    (staged / "xiaoqibao.exe").write_bytes(b"stub")
+    target = tmp_path / "XiaoQiBao-Portable"
+    target.mkdir()
+    manifest_payload = {
+        "version": "v2",
+        "staged_root": str(staged),
+        "target_root": str(target),
+        "created_at": "2026-09-01T00:00:00+00:00",
+    }
+    deferred.write_text(json.dumps(manifest_payload), encoding="utf-8")
+    launched = []
+
+    class Layout:
+        root = tmp_path
+
+    monkeypatch.setattr(entrypoint, "desktop_layout", lambda _root: Layout())
+    monkeypatch.setattr(
+        entrypoint.subprocess,
+        "Popen",
+        lambda args, **kwargs: launched.append((args, kwargs)),
+    )
+
+    assert entrypoint._handoff_pending_update(tmp_path) is True
+    assert (tmp_path / "pending-update.json").exists()
+    assert not deferred.exists()
+    assert launched and "--apply-pending-update" in launched[0][0]
 
 
 def test_release_process_scan_decodes_utf8_windows_paths(

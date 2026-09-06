@@ -3,8 +3,9 @@ from datetime import datetime, timezone
 
 import httpx
 
-from qibao_api.a_shares.company_research_ai import CompanyResearchAIGateway
+from qibao_api.a_shares.company_research_ai import CompanyResearchAIGateway, ReloadableCompanyResearchAIGateway
 from qibao_api.contracts.company_research import CompanyResearchAIRequest, CompanyResearchAIEvidence
+from qibao_api.settings_repository import AISettings, AISettingsRepository, EffectiveAISettingsResolver
 
 
 NOW = datetime(2026, 8, 12, 15, tzinfo=timezone.utc)
@@ -76,3 +77,22 @@ def test_company_research_ai_exposes_rate_limit_without_hiding_frozen_research()
     assert result.status == "http_error"
     assert result.ai_state == "rate_limited"
     assert result.ai_message == "AI 接口触发限流，稍后将自动重试"
+
+
+def test_company_research_gateway_uses_long_read_timeout_for_real_model_latency(tmp_path) -> None:
+    repository = AISettingsRepository(tmp_path)
+    repository.save(AISettings(
+        base_url="https://provider.example/v1",
+        model="model-first",
+        api_key="top-secret",
+    ))
+    client = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(
+        200,
+        json={"choices": [{"message": {"content": "{}"}}]},
+    )))
+    subject = ReloadableCompanyResearchAIGateway(
+        EffectiveAISettingsResolver(repository), client,
+    )
+
+    assert subject._timeout >= 45
+    client.close()

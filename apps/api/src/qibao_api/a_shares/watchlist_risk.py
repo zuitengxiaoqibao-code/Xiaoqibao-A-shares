@@ -13,6 +13,7 @@ from qibao_api.contracts.watchlist_risk import (
     WatchlistRiskResponse,
 )
 from qibao_api.contracts.instruments import validate_a_share_code
+from qibao_api.gongbu.shenwan_industry import resolve_shenwan_industry
 
 
 def _returns(bars) -> dict[date, float]:
@@ -75,15 +76,23 @@ class WatchlistRiskService:
                 Decimal(str(round(pstdev(usable) * sqrt(250) * 100, 2)))
                 if len(usable) >= 20 else None
             )
-            if identity and identity.industry:
-                industries[identity.industry].append(symbol)
+            explicit = getattr(identity, "shenwan_industry", None) if identity is not None else None
+            canonical_name = explicit.name if explicit is not None else None
+            if canonical_name is None:
+                assignment = resolve_shenwan_industry(
+                    identity.industry if identity is not None else None,
+                    "instrument-directory",
+                )
+                canonical_name = assignment.industry.name if assignment.is_verified else None
+            if canonical_name:
+                industries[canonical_name].append(symbol)
             if identity:
                 for sector in identity.sectors:
                     themes[sector].append(symbol)
             items.append(WatchlistRiskItem(
                 symbol=symbol,
                 name=identity.name if identity is not None else symbol,
-                industry=identity.industry if identity is not None else None,
+                industry=canonical_name,
                 sectors=identity.sectors if identity is not None else (),
                 volatility_20d_percent=volatility,
                 return_sample_count=len(series),

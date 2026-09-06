@@ -4,7 +4,7 @@ from typing import Annotated, Literal
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from qibao_api.ai_status import AIConnectionState, classify_ai_status
 
@@ -30,11 +30,94 @@ from qibao_api.gongbu.tdx_local_overview import (
     tdx_read_only_capability_catalog,
 )
 from qibao_api.gongbu.tdx_local_professional import inspect_tdx_quant_python_roots
+from qibao_api.external_sources import ExternalDataSourceRepository, ExternalDataSourceService, BUILTIN_EXTERNAL_SOURCES
 
 
 # Local-admin trust boundary: the application binds locally and intentionally supports
 # localhost/private OpenAI-compatible providers. Deployment authentication is out of scope here.
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
+
+
+class ExternalDataSourceView(BaseModel):
+    source_id: str
+    name: str
+    description: str
+    capabilities: list[str]
+    key_label: str
+    key_url: str
+    configured: bool
+    enabled: bool
+    api_key_hint: str | None
+    status: str
+    capability_checks: list[dict[str, str | None]] = Field(default_factory=list)
+    last_tested_at: str | None = None
+    last_error: str | None = None
+    reason: str | None = None
+
+
+class ExternalDataSourceListView(BaseModel):
+    sources: list[ExternalDataSourceView]
+
+
+class ExternalDataSourceInput(BaseModel):
+    api_key: str
+    enabled: bool = True
+
+
+def get_external_data_source_repository(request: Request) -> ExternalDataSourceRepository:
+    return request.app.state.external_data_source_repository
+
+
+def get_external_data_source_service(request: Request) -> ExternalDataSourceService:
+    return request.app.state.external_data_source_service
+
+
+def _external_views(repository: ExternalDataSourceRepository) -> ExternalDataSourceListView:
+    return ExternalDataSourceListView(sources=[ExternalDataSourceView(**item) for item in repository.list_views()])
+
+
+@router.get("/external-data-sources", response_model=ExternalDataSourceListView)
+def get_external_data_sources(
+    repository: Annotated[ExternalDataSourceRepository, Depends(get_external_data_source_repository)],
+) -> ExternalDataSourceListView:
+    return _external_views(repository)
+
+
+@router.put("/external-data-sources/{source_id}", response_model=ExternalDataSourceView)
+def put_external_data_source(
+    source_id: str,
+    payload: ExternalDataSourceInput,
+    repository: Annotated[ExternalDataSourceRepository, Depends(get_external_data_source_repository)],
+) -> ExternalDataSourceView:
+    try:
+        return ExternalDataSourceView(**repository.save(source_id, api_key=payload.api_key, enabled=payload.enabled))
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="未知数据源") from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.delete("/external-data-sources/{source_id}", response_model=ExternalDataSourceView)
+def delete_external_data_source(
+    source_id: str,
+    repository: Annotated[ExternalDataSourceRepository, Depends(get_external_data_source_repository)],
+) -> ExternalDataSourceView:
+    try:
+        return ExternalDataSourceView(**repository.clear(source_id))
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="未知数据源") from error
+
+
+@router.post("/external-data-sources/{source_id}/test", response_model=ExternalDataSourceView)
+def test_external_data_source(
+    source_id: str,
+    repository: Annotated[ExternalDataSourceRepository, Depends(get_external_data_source_repository)],
+    service: Annotated[ExternalDataSourceService, Depends(get_external_data_source_service)],
+) -> ExternalDataSourceView:
+    try:
+        return ExternalDataSourceView(**service.test(source_id))
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="未知数据源") from error
 
 
 class AISettingsView(BaseModel):

@@ -16,6 +16,8 @@ import httpx
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from qibao_api.contracts.instruments import validate_a_share_code
+from qibao_api.contracts.industry import ShenwanIndustry
+from qibao_api.gongbu.shenwan_industry import resolve_shenwan_industry
 
 
 EASTMONEY_STOCK_INFO_URL = "https://push2.eastmoney.com/api/qt/stock/get"
@@ -53,6 +55,8 @@ class StockClassificationSnapshot(BaseModel):
     symbol: str = Field(pattern=r"^\d{6}$")
     observed_at: AwareDatetime
     industry: str | None = Field(default=None, max_length=80)
+    shenwan_industry: ShenwanIndustry | None = None
+    shenwan_mapping_status: Literal["verified", "unmapped"] = "unmapped"
     boards: tuple[StockBoard, ...] = Field(min_length=1)
     quality: Literal["ready", "partial"] = "ready"
     reason: str | None = None
@@ -242,9 +246,20 @@ class EastmoneyStockClassificationSource:
         if not boards:
             raise ValueError("Eastmoney classification board list is empty")
 
+        observed_at = self.clock()
+        assignment = resolve_shenwan_industry(
+            industry, "eastmoney-stock-classification", observed_at=observed_at,
+        )
         semantic = {
             "boards": [board.model_dump(mode="json") for board in boards],
             "industry": industry,
+            "shenwan_industry": (
+                assignment.industry.model_dump(mode="json")
+                if assignment.industry is not None else None
+            ),
+            "shenwan_mapping_status": (
+                "verified" if assignment.is_verified else "unmapped"
+            ),
             "symbol": symbol,
         }
         semantic_bytes = json.dumps(
@@ -264,7 +279,6 @@ class EastmoneyStockClassificationSource:
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")
-        observed_at = self.clock()
         identity_hash = hashlib.sha256(
             (
                 content_hash
@@ -276,6 +290,8 @@ class EastmoneyStockClassificationSource:
             symbol=symbol,
             observed_at=observed_at,
             industry=industry,
+            shenwan_industry=assignment.industry,
+            shenwan_mapping_status="verified" if assignment.is_verified else "unmapped",
             boards=tuple(boards),
             quality="partial" if info_error else "ready",
             reason=info_error,

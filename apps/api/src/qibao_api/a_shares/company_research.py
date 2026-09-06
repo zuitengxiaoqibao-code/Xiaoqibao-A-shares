@@ -43,6 +43,10 @@ DIMENSION_WEIGHTS = {
     "catalysts": 5,
 }
 
+# A locked local cache is optional evidence, never a reason to block the
+# research task. The route uses the same boundary for its cache-only probe.
+COMPANY_RESEARCH_CACHE_TIMEOUT_SECONDS = 3.0
+
 
 def summarize_latest_tips(items: tuple[Any, ...]) -> str:
     if not items:
@@ -435,6 +439,22 @@ class CompanyResearchService:
         self._enrichment_tasks: dict[str, asyncio.Task] = {}
         self._core_refresh_tasks: dict[tuple[str, date], asyncio.Task] = {}
 
+    async def _latest_cache(self, symbol: str) -> CompanyResearchResponse | None:
+        if self.version_repository is None:
+            return None
+        latest_reader = getattr(self.version_repository, "latest", None)
+        if not callable(latest_reader):
+            return None
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(latest_reader, symbol),
+                timeout=COMPANY_RESEARCH_CACHE_TIMEOUT_SECONDS,
+            )
+        except Exception:
+            # Cache contention or corruption must degrade to a live research
+            # task; it must not turn an optional cache into a page timeout.
+            return None
+
     async def get(
         self,
         symbol: str,
@@ -446,10 +466,7 @@ class CompanyResearchService:
         if progress_callback is not None:
             progress_callback("identity", f"已锁定 {symbol} · {selected_date.isoformat()}")
         if cache_first and self.version_repository is not None:
-            try:
-                latest = await asyncio.to_thread(self.version_repository.latest, symbol)
-            except Exception:
-                latest = None
+            latest = await self._latest_cache(symbol)
             if latest is not None and latest.as_of <= selected_date:
                 self._schedule_core_refresh(symbol, selected_date)
                 if latest.as_of == selected_date:
@@ -496,7 +513,7 @@ class CompanyResearchService:
             bounded(profile_task, "profile"),
         )
         if isinstance(diagnosis_result, Exception):
-            latest = self.version_repository.latest(symbol) if self.version_repository is not None else None
+            latest = await self._latest_cache(symbol)
             if latest is not None:
                 reason = f"核心研究刷新失败，沿用最近冻结研究版本：{type(diagnosis_result).__name__}"
                 return latest.model_copy(update={
@@ -819,6 +836,8 @@ class CompanyResearchService:
             industry_name=snapshot.industry_name,
             industry_code=snapshot.industry_code,
             industry_board_code=snapshot.industry_board_code,
+            shenwan_industry=getattr(snapshot, "shenwan_industry", None),
+            shenwan_mapping_status=getattr(snapshot, "shenwan_mapping_status", "unmapped"),
             peer_candidates=tuple(PeerCandidateEvidence.model_validate(item, from_attributes=True) for item in snapshot.peer_candidates),
             unlocks=tuple(UnlockEvidence.model_validate(item, from_attributes=True) for item in snapshot.unlocks),
             margin=tuple(MarginEvidence.model_validate(item, from_attributes=True) for item in snapshot.margin),

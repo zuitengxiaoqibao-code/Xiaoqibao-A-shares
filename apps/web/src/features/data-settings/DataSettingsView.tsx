@@ -18,11 +18,16 @@ import type {
   SpeechSettingsSaver,
   SpeechSynthesizer,
   SpeechVoiceLoader,
+  ExternalDataSourceLoader,
+  ExternalDataSourceSaver,
+  ExternalDataSourceClearer,
+  ExternalDataSourceTester,
 } from "./types";
 import type { StockPreparation } from "../stock-cockpit/types";
 import { LocalSourceSettingsSection } from "./LocalSourceSettingsSection";
 import { SourceHealthPanel } from "./SourceHealthPanel";
 import { DataImportPanel } from "./DataImportPanel";
+import { ExternalDataSourceSection } from "./ExternalDataSourceSection";
 import { inspectDataImport, ingestDataImport } from "./api";
 export { isAutoSyncEnabled } from "./syncPolicy";
 
@@ -54,6 +59,10 @@ type Props = {
   loadLocalSources?: LocalSourceSettingsLoader;
   detectLocalSources?: LocalSourceSettingsWriter;
   saveLocalSources?: LocalSourceSettingsWriter;
+  loadExternalDataSources?: ExternalDataSourceLoader;
+  saveExternalDataSource?: ExternalDataSourceSaver;
+  clearExternalDataSource?: ExternalDataSourceClearer;
+  testExternalDataSource?: ExternalDataSourceTester;
 };
 
 export function DataSettingsView({
@@ -69,6 +78,10 @@ export function DataSettingsView({
   detectLocalSources,
   saveLocalSources,
   loadSourceHealth,
+  loadExternalDataSources,
+  saveExternalDataSource,
+  clearExternalDataSource,
+  testExternalDataSource,
 }: Props) {
   const [settings, setSettings] = useState<AISettingsView | null>(null);
   const [baseUrl, setBaseUrl] = useState("");
@@ -263,6 +276,12 @@ export function DataSettingsView({
     />}
     {loadSourceHealth && <SourceHealthPanel load={loadSourceHealth} />}
     <DataImportPanel inspect={inspectDataImport} ingest={ingestDataImport} />
+    {loadExternalDataSources && saveExternalDataSource && clearExternalDataSource && testExternalDataSource && <ExternalDataSourceSection
+      load={loadExternalDataSources}
+      save={saveExternalDataSource}
+      clear={clearExternalDataSource}
+      test={testExternalDataSource}
+    />}
     <section className="settings-section">
       <div className="settings-heading">
         <div><KeyRound size={20} /><span>

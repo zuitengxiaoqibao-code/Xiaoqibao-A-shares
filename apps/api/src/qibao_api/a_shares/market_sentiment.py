@@ -615,8 +615,8 @@ class MarketSentimentFactorBuilder:
         if self.classification_repository is not None:
             for symbol in symbols:
                 snapshot = self.classification_repository.latest(symbol, as_of, cutoff=cutoff)
-                if snapshot is not None and snapshot.industry:
-                    industries[symbol] = snapshot.industry
+                if snapshot is not None and snapshot.shenwan_industry is not None:
+                    industries[symbol] = snapshot.shenwan_industry.name
         return self.from_histories(histories, industry_by_symbol=industries)
 
     @classmethod

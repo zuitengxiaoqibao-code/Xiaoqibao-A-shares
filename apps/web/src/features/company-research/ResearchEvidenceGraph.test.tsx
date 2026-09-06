@@ -22,5 +22,6 @@ describe("ResearchEvidenceGraph", () => {
     expect(screen.getByText("支持 · filing-1")).toBeInTheDocument();
     expect(screen.getByText("缺少行业来源")).toBeInTheDocument();
     expect(screen.getByText("不可用")).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "证据图关系" })).not.toHaveAttribute("open");
   });
 });

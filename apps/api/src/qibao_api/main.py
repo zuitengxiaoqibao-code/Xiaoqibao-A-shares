@@ -55,6 +55,7 @@ from qibao_api.a_shares.kronos_runtime import LazyKronosRuntime
 from qibao_api.a_shares.repository import AShareResearchRepository
 from qibao_api.a_shares.preparation import AStockPreparationService
 from qibao_api.a_shares.stock_timeline import StockTimelineService
+from qibao_api.a_shares.stock_realtime import StockRealtimeQuoteService
 from qibao_api.a_shares.news_alerts import BreakingNewsAlertService
 from qibao_api.a_shares.event_impact import EventImpactService
 from qibao_api.gongbu.baidu_history import BaiduHistorySource
@@ -165,6 +166,7 @@ from qibao_api.routes.research import router as research_router
 from qibao_api.routes.settings import router as settings_router
 from qibao_api.routes.market_sentiment import router as market_sentiment_router
 from qibao_api.routes.market_overview import router as market_overview_router
+from qibao_api.routes.overseas_market import router as overseas_market_router
 from qibao_api.routes.quant_strategy import router as quant_strategy_router
 from qibao_api.routes.quant_research import router as quant_research_router
 from qibao_api.routes.late_session_selection import router as late_session_selection_router
@@ -182,6 +184,9 @@ from qibao_api.notifications.settings import NotificationSettingsRepository
 from qibao_api.settings import Settings
 from qibao_api.static_frontend import install_static_frontend
 from qibao_api.settings_repository import AISettingsRepository, EffectiveAISettingsResolver
+from qibao_api.external_sources import ExternalDataSourceRepository, ExternalDataSourceService
+from qibao_api.gongbu.external_quote_sources import build_external_quote_source
+from qibao_api.credential_protection import default_credential_protector
 from qibao_api.speech.edge_tts_service import EdgeTTSService
 from qibao_api.speech.settings_repository import SpeechSettingsRepository
 from qibao_api.shangshu.pipeline import ResearchPipeline
@@ -229,6 +234,7 @@ from qibao_api.gongbu.backup_service import BackupService
 from qibao_api.routes.operations import router as operations_router
 from qibao_api.routes.watchlist_risk import router as watchlist_risk_router
 from qibao_api.a_shares.watchlist_risk import WatchlistRiskService
+from qibao_api.a_shares.watchlist_repository import WatchlistRepository
 from qibao_api.routes.decisions import router as decisions_router
 from qibao_api.shangshu.decision_repository import DecisionRepository
 from qibao_api.shangshu.decision_runtime import (
@@ -283,7 +289,10 @@ async def _scheduler_loop(
             async with write_gate:
                 now = datetime.now(timezone.utc)
                 await asyncio.to_thread(_runtime_tick, scheduler, now)
-        except Exception:
+        except Exception as error:
+            if "after shutdown" in str(error).lower():
+                logger.info("scheduler loop stopped after executor shutdown")
+                return
             logger.exception("scheduled briefing tick failed")
 
 
@@ -302,8 +311,132 @@ async def _sector_fund_flow_sampling_loop(
             await service.sync()
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as error:
+            if "after shutdown" in str(error).lower():
+                logger.info("sector fund-flow loop stopped after executor shutdown")
+                return
             logger.info("sector fund-flow sample unavailable; keeping cache", exc_info=True)
+        local_now = clock().astimezone(CHINA_TZ)
+        session_time = local_now.weekday() < 5 and (
+            datetime_time(9, 15) <= local_now.time() <= datetime_time(11, 35)
+            or datetime_time(12, 55) <= local_now.time() <= datetime_time(15, 5)
+        )
+        await sleep(
+            intraday_interval_seconds if session_time else idle_interval_seconds
+        )
+
+
+async def _news_live_refresh_loop(
+    service,
+    *,
+    clock=lambda: datetime.now(timezone.utc),
+    sleep=asyncio.sleep,
+    initial_delay_seconds: float = 8,
+    intraday_interval_seconds: float = 10,
+    idle_interval_seconds: float = 120,
+) -> None:
+    """Continuously ingest verified market news and publish only new snapshots."""
+    await sleep(max(0.0, initial_delay_seconds))
+    while True:
+        try:
+            await service.sync()
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            if "after shutdown" in str(error).lower():
+                logger.info("news live loop stopped after executor shutdown")
+                return
+            logger.info("news live refresh unavailable; keeping cache", exc_info=True)
+        local_now = clock().astimezone(CHINA_TZ)
+        session_time = local_now.weekday() < 5 and (
+            datetime_time(8, 50) <= local_now.time() <= datetime_time(15, 30)
+        )
+        await sleep(intraday_interval_seconds if session_time else idle_interval_seconds)
+
+
+async def _hotspot_live_refresh_loop(
+    service,
+    calendar,
+    *,
+    clock=lambda: datetime.now(timezone.utc),
+    sleep=asyncio.sleep,
+    initial_delay_seconds: float = 12,
+    intraday_interval_seconds: float = 20,
+    idle_interval_seconds: float = 300,
+) -> None:
+    """Poll the independent hotspot source during the trading session."""
+    await sleep(max(0.0, initial_delay_seconds))
+    while True:
+        now = clock()
+        local_now = now.astimezone(CHINA_TZ)
+        trading_date = local_now.date()
+        session_time = local_now.weekday() < 5 and (
+            datetime_time(9, 0) <= local_now.time() <= datetime_time(15, 30)
+        )
+        try:
+            if session_time and calendar.is_trading_day(trading_date):
+                await asyncio.to_thread(service.sync, trading_date, fetched_at=now)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            if "after shutdown" in str(error).lower():
+                logger.info("hotspot live loop stopped after executor shutdown")
+                return
+            logger.info("hotspot live refresh unavailable; keeping cache", exc_info=True)
+        await sleep(intraday_interval_seconds if session_time else idle_interval_seconds)
+
+
+async def _stock_fund_flow_sampling_loop(
+    service,
+    market_source,
+    *,
+    clock=lambda: datetime.now(timezone.utc),
+    sleep=asyncio.sleep,
+    initial_delay_seconds: float = 10,
+    intraday_interval_seconds: float = 60,
+    idle_interval_seconds: float = 900,
+    sample_limit: int = 8,
+    per_symbol_delay_seconds: float = 1,
+) -> None:
+    """Refresh a bounded, high-turnover stock sample outside request handling."""
+    await sleep(max(0.0, initial_delay_seconds))
+    while True:
+        try:
+            snapshot = market_source.current()
+            stocks = tuple(getattr(snapshot, "market_stocks", ()) or ())
+            ranked = sorted(
+                stocks,
+                key=lambda item: float(getattr(item, "amount_yi", 0) or 0),
+                reverse=True,
+            )
+            symbols = tuple(dict.fromkeys(
+                str(getattr(item, "symbol", "")).strip()
+                for item in ranked
+                if str(getattr(item, "symbol", "")).strip()
+            ))[:max(0, sample_limit)]
+            for index, symbol in enumerate(symbols):
+                try:
+                    await service.sync_symbol(symbol)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:
+                    if "after shutdown" in str(error).lower():
+                        logger.info("stock fund-flow loop stopped after executor shutdown")
+                        return
+                    logger.info(
+                        "stock fund-flow sample unavailable for %s; keeping cache",
+                        symbol,
+                        exc_info=True,
+                    )
+                if per_symbol_delay_seconds > 0 and index + 1 < len(symbols):
+                    await sleep(per_symbol_delay_seconds)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            if "after shutdown" in str(error).lower():
+                logger.info("stock fund-flow loop stopped after executor shutdown")
+                return
+            logger.info("stock fund-flow sampling unavailable; keeping cache", exc_info=True)
         local_now = clock().astimezone(CHINA_TZ)
         session_time = local_now.weekday() < 5 and (
             datetime_time(9, 15) <= local_now.time() <= datetime_time(11, 35)
@@ -327,7 +460,10 @@ async def _source_health_snapshot_loop(
             await asyncio.to_thread(repository.refresh_source_health_snapshot, 20)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as error:
+            if "after shutdown" in str(error).lower():
+                logger.info("source health loop stopped after executor shutdown")
+                return
             if observability is not None:
                 observability.record(
                     "source-health-snapshot",
@@ -354,7 +490,10 @@ async def _tdx_auto_import_loop(
             await asyncio.to_thread(monitor.poll)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as error:
+            if "after shutdown" in str(error).lower():
+                logger.info("TDX auto-import loop stopped after executor shutdown")
+                return
             logger.info("TDX auto-import monitor unavailable; keeping status", exc_info=True)
         await sleep(max(1.0, interval_seconds))
 
@@ -368,15 +507,20 @@ def _reconcile_history_symbols(bar_repository, instrument_directory, as_of) -> N
     try:
         for symbol in bar_repository.symbols_with_history(1, as_of):
             if instrument_directory.resolve(symbol) is None:
-                instrument_directory.observe(
-                    AShareInstrument(
+                try:
+                    instrument = AShareInstrument(
                         symbol=symbol,
                         name=symbol,
                         exchange=market_prefix(symbol),
                         observed_at=datetime.now(timezone.utc),
                         quote_quality="unavailable",
                     )
-                )
+                except ValueError:
+                    # History stores can also contain index codes (for
+                    # example 000300). They must not abort equity discovery.
+                    logger.info("skip non-equity history symbol=%s", symbol)
+                    continue
+                instrument_directory.observe(instrument)
     except Exception:
         logger.warning("background history symbol reconciliation failed", exc_info=True)
 
@@ -506,6 +650,8 @@ def _deliver_postclose_report(delivery, report) -> str:
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     startup_started = time.monotonic()
+    from qibao_api.gongbu.shenwan_industry import configure_shenwan_resolver
+    application.state.shutting_down = False
 
     def log_startup_stage(stage: str) -> None:
         logger.info(
@@ -516,8 +662,14 @@ async def lifespan(application: FastAPI):
 
     settings = Settings()
     settings.data_dir.mkdir(parents=True, exist_ok=True)
+    configure_shenwan_resolver(settings.data_dir / "shenwan-industry.sqlite3")
     write_gate = asyncio.Lock()
     application.state.write_gate = write_gate
+    read_executor = ThreadPoolExecutor(
+        max_workers=4,
+        thread_name_prefix="latency-critical-read",
+    )
+    application.state.read_executor = read_executor
     application.state.task_progress_registry = TaskProgressRegistry()
     shared_snapshot_registry = SharedSnapshotRegistry(
         settings.data_dir / "shared-snapshots.sqlite3"
@@ -555,8 +707,19 @@ async def lifespan(application: FastAPI):
     application.state.speech_settings_repository = speech_settings_repository
     is_portable_runtime = bool(os.environ.get("QIBAO_PORTABLE_ROOT"))
     portable_root = Path(os.environ.get("QIBAO_PORTABLE_ROOT", settings.data_dir))
+    external_data_source_repository = ExternalDataSourceRepository(
+        portable_root / "config" / "external-data-sources.json",
+        protector=default_credential_protector(),
+    )
+    application.state.external_data_source_repository = external_data_source_repository
+    application.state.external_data_source_service = ExternalDataSourceService(
+        external_data_source_repository
+    )
     notification_settings_repository = NotificationSettingsRepository(
         portable_root / "config"
+    )
+    application.state.watchlist_repository = WatchlistRepository(
+        portable_root / "config" / "a-share-watchlist.json"
     )
     application.state.notification_settings_repository = notification_settings_repository
     feishu_delivery = FeishuWebhookDelivery(notification_settings_repository.load)
@@ -746,13 +909,30 @@ async def lifespan(application: FastAPI):
 
     bond_universe_refresh_task = None
     sector_fund_flow_sampling_task = None
-    async with httpx.AsyncClient(timeout=10) as client:
+    stock_fund_flow_sampling_task = None
+    news_live_refresh_task = None
+    hotspot_live_refresh_task = None
+    stock_realtime_quote_service = None
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(60, connect=15, read=60, write=60, pool=15)
+    ) as client:
         application.state.a_share_quote_source = TencentQuoteSource(client)
+        from qibao_api.gongbu.overseas_market import TencentOverseasMarketService
+        application.state.overseas_market_service = TencentOverseasMarketService(client)
+        stock_realtime_quote_service = StockRealtimeQuoteService(
+            application.state.a_share_quote_source,
+            bus=realtime_snapshot_bus,
+        )
+        application.state.stock_realtime_quote_service = stock_realtime_quote_service
+        await stock_realtime_quote_service.start()
         application.state.sector_fund_flow_service = SectorFundFlowService(
             EastmoneySectorFundFlowSource(client=client),
             sector_fund_flow_repository,
+            realtime_snapshot_bus=realtime_snapshot_bus,
         )
-        with httpx.Client(timeout=10) as history_client:
+        with httpx.Client(
+            timeout=httpx.Timeout(60, connect=15, read=60, write=60, pool=15)
+        ) as history_client:
             history_sources = [
                 AuthorizedHistorySource(
                     TdxHistorySource(
@@ -942,11 +1122,13 @@ async def lifespan(application: FastAPI):
                     CninfoAnnouncementSource(client=client),
                     EastmoneyStockNewsSource(client=client),
                 )),
+                realtime_snapshot_bus=realtime_snapshot_bus,
             )
             application.state.hotspot_service = HotspotIngestionService(
                 TonghuashunHotspotSource(history_client),
                 news_repository,
                 compliance,
+                realtime_snapshot_bus=realtime_snapshot_bus,
             )
             application.state.stock_classification_service = (
                 StockClassificationService(
@@ -1417,11 +1599,17 @@ async def lifespan(application: FastAPI):
                         startup_now,
                     )
                 log_startup_stage("market-sentiment-ready")
+                tencent_overview_source = TencentOverviewSource(history_client)
+                market_quote_source = build_external_quote_source(
+                    tencent_overview_source,
+                    external_data_source_repository,
+                    history_client,
+                )
                 application.state.market_overview_service = MarketOverviewService(
                     sentiment_repository=market_sentiment_repository,
                     news_repository=news_repository,
                     first_limit_up_repository=first_limit_up_repository,
-                    source=TencentOverviewSource(history_client),
+                    source=market_quote_source,
                     clock=lambda: datetime.now(timezone.utc),
                     local_market_source=local_tdx_overview_source,
                     market_review_source=local_market_review_source,
@@ -1438,12 +1626,39 @@ async def lifespan(application: FastAPI):
                 sector_fund_flow_sampling_task = asyncio.create_task(
                     _sector_fund_flow_sampling_loop(
                         application.state.sector_fund_flow_service,
-                        initial_delay_seconds=30 if is_portable_runtime else 5,
+                        initial_delay_seconds=8 if is_portable_runtime else 5,
+                        intraday_interval_seconds=20,
                     ),
                     name="sector-fund-flow-sampling",
                 )
+                news_live_refresh_task = asyncio.create_task(
+                    _news_live_refresh_loop(
+                        application.state.news_service,
+                        initial_delay_seconds=10 if is_portable_runtime else 8,
+                        intraday_interval_seconds=10,
+                    ),
+                    name="news-live-refresh",
+                )
+                hotspot_live_refresh_task = asyncio.create_task(
+                    _hotspot_live_refresh_loop(
+                        application.state.hotspot_service,
+                        trading_calendar,
+                        initial_delay_seconds=15 if is_portable_runtime else 12,
+                        intraday_interval_seconds=20,
+                    ),
+                    name="hotspot-live-refresh",
+                )
+                stock_fund_flow_sampling_task = asyncio.create_task(
+                    _stock_fund_flow_sampling_loop(
+                        application.state.fund_flow_service,
+                        local_tdx_overview_source,
+                        initial_delay_seconds=12 if is_portable_runtime else 5,
+                    ),
+                    name="stock-fund-flow-sampling",
+                )
                 quant_shadow_ledger = QuantShadowLedgerStore(
-                    settings.data_dir / "quant-shadow-ledger.sqlite3"
+                    settings.data_dir / "quant-shadow-ledger.sqlite3",
+                    bar_repository=bar_repository,
                 )
                 application.state.quant_shadow_ledger = quant_shadow_ledger
                 application.state.decision_journal = DecisionJournalStore(
@@ -1499,6 +1714,10 @@ async def lifespan(application: FastAPI):
                 application.state.stock_timeline_service = StockTimelineService(
                     bar_repository,
                     news_repository,
+                    poll_state_repository=poll_state_repository,
+                    trading_calendar=trading_calendar,
+                    live_feed=decision_market_feed,
+                    minute_source=tencent_overview_source,
                 )
                 application.state.a_share_cockpit_service = StockDecisionCockpitService(
                     a_share_instrument_directory,
@@ -1555,6 +1774,9 @@ async def lifespan(application: FastAPI):
                 log_startup_stage("lifespan-ready")
                 yield
             finally:
+                application.state.shutting_down = True
+                if stock_realtime_quote_service is not None:
+                    await stock_realtime_quote_service.close()
                 if local_source_discovery_task is not None:
                     local_source_discovery_task.cancel()
                     with suppress(asyncio.CancelledError):
@@ -1575,10 +1797,32 @@ async def lifespan(application: FastAPI):
                     sector_fund_flow_sampling_task.cancel()
                     with suppress(asyncio.CancelledError):
                         await sector_fund_flow_sampling_task
+                if stock_fund_flow_sampling_task is not None:
+                    stock_fund_flow_sampling_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await stock_fund_flow_sampling_task
+                for task in (news_live_refresh_task, hotspot_live_refresh_task):
+                    if task is not None:
+                        task.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await task
                 if source_health_snapshot_task is not None:
                     source_health_snapshot_task.cancel()
                     with suppress(asyncio.CancelledError):
                         await source_health_snapshot_task
+                for task_map_name in (
+                    "company_research_route_refresh_tasks",
+                    "first_limit_up_refresh_tasks",
+                ):
+                    task_map = getattr(application.state, task_map_name, None)
+                    if not task_map:
+                        continue
+                    pending = tuple(task for task in task_map.values() if not task.done())
+                    for task in pending:
+                        task.cancel()
+                    if pending:
+                        await asyncio.gather(*pending, return_exceptions=True)
+                    task_map.clear()
                 realtime_ai_trigger_queue = getattr(
                     application.state, "realtime_ai_trigger_queue", None
                 )
@@ -1612,12 +1856,20 @@ async def lifespan(application: FastAPI):
                     application.state, "company_research_task_service", None
                 )
                 if company_research_task_service is not None:
-                    company_research_task_service.close()
+                    close_async = getattr(company_research_task_service, "aclose", None)
+                    if close_async is not None:
+                        await close_async()
+                    else:
+                        company_research_task_service.close()
                 company_research_ai_task_service = getattr(
                     application.state, "company_research_ai_task_service", None
                 )
                 if company_research_ai_task_service is not None:
-                    company_research_ai_task_service.close()
+                    close_async = getattr(company_research_ai_task_service, "aclose", None)
+                    if close_async is not None:
+                        await close_async()
+                    else:
+                        company_research_ai_task_service.close()
                 if local_market_review_source is not None:
                     local_market_review_source.close()
                 if history_symbol_reconciliation_task is not None:
@@ -1627,6 +1879,7 @@ async def lifespan(application: FastAPI):
                 history_supplement_executor.shutdown(wait=True, cancel_futures=True)
                 tdx_import_executor.shutdown(wait=True, cancel_futures=True)
                 history_sync_executor.shutdown(wait=True, cancel_futures=True)
+                read_executor.shutdown(wait=True, cancel_futures=True)
                 application.state.history_supplement_service.close()
                 history_sync_repository.close()
                 tdx_import_repository.close()
@@ -1661,6 +1914,29 @@ async def lifespan(application: FastAPI):
 app = FastAPI(title="一树电子商务-A股观测台", version="0.1.0", lifespan=lifespan)
 
 
+def _requires_runtime_write_gate(method: str, path: str) -> bool:
+    if method.upper() in {"GET", "HEAD", "OPTIONS"}:
+        return False
+    if path == "/health" or path.startswith("/api/v1/settings/"):
+        return False
+
+    segments = path.strip("/").split("/")
+    starts_company_research = (
+        len(segments) == 6
+        and segments[:3] == ["api", "v1", "a-shares"]
+        and segments[4:] == ["company-research", "tasks"]
+    )
+    starts_company_research_ai = (
+        len(segments) == 8
+        and segments[:5] == ["api", "v1", "a-shares", "company-research", "versions"]
+        and segments[6:] == ["ai", "tasks"]
+    )
+    return not (
+        method.upper() == "POST"
+        and (starts_company_research or starts_company_research_ai)
+    )
+
+
 @app.middleware("http")
 async def serialize_runtime_access(request: Request, call_next):
     request_started = time.perf_counter()
@@ -1670,9 +1946,7 @@ async def serialize_runtime_access(request: Request, call_next):
     try:
         if (
             write_gate is None
-            or request.method in {"GET", "HEAD", "OPTIONS"}
-            or path == "/health"
-            or path.startswith("/api/v1/settings/")
+            or not _requires_runtime_write_gate(request.method, path)
         ):
             response = await call_next(request)
         else:
@@ -1720,6 +1994,7 @@ app.include_router(decisions_router)
 app.include_router(settings_router)
 app.include_router(market_sentiment_router)
 app.include_router(market_overview_router)
+app.include_router(overseas_market_router)
 app.include_router(quant_strategy_router)
 app.include_router(quant_research_router)
 app.include_router(late_session_selection_router)

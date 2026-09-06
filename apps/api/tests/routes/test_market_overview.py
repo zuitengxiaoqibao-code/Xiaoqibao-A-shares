@@ -1,4 +1,6 @@
 from datetime import date, datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
+import threading
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -45,8 +47,10 @@ class Service:
     def __init__(self, error: Exception | None = None) -> None:
         self.error = error
         self.calls = []
+        self.thread_names = []
 
     def current(self, now):
+        self.thread_names.append(threading.current_thread().name)
         self.calls.append(now)
         if self.error:
             raise self.error
@@ -68,14 +72,32 @@ class IntervalSource:
         )
 
 
-def client(service: Service, bus: RealtimeSnapshotBus | None = None) -> TestClient:
+def client(
+    service: Service,
+    bus: RealtimeSnapshotBus | None = None,
+    *,
+    read_executor=None,
+) -> TestClient:
     application = FastAPI()
     application.include_router(router)
     application.dependency_overrides[get_market_overview_service] = lambda: service
     application.dependency_overrides[get_local_market_review_source] = IntervalSource
     application.dependency_overrides[get_server_time] = lambda: NOW
     application.dependency_overrides[get_realtime_snapshot_bus] = lambda: bus
+    if read_executor is not None:
+        application.state.read_executor = read_executor
     return TestClient(application)
+
+
+def test_market_overview_route_uses_the_latency_critical_read_executor() -> None:
+    service = Service()
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="latency-critical-read") as executor:
+        response = client(service, read_executor=executor).get(
+            "/api/v1/a-shares/market-overview"
+        )
+
+    assert response.status_code == 200
+    assert service.thread_names == ["latency-critical-read_0"]
 
 
 def test_market_overview_route_returns_bounded_snapshot() -> None:

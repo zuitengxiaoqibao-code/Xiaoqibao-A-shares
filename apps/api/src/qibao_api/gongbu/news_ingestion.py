@@ -1,3 +1,7 @@
+import hashlib
+import json
+from datetime import datetime, timezone
+
 from qibao_api.contracts.market import AssetKind
 from qibao_api.gongbu.news_collection import deduplicate_articles
 from qibao_api.gongbu.news_quality_policy import NewsQualityPolicy
@@ -7,6 +11,7 @@ class NewsIngestionService:
     def __init__(
         self, source, repository, linker, compliance, ai_gateway=None, *,
         stock_source=None, max_ai_interpretations_per_sync=10,
+        realtime_snapshot_bus=None,
     ) -> None:
         self.source = source
         self.stock_source = stock_source
@@ -16,6 +21,7 @@ class NewsIngestionService:
         self.ai_gateway = ai_gateway
         self.quality_policy = NewsQualityPolicy()
         self.max_ai_interpretations_per_sync = max_ai_interpretations_per_sync
+        self.realtime_snapshot_bus = realtime_snapshot_bus
 
     async def sync(self) -> dict[str, int]:
         self.compliance.require_feature_sources("market_news", AssetKind.A_SHARE)
@@ -88,10 +94,45 @@ class NewsIngestionService:
         archive_expired = getattr(self.repository, "archive_expired", None)
         if callable(archive_expired):
             archive_expired(now=articles[0].fetched_at if articles else None)
-        return {
+        result = {
             "fetched": len(articles),
             "inserted": inserted,
             "clusters": len(clusters),
             "events": event_count,
             "interpretations": interpretation_count,
         }
+        self._publish_realtime_snapshot()
+        return result
+
+    def _publish_realtime_snapshot(self) -> None:
+        bus = self.realtime_snapshot_bus
+        if bus is None or not hasattr(bus, "publish"):
+            return
+        events = tuple(
+            event for event in self.repository.effective_events(cutoff=datetime.now(timezone.utc))
+            if event.review_state == "verified"
+        )
+        encoded = json.dumps(
+            [event.model_dump(mode="json") for event in events],
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        snapshot_id = hashlib.sha256(encoded).hexdigest()
+        latest = bus.latest("news_events") if hasattr(bus, "latest") else None
+        previous = latest.get("payload") if isinstance(latest, dict) else None
+        if isinstance(previous, dict) and previous.get("snapshot_id") == snapshot_id:
+            return
+        observed = max((event.normalized_at for event in events), default=datetime.now(timezone.utc))
+        bus.publish(
+            "news_events",
+            {
+                "snapshot_id": snapshot_id,
+                "events": [event.model_dump(mode="json") for event in events[-50:]],
+                "event_count": len(events),
+                "verified_count": len(events),
+            },
+            observed_at=observed,
+            source="news-repository",
+            freshness="verified",
+        )

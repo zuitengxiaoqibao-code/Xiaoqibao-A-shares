@@ -2,6 +2,8 @@ from datetime import date, datetime, timedelta, timezone
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from concurrent.futures import ThreadPoolExecutor
+import threading
 
 from qibao_api.dependencies import (
     get_decision_calendar,
@@ -24,8 +26,10 @@ class Repository:
         self.values = values or {}
         self.broken = broken
         self.cycle_calls = []
+        self.thread_names = []
 
     def latest(self, trading_date, phase):
+        self.thread_names.append(threading.current_thread().name)
         if self.broken:
             raise DecisionIntegrityError("secret corrupt payload")
         return self.values.get((trading_date, phase))
@@ -70,7 +74,7 @@ class NewsRepository:
 
 def client(
     *, now, repository=None, trading_days=(), scheduler=None, poll_state=None,
-    news_repository=None,
+    news_repository=None, read_executor=None,
 ):
     application = FastAPI()
     application.include_router(router)
@@ -81,7 +85,26 @@ def client(
     application.dependency_overrides[get_scheduler] = lambda: scheduler
     application.dependency_overrides[get_server_time] = lambda: now
     application.dependency_overrides[get_decision_poll_state] = lambda: poll_state
+    if read_executor is not None:
+        application.state.read_executor = read_executor
     return TestClient(application), scheduler
+
+
+def test_current_uses_the_latency_critical_read_executor():
+    now = datetime(2026, 7, 15, 10, 30, tzinfo=CHINA_TZ)
+    repository = Repository()
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="latency-critical-read") as executor:
+        api, _ = client(
+            now=now,
+            trading_days=(now.date(),),
+            repository=repository,
+            read_executor=executor,
+        )
+        response = api.get("/api/v1/decisions/current")
+
+    assert response.status_code == 200
+    assert repository.thread_names
+    assert set(repository.thread_names) == {"latency-critical-read_0"}
 
 
 def test_current_returns_explicit_empty_phase_slots():

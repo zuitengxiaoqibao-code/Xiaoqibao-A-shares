@@ -67,6 +67,53 @@ class FakeSettings:
         return f"sqlite:///{(self.data_dir / 'qibao.db').as_posix()}"
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/v1/a-shares/300456/company-research/tasks",
+        "/api/v1/a-shares/company-research/versions/snapshot-1/ai/tasks",
+    ],
+)
+def test_company_research_task_start_does_not_wait_for_runtime_write_gate(path: str) -> None:
+    assert not main_module._requires_runtime_write_gate("POST", path)
+
+
+def test_persistent_runtime_write_still_waits_for_runtime_write_gate() -> None:
+    assert main_module._requires_runtime_write_gate(
+        "POST", "/api/v1/a-shares/universe/sync"
+    )
+
+
+@pytest.mark.asyncio
+async def test_company_research_task_start_runs_while_runtime_write_gate_is_held() -> None:
+    write_gate = asyncio.Lock()
+    await write_gate.acquire()
+    called = False
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(write_gate=write_gate)),
+        method="POST",
+        url=SimpleNamespace(
+            path="/api/v1/a-shares/300456/company-research/tasks"
+        ),
+        scope={},
+    )
+
+    async def call_next(_request):
+        nonlocal called
+        called = True
+        return SimpleNamespace(status_code=202, headers={})
+
+    try:
+        response = await asyncio.wait_for(
+            main_module.serialize_runtime_access(request, call_next), timeout=0.2
+        )
+    finally:
+        write_gate.release()
+
+    assert called
+    assert response.status_code == 202
+
+
 def test_runtime_tick_runs_fixed_slots_and_layered_intraday_once_serially() -> None:
     calls = []
     scheduler = type("Scheduler", (), {
@@ -78,6 +125,41 @@ def test_runtime_tick_runs_fixed_slots_and_layered_intraday_once_serially() -> N
     main_module._runtime_tick(scheduler, now)
 
     assert calls == [("fixed", now), ("layered", now)]
+
+
+def test_history_symbol_reconciliation_skips_index_and_keeps_equities() -> None:
+    observed = []
+
+    class Bars:
+        def symbols_with_history(self, _minimum_bars, _as_of):
+            return ["000300", "600519"]
+
+    class Directory:
+        def resolve(self, _symbol):
+            return None
+
+        def observe(self, instrument):
+            observed.append(instrument.symbol)
+
+    main_module._reconcile_history_symbols(
+        Bars(), Directory(), datetime(2026, 8, 26, tzinfo=timezone.utc)
+    )
+
+    assert observed == ["600519"]
+
+
+@pytest.mark.asyncio
+async def test_source_health_loop_stops_quietly_when_executor_is_already_shutdown() -> None:
+    class Repository:
+        def refresh_source_health_snapshot(self, _limit):
+            raise RuntimeError("cannot schedule new futures after shutdown")
+
+    async def unexpected_sleep(_seconds):
+        raise AssertionError("shutdown loop must not retry after executor shutdown")
+
+    await main_module._source_health_snapshot_loop(
+        Repository(), sleep=unexpected_sleep, interval_seconds=1
+    )
 
 
 def test_initial_market_sentiment_refresh_is_submitted_to_background() -> None:
@@ -291,6 +373,45 @@ async def test_sector_fund_flow_sampling_runs_off_request_path_and_uses_session_
         )
 
     assert calls == 1
+    assert delays == [5, 60]
+
+
+@pytest.mark.asyncio
+async def test_stock_fund_flow_sampling_uses_bounded_high_turnover_sample() -> None:
+    delays: list[float] = []
+    symbols: list[str] = []
+
+    class Service:
+        async def sync_symbol(self, symbol: str):
+            symbols.append(symbol)
+
+    class MarketSource:
+        def current(self):
+            return SimpleNamespace(market_stocks=(
+                SimpleNamespace(symbol="600001", amount_yi=10),
+                SimpleNamespace(symbol="000001", amount_yi=50),
+                SimpleNamespace(symbol="300001", amount_yi=30),
+            ))
+
+    async def controlled_sleep(delay: float) -> None:
+        delays.append(delay)
+        if len(delays) >= 2:
+            raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        await main_module._stock_fund_flow_sampling_loop(
+            Service(),
+            MarketSource(),
+            clock=lambda: datetime(2026, 8, 10, 2, 30, tzinfo=timezone.utc),
+            sleep=controlled_sleep,
+            initial_delay_seconds=5,
+            intraday_interval_seconds=60,
+            idle_interval_seconds=900,
+            sample_limit=2,
+            per_symbol_delay_seconds=0,
+        )
+
+    assert symbols == ["000001", "300001"]
     assert delays == [5, 60]
 
 
@@ -665,7 +786,10 @@ async def test_lifespan_injects_guarded_production_sources_and_closes_compliance
     assert [call[0] for call in market_review_calls] == ["init", "start", "close"]
     assert market_review_calls[0][1]["initial_delay_seconds"] == 15
     assert market_review_calls[0][1]["defer_cache_validation"] is True
-    assert sector_sampling_calls == [{"initial_delay_seconds": 30}]
+    assert sector_sampling_calls == [{
+        "initial_delay_seconds": 8,
+        "intraday_interval_seconds": 20,
+    }]
 
     with pytest.raises(sqlite3.ProgrammingError, match="closed"):
         compliance.list_feature_source_history("realtime_quotes", "a_share")
@@ -831,12 +955,12 @@ async def test_lifespan_recovers_and_stops_full_market_history_worker(
     assert names.index("recover") < calls.index(resume_submit)
     assert resume_submit in calls
     assert ("submit", application.state.tdx_import_service.run, ("tdx-import-resume",)) not in calls
-    assert len([call for call in calls if call[0] == "executor"]) == 3
+    assert len([call for call in calls if call[0] == "executor"]) == 4
     assert application.state.history_sync_executor is not application.state.tdx_import_executor
     assert application.state.history_sync_executor is not application.state.history_supplement_executor
     assert application.state.tdx_import_executor is not application.state.history_supplement_executor
     assert names.index("request-shutdown") < names.index("executor-shutdown")
-    assert calls.count(("executor-shutdown", True, True)) == 3
+    assert calls.count(("executor-shutdown", True, True)) == 4
     assert names.index("executor-shutdown") < names.index("repository-close")
 
 

@@ -11,11 +11,15 @@ from qibao_api.settings_repository import (
     AISettingsRepository,
     EffectiveAISettingsResolver,
 )
-from qibao_api.zhongshu.news_ai import NewsAIGateway, ReloadableNewsAIGateway
+from qibao_api.zhongshu.news_ai import NEWS_AI_TIMEOUT_SECONDS, NewsAIGateway, ReloadableNewsAIGateway
 
 
 NOW = datetime(2026, 7, 14, 1, 0, tzinfo=UTC)
 SECRET = "sk-secret-must-never-leak"
+
+
+def test_news_ai_default_timeout_allows_slow_model_responses() -> None:
+    assert NEWS_AI_TIMEOUT_SECONDS == 60
 
 
 def event() -> NormalizedNewsEvent:

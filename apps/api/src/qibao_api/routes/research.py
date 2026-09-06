@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
 import httpx
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from qibao_api.a_shares.candidate_sentiment_repository import (
     CandidateSentimentStoreError,
@@ -17,6 +17,7 @@ from qibao_api.a_shares.candidate_sentiment_service import (
 )
 from qibao_api.a_shares.diagnosis import AShareDiagnosis, DiagnosisUnavailableError
 from qibao_api.a_shares.cockpit import StockCockpitSnapshot, UnknownAShareError
+from qibao_api.a_shares.stock_realtime import StockQuotePulse
 from qibao_api.a_shares.instrument_directory import AShareInstrument, AShareInstrumentDirectory
 from qibao_api.a_shares.models import CandidateBoard, CandidateScoreBoard
 from qibao_api.a_shares.preparation import StockPreparation
@@ -48,6 +49,8 @@ from qibao_api.dependencies import (
     get_pipeline,
     get_server_time,
     get_stock_timeline_service,
+    get_stock_realtime_quote_service,
+    get_watchlist_repository,
 )
 from qibao_api.gongbu.market_feed import MarketFeedSnapshot
 from qibao_api.gongbu.tencent_quotes import market_prefix
@@ -56,6 +59,7 @@ from qibao_api.shangshu.decision_repository import DecisionIntegrityError
 from qibao_api.libu_compliance.repository import SourceAuthorizationError
 
 router = APIRouter(prefix="/api/v1/a-shares", tags=["A股"])
+COMPANY_RESEARCH_CACHE_TIMEOUT_SECONDS = 3.0
 
 
 class AShareSearchItem(AShareInstrument):
@@ -97,7 +101,7 @@ class CandidateSentimentBatchRequest(BaseModel):
 class IntradayFocusRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    source: Literal["quant_analysis", "watchlist"] = "quant_analysis"
+    source: Literal["quant_analysis", "watchlist", "stock_observation"] = "quant_analysis"
     ttl_seconds: int = Field(default=900, ge=60, le=3600)
 
 
@@ -109,6 +113,50 @@ class IntradayFocusResponse(BaseModel):
     source: str
     registered_at: datetime
     expires_at: datetime
+
+
+class WatchlistInput(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    symbols: tuple[str, ...] = Field(default=(), max_length=200)
+
+    @field_validator("symbols")
+    @classmethod
+    def validate_symbols(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        try:
+            return tuple(validate_a_share_code(value) for value in values)
+        except ValueError as error:
+            raise ValueError("自选股必须使用六位 A 股代码") from error
+
+
+class WatchlistResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    symbols: tuple[str, ...]
+    updated_at: datetime | None
+
+
+@router.get("/watchlist", response_model=WatchlistResponse)
+def load_watchlist(
+    repository: Annotated[object, Depends(get_watchlist_repository)],
+) -> WatchlistResponse:
+    snapshot = repository.load()
+    return WatchlistResponse(symbols=snapshot.symbols, updated_at=snapshot.updated_at)
+
+
+@router.put("/watchlist", response_model=WatchlistResponse)
+def replace_watchlist(
+    payload: WatchlistInput,
+    repository: Annotated[object, Depends(get_watchlist_repository)],
+) -> WatchlistResponse:
+    try:
+        snapshot = repository.save(payload.symbols)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "invalid_watchlist", "message": str(error)},
+        ) from error
+    return WatchlistResponse(symbols=snapshot.symbols, updated_at=snapshot.updated_at)
 
 
 def _quote_observed_at(value: datetime) -> datetime:
@@ -483,12 +531,21 @@ async def prepare(
 
 @router.get("/{symbol}/cockpit", response_model=StockCockpitSnapshot)
 async def cockpit(
+    request: Request,
     symbol: Annotated[AShareCode, Path()],
     service: Annotated[object, Depends(get_a_share_cockpit_service)],
     server_time: Annotated[datetime, Depends(get_server_time)],
     as_of: date | None = None,
     include_ai: bool = False,
 ) -> StockCockpitSnapshot:
+    if getattr(request.app.state, "shutting_down", False):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "service_shutting_down",
+                "message": "服务正在关闭，请重新打开观测台后再加载数据",
+            },
+        )
     try:
         return await service.get(
             symbol, _research_date_at(as_of, server_time), server_time,
@@ -509,6 +566,15 @@ async def cockpit(
         ) from error
 
 
+@router.get("/{symbol}/quote-pulse", response_model=StockQuotePulse)
+async def quote_pulse(
+    symbol: Annotated[AShareCode, Path()],
+    service: Annotated[object, Depends(get_stock_realtime_quote_service)],
+) -> StockQuotePulse:
+    await service.watch(symbol)
+    return service.snapshot(symbol)
+
+
 @router.get("/{symbol}/company-research", response_model=CompanyResearchResponse)
 async def company_research(
     request: Request,
@@ -521,7 +587,14 @@ async def company_research(
     repository = getattr(request.app.state, "company_research_version_repository", None)
     if repository is not None:
         try:
-            latest = await asyncio.to_thread(repository.latest, symbol)
+            latest = await asyncio.wait_for(
+                asyncio.to_thread(repository.latest, symbol),
+                timeout=COMPANY_RESEARCH_CACHE_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            # A locked local cache must never hold the first screen hostage;
+            # continue to the normal research task path below.
+            latest = None
         except Exception:
             latest = None
         if latest is not None and latest.as_of <= selected_date:

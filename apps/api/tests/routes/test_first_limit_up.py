@@ -70,3 +70,19 @@ def test_refresh_maps_source_failure_to_safe_error() -> None:
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "first_limit_up_unavailable"
     assert "secret" not in response.text
+
+
+def test_refresh_starts_scan_without_blocking_the_http_response() -> None:
+    import asyncio
+
+    class SlowService(Service):
+        async def refresh(self, as_of):
+            self.calls.append(("refresh", as_of))
+            await asyncio.sleep(0.05)
+            return board()
+
+    service = SlowService()
+    response = client(service).post("/api/v1/a-shares/first-limit-up/refresh")
+
+    assert response.status_code == 200
+    assert service.calls == [("refresh", date(2026, 7, 24))]

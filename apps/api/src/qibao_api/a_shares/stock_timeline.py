@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 from qibao_api.contracts.market import AssetKind
 from qibao_api.contracts.stock_timeline import (
     StockTimelineEvent,
+    StockTimelineMinutePoint,
     StockTimelineResponse,
 )
 from qibao_api.a_shares.news_alerts import BreakingNewsAlertService
@@ -14,10 +15,25 @@ CHINA_TZ = ZoneInfo("Asia/Shanghai")
 
 
 class StockTimelineService:
-    def __init__(self, bar_repository, news_repository) -> None:
+    def __init__(
+        self,
+        bar_repository,
+        news_repository,
+        *,
+        poll_state_repository=None,
+        trading_calendar=None,
+        live_feed=None,
+        minute_source=None,
+    ) -> None:
         self.bar_repository = bar_repository
         self.news_repository = news_repository
         self.news_alert_service = BreakingNewsAlertService(news_repository)
+        self.poll_state_repository = poll_state_repository
+        self.trading_calendar = trading_calendar
+        self.live_feed = live_feed
+        # A live quote is only a single observation.  The optional minute
+        # source supplies the real session history needed to draw a curve.
+        self.minute_source = minute_source
 
     def get(
         self,
@@ -27,6 +43,12 @@ class StockTimelineService:
         *,
         limit: int = 120,
     ) -> StockTimelineResponse:
+        (
+            intraday_status,
+            intraday_points,
+            intraday_sources,
+            intraday_warnings,
+        ) = self._intraday(symbol, as_of, cutoff)
         bars = tuple(sorted(
             (
                 item for item in self.bar_repository.latest(
@@ -46,6 +68,10 @@ class StockTimelineService:
                 events=(),
                 sources=(),
                 warnings=("local_daily_bars_unavailable",),
+                intraday_status=intraday_status,
+                intraday_points=intraday_points,
+                intraday_sources=intraday_sources,
+                intraday_warnings=intraday_warnings,
             )
 
         first_date = bars[0].trade_date
@@ -112,7 +138,89 @@ class StockTimelineService:
             events=events,
             sources=sources,
             warnings=warnings,
+            intraday_status=intraday_status,
+            intraday_points=intraday_points,
+            intraday_sources=intraday_sources,
+            intraday_warnings=intraday_warnings,
         )
+
+    def _intraday(self, symbol: str, as_of: date, cutoff: datetime):
+        if self.poll_state_repository is None:
+            return "unavailable", (), (), ("intraday_repository_unavailable",)
+        try:
+            snapshots = self.poll_state_repository.intraday_snapshots(
+                symbol,
+                as_of,
+                cutoff=cutoff,
+            )
+        except Exception:
+            return "unavailable", (), (), ("intraday_snapshot_read_failed",)
+        points = tuple(
+            StockTimelineMinutePoint.model_validate(item.model_dump())
+            for item in sorted(snapshots, key=lambda item: item.observed_at)
+        )
+        local_cutoff = cutoff.astimezone(CHINA_TZ)
+        trading_day = (
+            self.trading_calendar is None
+            or self.trading_calendar.is_trading_day(as_of)
+        )
+        if not trading_day:
+            if points:
+                sources = tuple(dict.fromkeys(item.source for item in points))
+                return "ready", points, sources, ()
+            return "unavailable", (), (), ("market_closed",)
+
+        # The poll archive is intentionally sparse (one snapshot per polling
+        # cycle).  On the current trading day, fill a sparse archive from the
+        # real Tencent minute endpoint and merge by minute.  This never
+        # fabricates intermediate prices and keeps an archived point when it
+        # is newer than the remote response.
+        if (
+            self.minute_source is not None
+            and as_of == local_cutoff.date()
+            and len(points) < 5
+        ):
+            try:
+                remote = self.minute_source.fetch_stock_minutes(
+                    symbol, cutoff=cutoff,
+                )
+                remote_points = tuple(
+                    StockTimelineMinutePoint.model_validate(item.model_dump())
+                    for item in remote
+                    if item.observed_at.astimezone(CHINA_TZ).date() == as_of
+                )
+            except Exception:
+                remote_points = ()
+            if remote_points:
+                by_observed_at = {item.observed_at: item for item in remote_points}
+                by_observed_at.update({item.observed_at: item for item in points})
+                points = tuple(sorted(by_observed_at.values(), key=lambda item: item.observed_at))
+
+        if points:
+            sources = tuple(dict.fromkeys(item.source for item in points))
+            return "ready", points, sources, ()
+
+        if self.live_feed is not None and as_of == local_cutoff.date():
+            try:
+                live_snapshots = self.live_feed.snapshot_many((symbol,), cutoff=cutoff)
+                live_points = tuple(
+                    StockTimelineMinutePoint.model_validate(item.model_dump())
+                    for item in live_snapshots
+                    if item.observed_at.astimezone(CHINA_TZ).date() == as_of
+                )
+            except Exception:
+                live_points = ()
+            if live_points:
+                live_points = tuple(sorted(live_points, key=lambda item: item.observed_at))
+                sources = tuple(dict.fromkeys(item.source for item in live_points))
+                return "ready", live_points, sources, ("intraday_live_snapshot",)
+        if as_of != local_cutoff.date():
+            return "unavailable", (), (), ("intraday_snapshots_unavailable",)
+        if local_cutoff.time() < time(9, 30):
+            return "waiting", (), (), ("market_not_open",)
+        if local_cutoff.time() <= time(15, 0):
+            return "waiting", (), (), ("intraday_waiting_for_first_snapshot",)
+        return "unavailable", (), (), ("intraday_snapshots_unavailable",)
 
     @staticmethod
     def _eligible_event(event, symbol, first_date, as_of, cutoff) -> bool:

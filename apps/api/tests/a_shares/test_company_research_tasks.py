@@ -146,3 +146,22 @@ async def test_company_research_task_ends_with_chinese_timeout_stage() -> None:
     assert failed.progress.status == "failed"
     assert failed.progress.stage == "financials"
     assert failed.progress.detail == "研究任务超时：财务数据来源长时间无响应"
+
+
+@pytest.mark.asyncio
+async def test_company_research_task_aclose_waits_for_cancelled_tasks() -> None:
+    release = asyncio.Event()
+
+    class Research:
+        async def get(self, symbol, as_of, progress_callback=None):
+            await release.wait()
+            return sample_response()
+
+    service = CompanyResearchTaskService(Research(), TaskProgressRegistry())
+    started = service.start("600519", date(2026, 8, 12))
+    await asyncio.sleep(0)
+
+    await service.aclose()
+
+    assert service.snapshot(started.progress.task_id).progress.status == "cancelled"
+    assert not service._tasks

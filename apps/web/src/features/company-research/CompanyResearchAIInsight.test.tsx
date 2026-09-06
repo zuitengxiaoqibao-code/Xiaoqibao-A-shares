@@ -18,7 +18,8 @@ describe("CompanyResearchAIInsight", () => {
     const region = screen.getByRole("region", { name: "AI 证据总结与反方审查" });
     expect(region).toHaveTextContent("现金流证据较强");
     expect(region).toHaveTextContent("估值压力");
-    expect(region).toHaveTextContent("证据 risk-1");
+    expect(region).not.toHaveTextContent("risk-1");
+    expect(region).toHaveTextContent("已绑定 1 条研究证据");
     expect(region).toHaveTextContent("不生成新事实");
   });
 

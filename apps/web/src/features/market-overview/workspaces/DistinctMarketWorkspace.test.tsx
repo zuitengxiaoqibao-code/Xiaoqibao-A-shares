@@ -99,6 +99,23 @@ describe("DistinctMarketWorkspace", () => {
     expect(summary).not.toHaveTextContent("10.722151898734179%");
   });
 
+  it("uses compact inner layouts for review, distribution, and pivot metrics", () => {
+    const { rerender } = render(<DistinctMarketWorkspace feature="首板梯队" data={overview} />);
+    const review = screen.getByRole("region", { name: "首板分布仪表" });
+    expect(review.querySelectorAll(".review-summary-metric")).toHaveLength(4);
+    expect(review.querySelector(".review-summary-grid article > .metric-drilldown-trigger")).toHaveClass("review-summary-metric");
+
+    rerender(<DistinctMarketWorkspace feature="复盘统计大全" data={{ ...overview, market_stocks: overview.market_stocks.slice(0, 1) }} />);
+    const distribution = screen.getByRole("region", { name: "涨跌分布" });
+    expect(distribution.querySelectorAll(".distribution-metric")).toHaveLength(5);
+    expect(distribution.querySelector(".distribution-metric .distribution-track")).toBeInTheDocument();
+
+    rerender(<DistinctMarketWorkspace feature="异动统计大全" data={overview} />);
+    const pivot = screen.getByRole("region", { name: "异动统计透视" });
+    expect(pivot.querySelectorAll(".statistics-pivot-metric")).toHaveLength(4);
+    expect(pivot.querySelector(".statistics-pivot-metric > .metric-drilldown-trigger")).toBeInTheDocument();
+  });
+
   it("drills an exact review count into named stocks and exposes all research destinations", () => {
     const onOpenAShare = vi.fn();
     const onOpenCompanyResearch = vi.fn();

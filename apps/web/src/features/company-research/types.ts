@@ -133,6 +133,8 @@ export type ResearchEnrichmentEvidence = {
   industry_name?: string | null;
   industry_code?: string | null;
   industry_board_code?: string | null;
+  shenwan_industry?: { code: string; name: string; level: "一级" | "二级" | "三级"; version: string } | null;
+  shenwan_mapping_status?: "verified" | "unmapped";
   peer_candidates?: Array<{
     symbol: string; name: string; industry: string | null; price: string | null;
     change_percent: string | null; pe_ttm: string | null; pb: string | null;
@@ -215,7 +217,7 @@ export type CompanyResearchVersion = {
 
 export type CompanyResearchAIResult = {
   status: "ready" | "unconfigured" | "timeout" | "http_error" | "invalid";
-  ai_state?: "unconfigured" | "configured_unverified" | "connected" | "connection_failed" | "timeout" | "rate_limited" | "model_not_found";
+  ai_state?: "unconfigured" | "configured_unverified" | "connected" | "connection_failed" | "output_invalid" | "timeout" | "rate_limited" | "model_not_found";
   ai_message?: string | null;
   snapshot_id: string;
   analysis: null | {

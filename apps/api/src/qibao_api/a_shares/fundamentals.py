@@ -8,6 +8,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from qibao_api.contracts.source_health import SourceAttemptEvent
 from qibao_api.gongbu.tdx_client import create_tdx_client
+from qibao_api.contracts.industry import ShenwanIndustry
+from qibao_api.gongbu.shenwan_industry import resolve_shenwan_industry
 
 
 class FundamentalSnapshot(BaseModel):
@@ -18,6 +20,8 @@ class FundamentalSnapshot(BaseModel):
     report_period: date | None = None
     data_updated_on: date | None = None
     industry: str | None = None
+    shenwan_industry: ShenwanIndustry | None = None
+    shenwan_mapping_status: str = "unmapped"
     eps: Decimal | None = None
     roe: Decimal | None = None
     net_profit: Decimal | None = None
@@ -108,12 +112,15 @@ def parse_tdx_finance(
         if net_profit is not None and net_assets is not None and net_assets > 0
         else None
     )
+    assignment = resolve_shenwan_industry(payload.get("industry"), "mootdx-finance", observed_at=observed_at)
     return FundamentalSnapshot(
         symbol=symbol,
         observed_at=observed_at,
         report_period=None,
         data_updated_on=_date_or_none(payload.get("updated_date")),
         industry=_industry_name_or_none(payload.get("industry")),
+        shenwan_industry=assignment.industry,
+        shenwan_mapping_status="verified" if assignment.is_verified else "unmapped",
         eps=eps,
         roe=roe,
         net_profit=net_profit,
@@ -190,10 +197,13 @@ def parse_tdx_rpc_security(
     }
     if not any(value is not None for value in values.values()) and industry is None:
         raise ValueError("tdx rpc detail response has no usable fields")
+    assignment = resolve_shenwan_industry(industry, "tdx-local-rpc-detail", observed_at=observed_at)
     return FundamentalSnapshot(
         symbol=symbol,
         observed_at=observed_at,
         industry=industry,
+        shenwan_industry=assignment.industry,
+        shenwan_mapping_status="verified" if assignment.is_verified else "unmapped",
         source="tdx-local-rpc-detail",
         **values,
     )

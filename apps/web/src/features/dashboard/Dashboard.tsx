@@ -62,6 +62,10 @@ import type {
   LocalSourceSettingsWriter,
   PreparationLoader,
   SourceHealthLoader,
+  ExternalDataSourceLoader,
+  ExternalDataSourceSaver,
+  ExternalDataSourceClearer,
+  ExternalDataSourceTester,
 } from "../data-settings/types";
 import type { AISettingsView } from "../data-settings/types";
 
@@ -77,6 +81,7 @@ const loadBeginnerRiskModule = () => import("../beginner-shell/BeginnerRiskView"
 const loadHistoryReviewModule = () => import("../beginner-shell/HistoryReview");
 const loadDataSettingsModule = () => import("../data-settings/DataSettingsView");
 const loadOperationsModule = () => import("../operations/OperationsView");
+const loadDataScreenModule = () => import("../data-screen/DataScreenView");
 
 const ConvertibleBondView = lazy(() => loadConvertibleBondModule().then(({ ConvertibleBondView: view }) => ({ default: view })));
 const NewsIntelligenceView = lazy(() => loadNewsIntelligenceModule().then(({ NewsIntelligenceView: view }) => ({ default: view })));
@@ -90,6 +95,7 @@ const HistoryReview = lazy(() => loadHistoryReviewModule().then(({ HistoryReview
 const DataSettingsView = lazy(() => loadDataSettingsModule().then(({ DataSettingsView: view }) => ({ default: view })));
 const OperationsView = lazy(() => loadOperationsModule().then(({ OperationsView: view }) => ({ default: view })));
 const MonitorCenterView = lazy(() => loadMonitorCenterModule().then(({ MonitorCenterView: view }) => ({ default: view })));
+const DataScreenView = lazy(() => loadDataScreenModule().then(({ DataScreenView: view }) => ({ default: view })));
 
 const primaryRoutePreloaders = [
   loadTodayDecisionModule,
@@ -144,6 +150,7 @@ type Props = {
   searchAShareInstruments?: (query: string) => Promise<InstrumentSearchResponse>;
   loadStockCockpit?: (symbol: string, asOf?: string, signal?: AbortSignal) => Promise<StockCockpitSnapshot>;
   loadStockCockpitAI?: (symbol: string, asOf?: string, signal?: AbortSignal) => Promise<StockCockpitSnapshot>;
+  loadStockQuotePulse?: (symbol: string, signal?: AbortSignal) => Promise<import("../stock-cockpit/types").StockQuotePulse>;
   loadStockTimeline?: StockTimelineLoader;
   prepareStockData?: PreparationLoader;
   loadAISettings?: AISettingsLoader;
@@ -154,6 +161,10 @@ type Props = {
   saveLocalSourceSettings?: LocalSourceSettingsWriter;
   syncAShareUniverse?: AShareUniverseSyncLoader;
   loadSourceHealth?: SourceHealthLoader;
+  loadExternalDataSources?: ExternalDataSourceLoader;
+  saveExternalDataSource?: ExternalDataSourceSaver;
+  clearExternalDataSource?: ExternalDataSourceClearer;
+  testExternalDataSource?: ExternalDataSourceTester;
   loadHistorySync?: HistorySyncLoader;
   loadHistoryCoverage?: HistoryCoverageLoader;
   loadHistoryRepairCenter?: HistoryRepairCenterLoader;
@@ -219,6 +230,7 @@ function viewFromPath(path: string): ActiveView {
   if (path === "/a-shares") return "a_shares";
   if (path === "/company-research") return "company_research";
   if (path === "/first-limit-up/quant-analysis") return "quant_analysis";
+  if (path === "/data-screen") return "data_screen";
   if (path === "/first-limit-up") return "first_limit_up";
   if (path === "/late-session-selection") return "late_session_selection";
   if (path === "/convertible-bonds") return "bonds";
@@ -236,6 +248,7 @@ const pathsForView: Record<ActiveView, string> = {
   company_research: "/company-research", first_limit_up: "/first-limit-up",
   late_session_selection: "/late-session-selection",
   quant_analysis: "/first-limit-up/quant-analysis", risk: "/risk", history: "/history",
+  data_screen: "/data-screen",
   settings: "/settings", operations: "/operations", bonds: "/convertible-bonds", news: "/news-intelligence", monitor_center: "/monitor-center",
 };
 
@@ -312,7 +325,7 @@ export function RouteLoadingFallback() {
   );
 }
 
-export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, analyzePortfolioRisk, loadWatchlistRisk, loadPortfolioRisk, savePortfolioPosition, removePortfolioPosition, loadCompliance, loadAudit, complianceAction, loadBondDashboard, loadBondDiagnosis, loadCachedBondDiagnosis, loadBondCandidates, diagnoseBondBatch, loadNewsIntelligence, loadEventImpact, syncNews, syncHotspots, createNewsCorrection, loadOperationsStatus, loadOperationsDiagnostics, loadObservability, setSchedulerPaused, createBackup, verifyBackup, runManualJob, cleanupCache, previewStorageCleanup, cleanupStorage, loadPerformanceSummary, loadAShareCandidates, loadAShareCandidateScores, loadAShareDiagnosis, loadDecisionCurrent, loadDecisionDate, loadMarketSentiment, refreshMarketSentiment, loadCandidateSentiments, refreshCandidateSentiments, searchAShareInstruments, loadStockCockpit, loadStockCockpitAI, loadStockTimeline, prepareStockData, loadAISettings, saveAISettings, deleteAISettings, loadLocalSourceSettings, detectLocalSourceSettings, saveLocalSourceSettings, syncAShareUniverse, loadSourceHealth, loadHistorySync, loadHistoryCoverage, loadHistoryRepairCenter, loadHistoryRepairAudits, startHistoryBackfill, pauseHistorySync, resumeHistorySync, retryFailedHistory, restartCurrentHistory, loadOfficialTdxInfo, loadHistorySupplement, startOfficialTdxSupplement, loadTdxImport, scanTdxImport, startTdxImport, pauseTdxImport, resumeTdxImport, loadFirstLimitUp, refreshFirstLimitUp, loadLateSessionSelection, loadQuantTicks, loadKronosForecast, loadWalkForward, loadQuantStrategy, loadQuantResearch, loadQuantShadowDecisions, loadQuantShadowAnalytics, loadQuantCalibration, loadDecisionJournal, createDecisionJournal, loadTdxFormula, loadMarketOverview, loadMarketIntervalReview, loadBreakingNewsAlerts, loadSpeechSettings, loadSpeechVoices, saveSpeechSettings, synthesizeSpeech, loadCompanyResearch, compareCompanyResearch }: Props) {
+export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, analyzePortfolioRisk, loadWatchlistRisk, loadPortfolioRisk, savePortfolioPosition, removePortfolioPosition, loadCompliance, loadAudit, complianceAction, loadBondDashboard, loadBondDiagnosis, loadCachedBondDiagnosis, loadBondCandidates, diagnoseBondBatch, loadNewsIntelligence, loadEventImpact, syncNews, syncHotspots, createNewsCorrection, loadOperationsStatus, loadOperationsDiagnostics, loadObservability, setSchedulerPaused, createBackup, verifyBackup, runManualJob, cleanupCache, previewStorageCleanup, cleanupStorage, loadPerformanceSummary, loadAShareCandidates, loadAShareCandidateScores, loadAShareDiagnosis, loadDecisionCurrent, loadDecisionDate, loadMarketSentiment, refreshMarketSentiment, loadCandidateSentiments, refreshCandidateSentiments, searchAShareInstruments, loadStockCockpit, loadStockCockpitAI, loadStockQuotePulse, loadStockTimeline, prepareStockData, loadAISettings, saveAISettings, deleteAISettings, loadLocalSourceSettings, detectLocalSourceSettings, saveLocalSourceSettings, syncAShareUniverse, loadSourceHealth, loadExternalDataSources, saveExternalDataSource, clearExternalDataSource, testExternalDataSource, loadHistorySync, loadHistoryCoverage, loadHistoryRepairCenter, loadHistoryRepairAudits, startHistoryBackfill, pauseHistorySync, resumeHistorySync, retryFailedHistory, restartCurrentHistory, loadOfficialTdxInfo, loadHistorySupplement, startOfficialTdxSupplement, loadTdxImport, scanTdxImport, startTdxImport, pauseTdxImport, resumeTdxImport, loadFirstLimitUp, refreshFirstLimitUp, loadLateSessionSelection, loadQuantTicks, loadKronosForecast, loadWalkForward, loadQuantStrategy, loadQuantResearch, loadQuantShadowDecisions, loadQuantShadowAnalytics, loadQuantCalibration, loadDecisionJournal, createDecisionJournal, loadTdxFormula, loadMarketOverview, loadMarketIntervalReview, loadBreakingNewsAlerts, loadSpeechSettings, loadSpeechVoices, saveSpeechSettings, synthesizeSpeech, loadCompanyResearch, compareCompanyResearch }: Props) {
   const selectedInstrument = useOptionalSelectedInstrument();
   const [state, setState] = useState<ViewState>({ kind: "idle" });
   const [symbol, setSymbol] = useState("600000");
@@ -362,8 +375,11 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, an
   }, [activeView]);
   useEffect(() => {
     const restored = loadWorkspaceState();
-    if (import.meta.env.MODE !== "test" && restored?.route === pathsForView[activeView] && restored.scrollTop > 0) {
-      window.requestAnimationFrame(() => window.scrollTo({ top: restored.scrollTop, behavior: "auto" }));
+    if (restored?.route === pathsForView[activeView] && (import.meta.env.MODE !== "test" || activeView === "data_screen")) {
+      const top = activeView === "data_screen" ? 0 : restored.scrollTop;
+      if (top > 0 || activeView === "data_screen") {
+        window.requestAnimationFrame(() => window.scrollTo({ top, behavior: "auto" }));
+      }
     }
     const saveScroll = () => saveWorkspaceState({
       route: pathsForView[activeView], menu: activeView,
@@ -426,17 +442,20 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, an
   }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${activeView === "data_screen" ? " app-shell-data-screen" : ""}`}>
       <BeginnerNavigation active={activeView} onNavigate={navigate} ai={aiStatus} />
 
       {activeView === "market_overview" && loadMarketOverview && <MarketOverviewView load={loadMarketOverview} loadAlerts={loadBreakingNewsAlerts} onOpenAShare={openOverviewStock} onOpenCompanyResearch={openCompanyResearch} onOpenQuantAnalysis={openQuantAnalysis} synthesizeSpeech={synthesizeSpeech} loadIntervalReview={loadMarketIntervalReview} />}
       {activeView === "market_overview" && !loadMarketOverview && <main className="market-overview-page"><header className="overview-titlebar"><div><p>A-SHARE MARKET TERMINAL</p><h1>信息总览</h1></div></header><div className="overview-error"><ShieldAlert size={15} />信息总览服务暂不可用，请检查本地 API。</div></main>}
 
+      {activeView === "data_screen" && loadMarketOverview && <Suspense fallback={<RouteLoadingFallback />}><DataScreenView load={loadMarketOverview} loadLateSession={loadLateSessionSelection} loadFirstLimitUp={loadFirstLimitUp} loadAlerts={loadBreakingNewsAlerts} loadQuantStrategy={loadQuantStrategy} onOpenAShare={openOverviewStock} /></Suspense>}
+      {activeView === "data_screen" && !loadMarketOverview && <main className="beginner-page"><header><p className="eyebrow">A-SHARE / DIGITAL TWIN</p><h1>数据大屏</h1><p>数据大屏服务暂不可用，请检查本地行情服务。</p></header></main>}
+
       {activeView === "risk" && <Suspense fallback={<RouteLoadingFallback />}><BeginnerRiskView load={loadRisk} analyzePortfolio={analyzePortfolioRisk} loadPortfolio={loadPortfolioRisk} savePortfolioPosition={savePortfolioPosition} removePortfolioPosition={removePortfolioPosition} selectedSymbol={selectedSymbol} loadWatchlistRisk={loadWatchlistRisk} /></Suspense>}
 
       {activeView === "a_shares" && <div className="stock-workbench-layout observation-workspace">
         {loadAShareCandidates && searchAShareInstruments && <StockSelector loadCandidates={loadAShareCandidates} loadWatchlistScores={loadAShareCandidateScores} prepare={prepareStockData} search={searchAShareInstruments} loadCandidateSentiments={loadCandidateSentiments} refreshCandidateSentiments={refreshCandidateSentiments} onCandidateSentiments={setCandidateSentiments} />}
-        {loadStockCockpit ? <StockDecisionCockpit load={loadStockCockpit} loadAI={loadStockCockpitAI} loadTimeline={loadStockTimeline} loadAlerts={loadBreakingNewsAlerts} prepare={prepareStockData} refreshToken={cockpitRefreshToken} onSnapshot={setLatestCockpit} candidateSentiment={selectedCandidateSentiment} loadMarketSentiment={loadMarketSentiment} onOpenCompanyResearch={openCompanyResearch} /> : <main className="stock-cockpit empty-cockpit"><Radar size={24} /><h1>选择股票后查看行动卡</h1><p>可从候选、自选或搜索结果中选择任意已验证 A 股。</p></main>}
+        {loadStockCockpit ? <StockDecisionCockpit load={loadStockCockpit} loadAI={loadStockCockpitAI} loadQuotePulse={loadStockQuotePulse} loadTimeline={loadStockTimeline} loadAlerts={loadBreakingNewsAlerts} prepare={prepareStockData} refreshToken={cockpitRefreshToken} onSnapshot={setLatestCockpit} candidateSentiment={selectedCandidateSentiment} loadMarketSentiment={loadMarketSentiment} onOpenCompanyResearch={openCompanyResearch} /> : <main className="stock-cockpit empty-cockpit"><Radar size={24} /><h1>选择股票后查看行动卡</h1><p>可从候选、自选或搜索结果中选择任意已验证 A 股。</p></main>}
       </div>}
 
       {activeView === "company_research" && loadCompanyResearch && searchAShareInstruments && <Suspense fallback={<RouteLoadingFallback />}><CompanyResearchView load={loadCompanyResearch} search={searchAShareInstruments} compare={compareCompanyResearch} selectedSymbol={selectedSymbol} onSelectSymbol={(nextSymbol) => selectedInstrument?.select(nextSymbol, "search")} onOpenAShare={openOverviewStock} /></Suspense>}
@@ -459,7 +478,7 @@ export function Dashboard({ loadSnapshot, syncHistory, runBacktest, loadRisk, an
 
       {activeView === "history" && loadDecisionCurrent && <Suspense fallback={<RouteLoadingFallback />}><HistoryReview loadCurrent={loadDecisionCurrent} loadDate={loadDecisionDate} symbol={selectedInstrument?.symbol ?? selectedInstrument?.lastSymbol ?? null} runBacktest={runBacktest} /></Suspense>}
 
-      {activeView === "settings" && loadAISettings && saveAISettings && deleteAISettings && <Suspense fallback={<RouteLoadingFallback />}><DataSettingsView loadAI={loadAISettings} saveAI={saveAISettings} deleteAI={deleteAISettings} loadLocalSources={loadLocalSourceSettings} detectLocalSources={detectLocalSourceSettings} saveLocalSources={saveLocalSourceSettings} loadSpeech={loadSpeechSettings} loadSpeechVoices={loadSpeechVoices} saveSpeech={saveSpeechSettings} synthesizeSpeech={synthesizeSpeech} symbol={selectedSymbol} prepare={prepareStockData} preparation={preparationForSymbol(latestCockpit, selectedSymbol)} loadCompliance={loadCompliance} complianceAction={complianceAction} syncAShareUniverse={syncAShareUniverse} loadSourceHealth={loadSourceHealth} onAIChanged={() => setCockpitRefreshToken((value) => value + 1)} /></Suspense>}
+      {activeView === "settings" && loadAISettings && saveAISettings && deleteAISettings && <Suspense fallback={<RouteLoadingFallback />}><DataSettingsView loadAI={loadAISettings} saveAI={saveAISettings} deleteAI={deleteAISettings} loadLocalSources={loadLocalSourceSettings} detectLocalSources={detectLocalSourceSettings} saveLocalSources={saveLocalSourceSettings} loadSpeech={loadSpeechSettings} loadSpeechVoices={loadSpeechVoices} saveSpeech={saveSpeechSettings} synthesizeSpeech={synthesizeSpeech} symbol={selectedSymbol} prepare={prepareStockData} preparation={preparationForSymbol(latestCockpit, selectedSymbol)} loadCompliance={loadCompliance} complianceAction={complianceAction} syncAShareUniverse={syncAShareUniverse} loadSourceHealth={loadSourceHealth} loadExternalDataSources={loadExternalDataSources} saveExternalDataSource={saveExternalDataSource} clearExternalDataSource={clearExternalDataSource} testExternalDataSource={testExternalDataSource} onAIChanged={() => setCockpitRefreshToken((value) => value + 1)} /></Suspense>}
       {activeView === "settings" && (!loadAISettings || !saveAISettings || !deleteAISettings) && <main className="beginner-page"><header><p className="eyebrow">数据设置</p><h1>数据源与 AI</h1><p>设置服务暂不可用，请检查本地服务后重试。</p></header></main>}
 
       {activeView === "operations" && loadOperationsStatus && setSchedulerPaused && createBackup && verifyBackup && runManualJob && <Suspense fallback={<RouteLoadingFallback />}><OperationsView loadStatus={loadOperationsStatus} setSchedulerPaused={setSchedulerPaused} createBackup={createBackup} verifyBackup={verifyBackup} runManualJob={runManualJob} cleanupCache={cleanupCache} previewCleanup={previewStorageCleanup} cleanupStorage={cleanupStorage} loadPerformance={loadPerformanceSummary} loadDiagnostics={loadOperationsDiagnostics} loadObservability={loadObservability} loadHistoryRepairCenter={loadHistoryRepairCenter} loadHistoryRepairAudits={loadHistoryRepairAudits} startHistoryBackfill={startHistoryBackfill} pauseHistorySync={pauseHistorySync} resumeHistorySync={resumeHistorySync} loadOfficialTdxInfo={loadOfficialTdxInfo} loadHistorySupplement={loadHistorySupplement} startOfficialTdxSupplement={startOfficialTdxSupplement} loadTdxImport={loadTdxImport} scanTdxImport={scanTdxImport} startTdxImport={startTdxImport} pauseTdxImport={pauseTdxImport} resumeTdxImport={resumeTdxImport} /></Suspense>}

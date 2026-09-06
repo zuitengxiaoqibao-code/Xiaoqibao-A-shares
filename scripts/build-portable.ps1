@@ -58,6 +58,26 @@ if ($ReleaseInUse.Count -eq 0 -and (Get-Process -Name "xiaoqibao" -ErrorAction S
         [pscustomobject]@{ ProcessId = $_.Id; ExecutablePath = $ReleaseExe }
     })
 }
+# Reclaim orphaned staged releases left by interrupted or repeated updates.
+# Preserve only the staged directory referenced by the current pending update.
+$PendingStage = $null
+$PendingManifest = Join-Path $Release "pending-update.json"
+if (Test-Path -LiteralPath $PendingManifest) {
+    try {
+        $PendingPayload = Get-Content -LiteralPath $PendingManifest -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($PendingPayload.staged_root) {
+            $PendingStage = [IO.Path]::GetFullPath([string]$PendingPayload.staged_root).TrimEnd('\')
+        }
+    } catch {
+        Write-Warning "Pending update manifest could not be read; orphaned staged releases will still be cleaned."
+    }
+}
+Get-ChildItem -LiteralPath $DistRoot -Directory -Filter "XiaoQiBao-Portable-staged-*" -ErrorAction SilentlyContinue |
+    ForEach-Object {
+        if ($null -eq $PendingStage -or ([IO.Path]::GetFullPath($_.FullName).TrimEnd('\') -ine $PendingStage)) {
+            Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
 $BuildDist = $DistRoot
 $PersistentFallback = $null
 if ($ReleaseInUse.Count -gt 0) {

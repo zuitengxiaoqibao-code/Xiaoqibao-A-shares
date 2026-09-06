@@ -39,6 +39,36 @@ describe("OperationsView", () => {
     expect(screen.getByRole("region", { name: "通达信自动导入状态" })).toHaveTextContent("已建立目录基线");
   });
 
+  it("places the three daily-bar operations above the TDX daily monitor", async () => {
+    render(<OperationsView
+      loadStatus={() => Promise.resolve(status)}
+      setSchedulerPaused={() => Promise.resolve(status.scheduler)}
+      createBackup={() => Promise.resolve(status.backups[0])}
+      verifyBackup={() => Promise.reject(new Error("unused"))}
+      runManualJob={() => Promise.resolve({ report_id: "report-manual" })}
+      scanTdxImport={() => Promise.resolve({ scanned_paths: [], day_files: 0, archive_files: 0, readable_files: 0, latest_trade_date: null, errors: [] })}
+      loadHistoryRepairCenter={() => Promise.resolve({
+        coverage: {
+          target_date: "2026-08-26", universe_count: 0, backfill_complete_count: 0,
+          eligible_count: 0, target_date_count: 0, target_date_coverage_percent: 0,
+          dominant_trade_date: null, dominant_date_count: 0, dominant_date_coverage_percent: 0,
+          coverage_percent: 0, fragmented_latest_count: 0, missing_history_count: 0,
+          quality: "unavailable", blockers: [],
+        },
+        current_job: null, total_gap_count: 0, offset: 0, limit: 100, gaps: [],
+      })}
+    />);
+
+    const localImport = await screen.findByRole("heading", { name: "本地通达信日线导入" });
+    const repairCenter = screen.getByRole("heading", { name: "全市场日线修复中心" });
+    const manualRecovery = screen.getByRole("heading", { name: "故障补跑" });
+    const dailyMonitor = screen.getByText("通达信日线自动监测");
+
+    expect(localImport.compareDocumentPosition(repairCenter) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(repairCenter.compareDocumentPosition(manualRecovery) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(manualRecovery.compareDocumentPosition(dailyMonitor) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("shows scheduler failures and verifies a backup with restore drill", async () => {
     const verifyBackup = vi.fn(() => Promise.resolve({ backup_id: "backup-20260714", valid: true, restore_drill_passed: true, checked_files: 8, mismatched_files: [] }));
     render(<OperationsView loadStatus={() => Promise.resolve(status)} setSchedulerPaused={() => Promise.resolve(status.scheduler)} createBackup={() => Promise.resolve(status.backups[0])} verifyBackup={verifyBackup} runManualJob={() => Promise.resolve({ report_id: "report-manual" })} />);

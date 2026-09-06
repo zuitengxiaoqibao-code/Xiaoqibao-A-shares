@@ -28,10 +28,13 @@ export function ResearchEvidenceGraph({ graph }: { graph?: EvidenceGraph }) {
         {node.limitations[0] && <small>{node.limitations[0]}</small>}
       </article>)}
     </div>
-    {graph.edges.length > 0 && <div className="research-evidence-graph__edges" aria-label="证据图关系">
-      {graph.edges.map((edge) => <div key={`${edge.source_node_id}-${edge.target_node_id}-${edge.relation}`}>
-        <Link2 size={14} /><span>{edge.relation === "supports" ? "支持" : "推导"} · {nodeLabel(graph, edge.source_node_id)}</span><ArrowRight size={14} /><b>{nodeLabel(graph, edge.target_node_id)}</b>
-      </div>)}
-    </div>}
+    {graph.edges.length > 0 && <details className="research-evidence-graph__edges" role="group" aria-label="证据图关系">
+      <summary>查看 {graph.edges.length} 条证据关系（支持与推导）</summary>
+      <div className="research-evidence-graph__edge-list">
+        {graph.edges.map((edge) => <div key={`${edge.source_node_id}-${edge.target_node_id}-${edge.relation}`}>
+          <Link2 size={14} /><span>{edge.relation === "supports" ? "支持" : "推导"} · {nodeLabel(graph, edge.source_node_id)}</span><ArrowRight size={14} /><b>{nodeLabel(graph, edge.target_node_id)}</b>
+        </div>)}
+      </div>
+    </details>}
   </section>;
 }

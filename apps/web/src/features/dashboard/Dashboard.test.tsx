@@ -183,6 +183,21 @@ describe("Dashboard beginner shell", () => {
     expect(loadWorkspaceState()?.route).toBe("/today-decision");
   });
 
+  it("starts the data screen at the top instead of restoring a stale page scroll", async () => {
+    window.history.replaceState({}, "", "/data-screen");
+    saveWorkspaceState({ route: "/data-screen", menu: "data_screen", scrollTop: 320 });
+    const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
+
+    render(<Dashboard
+      loadSnapshot={() => Promise.resolve(card)}
+      loadMarketOverview={() => Promise.resolve(marketOverview)}
+    />);
+
+    expect(await screen.findByRole("heading", { name: "数据大屏" })).toBeInTheDocument();
+    await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "auto" }));
+    scrollTo.mockRestore();
+  });
+
   it("keeps today decision available on its own stable route", async () => {
     render(<SelectedInstrumentProvider><Dashboard
       loadSnapshot={() => Promise.resolve(card)}
@@ -200,7 +215,7 @@ describe("Dashboard beginner shell", () => {
   it("shows one complete menu without navigation modes", () => {
     render(<Dashboard loadSnapshot={() => Promise.resolve(card)} />);
     const navigation = screen.getByRole("navigation", { name: "主要功能" });
-    expect(navigation.querySelectorAll("button")).toHaveLength(13);
+    expect(navigation.querySelectorAll("button")).toHaveLength(14);
     expect(screen.queryByRole("button", { name: "新手模式" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "专家模式" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "信息总览" })).toBeInTheDocument();

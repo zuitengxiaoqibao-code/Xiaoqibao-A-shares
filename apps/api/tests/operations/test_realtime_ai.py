@@ -23,6 +23,8 @@ class Gateway:
             "prompt_version": "decision-v1",
             "generated_at": NOW,
             "evidence_ids": tuple(item.evidence_id for item in request.evidence),
+            "invalid_output_count": 1,
+            "provider_error_count": 0,
         })()
 
     def configuration_identity(self):
@@ -52,8 +54,8 @@ def test_realtime_ai_deduplicates_unchanged_market_snapshots_and_publishes_evide
         assert analysis is not None
         assert analysis["payload"]["input_snapshot_hash"]
         assert analysis["payload"]["fallback"] is True
-        assert analysis["payload"]["ai_state"] == "connection_failed"
-        assert analysis["payload"]["ai_message"] == "AI 接口连接失败，已保留规则分析"
+        assert analysis["payload"]["ai_state"] == "output_invalid"
+        assert analysis["payload"]["ai_message"] == "AI 接口已连接，但返回内容未通过证据校验，已保留规则分析"
         assert len(gateway.requests) == 1
         assert queue.status()["submitted"] == 1
     finally:

@@ -16,6 +16,12 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 
 EASTMONEY_SECTOR_FLOW_URL = "https://push2.eastmoney.com/api/qt/clist/get"
+EASTMONEY_SECTOR_FLOW_FALLBACK_URL = (
+    "https://push2his.eastmoney.com/api/qt/clist/get"
+)
+EASTMONEY_SECTOR_FLOW_HTTP_FALLBACK_URL = (
+    "http://push2his.eastmoney.com/api/qt/clist/get"
+)
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 YI = Decimal("100000000")
 TWO_PLACES = Decimal("0.01")
@@ -39,9 +45,13 @@ class SectorFundFlowItem(BaseModel):
 
     sector_code: str = Field(pattern=r"^BK\d{4}$")
     sector_name: str = Field(min_length=1)
+    change_percent: Decimal | None = None
+    amount_yi: Decimal | None = Field(default=None, ge=0)
     main_net_yi: Decimal
     large_net_yi: Decimal | None = None
     super_net_yi: Decimal | None = None
+    rising_count: int | None = Field(default=None, ge=0)
+    falling_count: int | None = Field(default=None, ge=0)
 
 
 class SectorFundFlowSnapshot(BaseModel):
@@ -76,6 +86,13 @@ def _yi(value: Any) -> Decimal | None:
     return (parsed / YI).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
 
 
+def _optional_count(value: Any) -> int | None:
+    parsed = _optional_decimal(value)
+    if parsed is None or parsed < 0 or parsed != parsed.to_integral_value():
+        return None
+    return int(parsed)
+
+
 class EastmoneySectorFundFlowSource:
     def __init__(
         self,
@@ -95,6 +112,7 @@ class EastmoneySectorFundFlowSource:
         self.minimum_interval = minimum_interval
         self._last_request_at: float | None = None
         self._request_lock = asyncio.Lock()
+        self._preferred_route: tuple[str, bool] | None = None
 
     async def fetch(self) -> SectorFundFlowSnapshot:
         params = {
@@ -106,7 +124,7 @@ class EastmoneySectorFundFlowSource:
             "invt": "2",
             "fid": "f62",
             "fs": "m:90+t:2",
-            "fields": "f12,f14,f62,f66,f72",
+            "fields": "f12,f14,f3,f6,f62,f66,f72,f104,f105",
         }
         headers = {
             "User-Agent": USER_AGENT,
@@ -124,6 +142,24 @@ class EastmoneySectorFundFlowSource:
         if not isinstance(payload, dict):
             raise ValueError("Eastmoney sector fund-flow response is not an object")
         items = self._parse_items(payload)
+        # Eastmoney returns only the first page in the requested sort order.
+        # A descending net-inflow page can therefore contain zero negative
+        # sectors even though the market has outflows. Fetch the opposite sort
+        # order in that case and merge the verified rows by sector code.
+        if items and not any(item.main_net_yi < 0 for item in items):
+            outflow_params = {**params, "po": "0"}
+            async with self._request_lock:
+                await self._wait_for_rate_limit()
+                outflow_response = await self._request(EASTMONEY_SECTOR_FLOW_URL, outflow_params, headers)
+            if outflow_response.status_code == 200:
+                try:
+                    outflow_payload = json.loads(outflow_response.body)
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    outflow_payload = None
+                if isinstance(outflow_payload, dict):
+                    merged = {item.sector_code: item for item in items}
+                    merged.update({item.sector_code: item for item in self._parse_items(outflow_payload)})
+                    items = tuple(sorted(merged.values(), key=lambda item: abs(item.main_net_yi), reverse=True))
         if not items:
             raise ValueError("Eastmoney sector net flow is unavailable")
         semantic = [item.model_dump(mode="json") for item in items]
@@ -167,9 +203,13 @@ class EastmoneySectorFundFlowSource:
             items.append(SectorFundFlowItem(
                 sector_code=code,
                 sector_name=name,
+                change_percent=_optional_decimal(row.get("f3")),
+                amount_yi=_yi(row.get("f6")),
                 main_net_yi=main_net,
                 super_net_yi=_yi(row.get("f66")),
                 large_net_yi=_yi(row.get("f72")),
+                rising_count=_optional_count(row.get("f104")),
+                falling_count=_optional_count(row.get("f105")),
             ))
         return tuple(sorted(items, key=lambda item: abs(item.main_net_yi), reverse=True))
 
@@ -193,9 +233,61 @@ class EastmoneySectorFundFlowSource:
         if self.client is not None:
             result = await self.client.get(url, params=params, headers=headers)
             return SectorFundFlowHttpResponse(status_code=result.status_code, body=result.content)
-        async with httpx.AsyncClient(timeout=15) as client:
+        routes = [
+            (EASTMONEY_SECTOR_FLOW_URL, True),
+            (EASTMONEY_SECTOR_FLOW_FALLBACK_URL, True),
+            (EASTMONEY_SECTOR_FLOW_HTTP_FALLBACK_URL, True),
+            (EASTMONEY_SECTOR_FLOW_URL, False),
+            (EASTMONEY_SECTOR_FLOW_FALLBACK_URL, False),
+            (EASTMONEY_SECTOR_FLOW_HTTP_FALLBACK_URL, False),
+        ]
+        if self._preferred_route is not None:
+            routes.insert(0, self._preferred_route)
+        routes = list(dict.fromkeys(routes))
+        last_response: SectorFundFlowHttpResponse | None = None
+        last_error: httpx.TransportError | None = None
+        for candidate_url, trust_env in routes:
+            request_headers = headers
+            if candidate_url.startswith("http://"):
+                request_headers = dict(headers)
+                request_headers["Referer"] = "http://data.eastmoney.com/bkzj/"
+            try:
+                response = await self._client_request(
+                    candidate_url,
+                    params,
+                    request_headers,
+                    trust_env=trust_env,
+                )
+            except httpx.TransportError as error:
+                last_error = error
+                continue
+            last_response = response
+            if response.status_code == 200:
+                self._preferred_route = (candidate_url, trust_env)
+                return response
+        if last_response is not None:
+            return last_response
+        if last_error is not None:
+            raise last_error
+        raise OSError("Eastmoney sector fund-flow endpoints are unavailable")
+
+    @staticmethod
+    async def _client_request(
+        url: str,
+        params: dict[str, str],
+        headers: dict[str, str],
+        *,
+        trust_env: bool,
+    ) -> SectorFundFlowHttpResponse:
+        options = {"timeout": 15}
+        if not trust_env:
+            options["trust_env"] = False
+        async with httpx.AsyncClient(**options) as client:
             result = await client.get(url, params=params, headers=headers)
-            return SectorFundFlowHttpResponse(status_code=result.status_code, body=result.content)
+            return SectorFundFlowHttpResponse(
+                status_code=result.status_code,
+                body=result.content,
+            )
 
 
 class SectorFundFlowRepository:
@@ -303,11 +395,32 @@ class SectorFundFlowService:
         self,
         source: EastmoneySectorFundFlowSource,
         repository: SectorFundFlowRepository,
+        realtime_snapshot_bus=None,
     ) -> None:
         self.source = source
         self.repository = repository
+        self.realtime_snapshot_bus = realtime_snapshot_bus
 
     async def sync(self) -> SectorFundFlowSnapshot:
         snapshot = await self.source.fetch()
         self.repository.append(snapshot)
+        bus = self.realtime_snapshot_bus
+        if bus is not None and hasattr(bus, "publish"):
+            latest = bus.latest("sector_fund_flow") if hasattr(bus, "latest") else None
+            previous = latest.get("payload") if isinstance(latest, dict) else None
+            if isinstance(previous, dict) and previous.get("content_hash") == snapshot.content_hash:
+                return snapshot
+            bus.publish(
+                "sector_fund_flow",
+                {
+                    "snapshot_id": snapshot.snapshot_id,
+                    "observed_at": snapshot.observed_at.isoformat(),
+                    "source": snapshot.source,
+                    "content_hash": snapshot.content_hash,
+                    "items": [item.model_dump(mode="json") for item in snapshot.items],
+                },
+                observed_at=snapshot.observed_at,
+                source=snapshot.source,
+                freshness="live",
+            )
         return snapshot

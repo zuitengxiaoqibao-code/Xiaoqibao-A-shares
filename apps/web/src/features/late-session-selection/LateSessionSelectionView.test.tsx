@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { LateSessionSelectionView } from "./LateSessionSelectionView";
 import type { LateSessionAIAnalysis } from "./types";
@@ -82,5 +82,50 @@ describe("LateSessionSelectionView", () => {
     await waitFor(() => expect(screen.getByText("尾盘数据暂不可用")).toBeInTheDocument());
     expect(screen.getAllByText("服务连接失败：尾盘数据源不可用").length).toBeGreaterThan(0);
     expect(screen.queryByText("正在读取真实尾盘数据")).not.toBeInTheDocument();
+  });
+
+  it("aggregates repeated AI risks and keeps the key analysis populated", async () => {
+    const crowdedAnalysis: LateSessionAIAnalysis = {
+      ...analysis,
+      status: "output_invalid",
+      mode: "rule_interpretation",
+      title: "AI 返回格式异常 · 已输出规则解析",
+      summary: "当前结果已完成规则核验。",
+      key_points: [],
+      risk_points: ["未通过：监控时间", "未通过：监控时间", "未通过：监控时间", "未通过：量比"],
+      data_gaps: ["待补齐：分时黄线", "待补齐：分时黄线"],
+      candidate_count: 1,
+      reason: "模型没有返回可解析的最终内容",
+    };
+
+    render(<LateSessionSelectionView load={vi.fn().mockResolvedValue({
+      ...response,
+      candidate_count: 1,
+      candidates: [{
+        quote: { symbol: "600000", name: "浦发银行", price: "9.65", previous_close: "9.19", change_percent: "5", volume_ratio: null, turnover_rate: "10", market_cap_yi: "100", twenty_day_limit_up_count: 1, intraday_average_price: null, observed_at: "2026-08-17T07:00:00Z", source: "tdx-local-realtime" },
+        passed: false,
+        rules: [],
+        behavior_tags: [],
+        risk_notes: ["未通过：监控时间"],
+        lifecycle_status: "data_pending" as const,
+        first_seen_at: "2026-08-17T07:00:00Z",
+        last_updated_at: "2026-08-17T07:00:00Z",
+        continuous_hits: 0,
+        continuous_seconds: 0,
+        trigger_count: 0,
+        rule_bitmap: "010111x",
+        latest_change: null,
+        invalidation_reason: null,
+      }],
+    })} analyze={vi.fn().mockResolvedValue(crowdedAnalysis)} />);
+
+    await waitFor(() => expect(screen.getByText("AI 返回格式异常 · 已输出规则解析")).toBeInTheDocument());
+    expect(screen.getByText("当前 1 只候选已完成规则核验，其中 0 只严格通过、1 只仍需观察。")).toBeInTheDocument();
+    const riskPanel = screen.getByText("风险与数据边界").closest("div");
+    expect(riskPanel).not.toBeNull();
+    expect(within(riskPanel!).getAllByText("未通过：监控时间")).toHaveLength(1);
+    expect(within(riskPanel!).getByText("3 项")).toBeInTheDocument();
+    expect(within(riskPanel!).getAllByText("待补齐：分时黄线")).toHaveLength(1);
+    expect(within(riskPanel!).getByText("2 项")).toBeInTheDocument();
   });
 });

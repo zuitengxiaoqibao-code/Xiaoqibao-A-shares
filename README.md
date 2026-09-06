@@ -323,6 +323,7 @@ apps/web/                 React + TypeScript 前端
 scripts/                  开发、构建、打包、烟测、备份恢复脚本
 packaging/                PyInstaller 配置、图标和便携版说明
 docs/                     架构、路线图、验证记录和 API 参考
+docs/project-memory/      脱敏后的项目长期记忆与历史决策归档
 release/XiaoQiBao-Portable/  可运行的 Windows 便携版快照
 ```
 

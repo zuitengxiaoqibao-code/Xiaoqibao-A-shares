@@ -24,6 +24,7 @@ from qibao_api.contracts.market_overview import (
     OverviewSector,
     OverviewSectorStock,
 )
+from qibao_api.gongbu.shenwan_industry import resolve_shenwan_industry
 from qibao_api.gongbu.tdx_local_professional import parse_tdx_professional_rows
 
 
@@ -552,6 +553,8 @@ def _representative_stocks(
             amount_yi=(item.amount_wan / Decimal("10000")).quantize(
                 TWO_PLACES, rounding=ROUND_HALF_UP
             ),
+            turnover_rate=item.turnover_rate,
+            market_cap_yi=item.market_cap_yi,
             change_percent=item.change_percent,
             state=states[item.symbol],
             observed_at=observed_at,
@@ -842,6 +845,7 @@ class LocalTdxOverviewSource:
                 )
                 for index, item in enumerate(member_quotes[:30])
             )
+            assignment = resolve_shenwan_industry(sector_quote.name, "tdx-local-sector", sector_quote.exchange_code, observed_at=self.clock())
             sectors.append(OverviewSector(
                 sector_id=sector_id,
                 name=sector_quote.name,
@@ -853,6 +857,8 @@ class LocalTdxOverviewSource:
                 rising_count=sum(item.price > item.previous_close for item in member_quotes),
                 falling_count=sum(item.price < item.previous_close for item in member_quotes),
                 stock_count=len(member_quotes),
+                shenwan_industry=assignment.industry,
+                industry_system="申万" if assignment.is_verified else "待核验",
             ))
             stocks_by_sector[sector_id] = stocks
             if len(sectors) >= 12:

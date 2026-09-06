@@ -1,5 +1,7 @@
 import json
+import logging
 import re
+from time import monotonic
 from collections.abc import Callable
 from typing import Literal
 
@@ -9,6 +11,10 @@ from pydantic import BaseModel, ConfigDict
 from qibao_api.a_shares.assessment import StockAssessment
 from qibao_api.contracts.decision import EvidenceReference
 from qibao_api.settings_repository import AISettings, EffectiveAISettingsResolver
+
+
+logger = logging.getLogger(__name__)
+ASSESSMENT_AI_TIMEOUT_SECONDS = 60
 
 
 AIStatus = Literal[
@@ -57,7 +63,7 @@ class OpenAICompatibleAssessmentGateway:
         model: str | None,
         client: httpx.AsyncClient | None = None,
         client_factory: Callable[[], httpx.AsyncClient] | None = None,
-        timeout: float = 35,
+        timeout: float = ASSESSMENT_AI_TIMEOUT_SECONDS,
     ) -> None:
         self.base_url = base_url.rstrip("/") if base_url else None
         self.model = model
@@ -92,6 +98,14 @@ class OpenAICompatibleAssessmentGateway:
         if not self.base_url or not self._api_key or not self.model:
             return self._result("unconfigured", assessment)
         allowed = {item.evidence_id for item in evidence}
+        started = monotonic()
+        logger.info(
+            "assessment AI request started provider=%s model=%s timeout_seconds=%s evidence_count=%s",
+            self.base_url,
+            self.model,
+            self.timeout,
+            len(evidence),
+        )
         try:
             response = await self._client_or_create().post(
                 f"{self.base_url}/chat/completions",
@@ -101,9 +115,29 @@ class OpenAICompatibleAssessmentGateway:
             )
             response.raise_for_status()
         except httpx.TimeoutException:
+            logger.warning(
+                "assessment AI request timed out provider=%s model=%s elapsed_ms=%s",
+                self.base_url,
+                self.model,
+                round((monotonic() - started) * 1000),
+            )
             return self._result("timeout", assessment)
-        except httpx.HTTPError:
+        except httpx.HTTPError as error:
+            logger.warning(
+                "assessment AI request failed provider=%s model=%s error_type=%s elapsed_ms=%s",
+                self.base_url,
+                self.model,
+                type(error).__name__,
+                round((monotonic() - started) * 1000),
+            )
             return self._result("http_error", assessment)
+        logger.info(
+            "assessment AI response received provider=%s model=%s status_code=%s elapsed_ms=%s",
+            self.base_url,
+            self.model,
+            response.status_code,
+            round((monotonic() - started) * 1000),
+        )
         try:
             envelope = response.json()
             content = envelope["choices"][0]["message"]["content"]
@@ -191,7 +225,7 @@ class ReloadableAssessmentGateway:
         *,
         client: httpx.AsyncClient | None = None,
         client_factory: Callable[[], httpx.AsyncClient] | None = None,
-        timeout: float = 35,
+        timeout: float = ASSESSMENT_AI_TIMEOUT_SECONDS,
     ) -> None:
         self._settings = settings
         self._client = client

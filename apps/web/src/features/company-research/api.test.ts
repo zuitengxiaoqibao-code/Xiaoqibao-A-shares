@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { loadCompanyResearch, loadCompanyResearchComparison } from "./api";
 import { readTaskActivities, resetTaskActivityForTests } from "../../shared/taskActivity";
+import { apiClient } from "../../shared/apiClient";
 
 describe("company research api", () => {
   afterEach(() => {
@@ -38,6 +39,28 @@ describe("company research api", () => {
   it("preserves the verified backend error message", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ detail: { message: "财务源暂不可用" } }), { status: 503 })));
     await expect(loadCompanyResearch("600519")).rejects.toThrow("财务源暂不可用");
+  });
+
+  it("continues into the research task when the optional cache probe fails", async () => {
+    const cacheProbe = vi.spyOn(apiClient, "getOptional").mockRejectedValueOnce(new Error("公司研究缓存请求超时，请稍后重试。"));
+    try {
+      const result = { symbol: "000610" };
+      vi.stubGlobal("fetch", vi.fn()
+        .mockResolvedValueOnce(new Response(JSON.stringify({ progress: { task_id: "task-cache-fallback", status: "queued", stage: "queued", processed: 0, total: 6, percent: 0, detail: "等待", error: null }, result: null }), { status: 200 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ progress: { task_id: "task-cache-fallback", status: "succeeded", stage: "complete", processed: 6, total: 6, percent: 100, detail: "完成", error: null }, result }), { status: 200 })));
+
+      await expect(loadCompanyResearch("000610")).resolves.toEqual(result);
+      expect(cacheProbe).toHaveBeenCalledWith(
+        "/api/v1/a-shares/000610/company-research?cache_only=true",
+        expect.objectContaining({ timeoutMs: 5_000, context: "公司研究缓存" }),
+      );
+      expect(fetch).toHaveBeenCalledWith(
+        "/api/v1/a-shares/000610/company-research/tasks",
+        expect.objectContaining({ method: "POST", signal: expect.any(AbortSignal) }),
+      );
+    } finally {
+      cacheProbe.mockRestore();
+    }
   });
 
   it("forwards response progress to the research loading status", async () => {

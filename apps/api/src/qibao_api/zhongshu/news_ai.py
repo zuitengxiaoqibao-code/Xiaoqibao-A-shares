@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import time
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -15,6 +16,10 @@ from qibao_api.contracts.news import (
     NormalizedNewsEvent,
 )
 from qibao_api.settings_repository import AISettings, EffectiveAISettingsResolver
+
+
+logger = logging.getLogger(__name__)
+NEWS_AI_TIMEOUT_SECONDS = 60
 
 
 class _ProviderPayload(BaseModel):
@@ -39,7 +44,7 @@ class OpenAICompatibleNewsProvider:
         api_key: str,
         model: str,
         client: httpx.AsyncClient,
-        timeout: float = 10,
+        timeout: float = NEWS_AI_TIMEOUT_SECONDS,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -135,6 +140,15 @@ class NewsAIGateway:
                 payload = None
         latency_ms = max(0, round((self.monotonic() - started) * 1000))
         if payload is None:
+            if provider_error_count:
+                logger.warning(
+                    "news AI unavailable provider=%s model=%s attempts=%s errors=%s latency_ms=%s",
+                    self.provider_name,
+                    self.model,
+                    provider_attempts,
+                    provider_error_count,
+                    latency_ms,
+                )
             return self._fallback(
                 event, latency_ms, provider_attempts,
                 invalid_output_count, provider_error_count,
@@ -277,7 +291,7 @@ class ReloadableNewsAIGateway:
         *,
         client: httpx.AsyncClient | None = None,
         client_factory: Callable[[], httpx.AsyncClient] | None = None,
-        timeout: float = 10,
+        timeout: float = NEWS_AI_TIMEOUT_SECONDS,
         prompt_version: str = "news-v1",
         clock=lambda: datetime.now(timezone.utc),
         monotonic=time.monotonic,

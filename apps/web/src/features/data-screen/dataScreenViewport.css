@@ -1,0 +1,35 @@
+/* Keep the 16:9 monitor on one viewport; use local content clipping instead of a page scrollbar. */
+html:has(.app-shell-data-screen),
+body:has(.app-shell-data-screen),
+#root:has(.app-shell-data-screen) { height: 100%; overflow: hidden; }
+.app-shell-data-screen { height: 100vh; min-height: 0; max-height: 100vh; overflow: hidden; align-items: stretch; grid-template-rows: minmax(0, 1fr); }
+.app-shell-data-screen > * { min-width: 0; min-height: 0; }
+.app-shell-data-screen > .data-screen-page { width: 100%; height: 100%; min-height: 0; max-height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+.data-screen-page:fullscreen { width: 100vw; height: 100vh; min-height: 0; overflow: hidden; }
+.data-screen-page > .terminal-page-header,
+.data-screen-page > .data-screen-state,
+.data-screen-page > .data-screen-kpi-ribbon { flex: 0 0 auto; }
+.data-screen-grid { flex: 1 1 auto; height: auto; min-height: 0; grid-template-rows: minmax(0, 1.25fr) minmax(0, 1.25fr) minmax(0, .9fr); overflow: hidden; }
+.data-screen-panel { min-height: 0; }
+.data-screen-panel .terminal-panel-body { min-height: 0; overflow: hidden; }
+.data-screen-stock-list, .data-screen-event-list, .data-screen-official-events { min-height: 0; overflow: hidden; }
+@media (min-width: 1251px) {
+  .app-shell-data-screen > .data-screen-page.data-screen-c3 {
+    height: 100%;
+    min-height: 100%;
+  }
+  .app-shell-data-screen > .data-screen-page.data-screen-c3 > .data-screen-grid {
+    flex: 1 1 0;
+    min-height: 0;
+  }
+}
+@media (max-width: 1250px) {
+  html:has(.app-shell-data-screen),
+  body:has(.app-shell-data-screen),
+  #root:has(.app-shell-data-screen) { height: auto; overflow: visible; }
+  .app-shell-data-screen { height: auto; min-height: 100vh; max-height: none; overflow: visible; display: block; }
+  .app-shell-data-screen > .data-screen-page { height: auto; min-height: 100vh; max-height: none; overflow: visible; display: block; }
+  .data-screen-grid { height: auto; }
+  .data-screen-page:fullscreen { height: 100vh; min-height: 0; overflow: hidden; }
+  .data-screen-page:fullscreen .data-screen-grid { height: calc(100vh - 220px); overflow: hidden; }
+}

@@ -10,6 +10,7 @@ from qibao_api.a_shares.instrument_directory import (
     AShareInstrumentDirectory,
 )
 from qibao_api.contracts.market import AssetKind
+from qibao_api.contracts.industry import ShenwanIndustry
 
 
 NOW = datetime(2026, 7, 15, 1, 30, tzinfo=timezone.utc)
@@ -205,3 +206,19 @@ def test_alias_map_uses_only_observed_nonempty_names(tmp_path: Path) -> None:
         (AssetKind.A_SHARE, "600000"): ("浦发银行",),
     }
     directory.close()
+
+
+def test_directory_persists_explicit_shenwan_industry(tmp_path: Path) -> None:
+    directory = AShareInstrumentDirectory(tmp_path / "instruments.sqlite3")
+    item = instrument(name="浦发银行").model_copy(update={
+        "industry": "银行",
+        "shenwan_industry": ShenwanIndustry(
+            code="SW801780", name="银行", level="一级", version="SW2021"
+        ),
+    })
+    directory.observe(item)
+    directory.close()
+
+    reopened = AShareInstrumentDirectory(tmp_path / "instruments.sqlite3")
+    assert reopened.resolve("600000").shenwan_industry == item.shenwan_industry
+    reopened.close()

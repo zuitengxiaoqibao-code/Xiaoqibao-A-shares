@@ -18,6 +18,9 @@ from qibao_api.contracts.company_research import (
 from qibao_api.settings_repository import AISettings, EffectiveAISettingsResolver
 
 
+COMPANY_RESEARCH_AI_TIMEOUT_SECONDS = 60
+
+
 class CompanyResearchAIProvider(Protocol):
     def complete(self, payload: dict[str, object]) -> str: ...
 
@@ -123,7 +126,13 @@ class CompanyResearchAIGateway:
 
 
 class OpenAICompatibleCompanyResearchProvider:
-    def __init__(self, settings: AISettings, client: httpx.Client, *, timeout: float = 30) -> None:
+    def __init__(
+        self,
+        settings: AISettings,
+        client: httpx.Client,
+        *,
+        timeout: float = COMPANY_RESEARCH_AI_TIMEOUT_SECONDS,
+    ) -> None:
         self.settings = settings
         self.client = client
         self.timeout = timeout
@@ -143,9 +152,16 @@ class OpenAICompatibleCompanyResearchProvider:
 
 
 class ReloadableCompanyResearchAIGateway:
-    def __init__(self, settings: EffectiveAISettingsResolver, client: httpx.Client) -> None:
+    def __init__(
+        self,
+        settings: EffectiveAISettingsResolver,
+        client: httpx.Client,
+        *,
+        timeout: float = COMPANY_RESEARCH_AI_TIMEOUT_SECONDS,
+    ) -> None:
         self.settings = settings
         self.client = client
+        self._timeout = timeout
 
     def configuration_identity(self) -> tuple[str, ...]:
         current = self.settings.resolve()
@@ -166,7 +182,9 @@ class ReloadableCompanyResearchAIGateway:
                 ai_state="unconfigured", ai_message="尚未配置 AI 接口",
             )
         return CompanyResearchAIGateway(
-            OpenAICompatibleCompanyResearchProvider(current, self.client),
+            OpenAICompatibleCompanyResearchProvider(
+                current, self.client, timeout=self._timeout,
+            ),
             provider_name="openai-compatible", model=current.model,
             clock=lambda: request.generated_at,
         ).analyze(request)

@@ -25,6 +25,9 @@ EASTMONEY_FUND_FLOW_DAILY_URL = (
 EASTMONEY_FUND_FLOW_DAILY_FALLBACK_URL = (
     "https://push2.eastmoney.com/api/qt/stock/fflow/kline/get"
 )
+EASTMONEY_FUND_FLOW_DAILY_HTTP_URL = (
+    "http://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get"
+)
 EASTMONEY_FUND_FLOW_MINUTE_URL = (
     "https://push2.eastmoney.com/api/qt/stock/fflow/kline/get"
 )
@@ -59,6 +62,8 @@ class FundFlowSnapshot(BaseModel):
     main_net_5d: Decimal
     main_net_20d: Decimal
     intraday_main_net: Decimal | None = None
+    intraday_large_net: Decimal | None = None
+    intraday_super_net: Decimal | None = None
     daily_sample_count: int = Field(ge=1, le=120)
     intraday_sample_count: int = Field(ge=0)
     flow_direction: Literal["inflow", "outflow", "balanced"]
@@ -107,6 +112,7 @@ class EastmoneyFundFlowSource:
         self.observer = observer
         self._last_request_at: float | None = None
         self._request_lock = asyncio.Lock()
+        self._prefer_http_daily = False
 
     def _record(
         self,
@@ -144,40 +150,59 @@ class EastmoneyFundFlowSource:
             "Origin": "https://quote.eastmoney.com",
         }
         async with self._request_lock:
+            daily_candidates = (
+                (
+                    EASTMONEY_FUND_FLOW_DAILY_URL,
+                    {
+                        "secid": secid,
+                        "fields1": "f1,f2,f3,f7",
+                        "fields2": (
+                            "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,"
+                            "f62,f63,f64,f65"
+                        ),
+                        "lmt": "120",
+                    },
+                    "push2his/stock/fflow/daykline",
+                ),
+                (
+                    EASTMONEY_FUND_FLOW_DAILY_FALLBACK_URL,
+                    {
+                        "secid": secid,
+                        "klt": "101",
+                        "fields1": "f1,f2,f3,f7",
+                        "fields2": (
+                            "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,"
+                            "f62,f63,f64,f65"
+                        ),
+                        "lmt": "120",
+                    },
+                    "push2/stock/fflow/kline",
+                ),
+                (
+                    EASTMONEY_FUND_FLOW_DAILY_HTTP_URL,
+                    {
+                        "secid": secid,
+                        "fields1": "f1,f2,f3,f7",
+                        "fields2": (
+                            "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,"
+                            "f62,f63,f64,f65"
+                        ),
+                        "lmt": "120",
+                    },
+                    "push2his-http/stock/fflow/daykline",
+                ),
+            )
+            if self._prefer_http_daily:
+                daily_candidates = (
+                    daily_candidates[2], daily_candidates[0], daily_candidates[1]
+                )
             daily, daily_endpoint = await self._fetch_series(
                 symbol,
                 "daily",
-                (
-                    (
-                        EASTMONEY_FUND_FLOW_DAILY_URL,
-                        {
-                            "secid": secid,
-                            "fields1": "f1,f2,f3,f7",
-                            "fields2": (
-                                "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,"
-                                "f62,f63,f64,f65"
-                            ),
-                            "lmt": "120",
-                        },
-                        "push2his/stock/fflow/daykline",
-                    ),
-                    (
-                        EASTMONEY_FUND_FLOW_DAILY_FALLBACK_URL,
-                        {
-                            "secid": secid,
-                            "klt": "101",
-                            "fields1": "f1,f2,f3,f7",
-                            "fields2": (
-                                "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,"
-                                "f62,f63,f64,f65"
-                            ),
-                            "lmt": "120",
-                        },
-                        "push2/stock/fflow/kline",
-                    ),
-                ),
+                daily_candidates,
                 headers,
             )
+            self._prefer_http_daily = daily_endpoint.startswith("push2his-http/")
             minute_error = None
             try:
                 minute, minute_endpoint = await self._fetch_series(
@@ -345,15 +370,29 @@ class EastmoneyFundFlowSource:
         params: dict[str, str],
         headers: dict[str, str],
     ) -> FundFlowHttpResponse:
+        request_headers = headers
+        if url.startswith("http://"):
+            request_headers = {
+                key: value for key, value in headers.items() if key != "Origin"
+            }
+            request_headers["Referer"] = "http://quote.eastmoney.com/"
         if self.transport is not None:
-            return await self.transport(url, params, headers)
+            return await self.transport(url, params, request_headers)
+        if url.startswith("http://"):
+            async with httpx.AsyncClient(timeout=15) as client:
+                result = await client.get(
+                    url, params=params, headers=request_headers
+                )
+            return FundFlowHttpResponse(
+                status_code=result.status_code, body=result.content
+            )
         if self.client is not None:
-            result = await self.client.get(url, params=params, headers=headers)
+            result = await self.client.get(url, params=params, headers=request_headers)
             return FundFlowHttpResponse(
                 status_code=result.status_code, body=result.content
             )
         async with httpx.AsyncClient(timeout=15) as client:
-            result = await client.get(url, params=params, headers=headers)
+            result = await client.get(url, params=params, headers=request_headers)
             return FundFlowHttpResponse(
                 status_code=result.status_code, body=result.content
             )
@@ -395,12 +434,20 @@ class EastmoneyFundFlowSource:
 
         minute_rows = self._rows(symbol, minute_payload, "minute")
         intraday_values = []
+        intraday_large_values = []
+        intraday_super_values = []
         for row in minute_rows:
             parts = row.split(",")
             if len(parts) < 6 or not parts[0].strip():
                 raise ValueError("Eastmoney minute fund-flow row is incomplete")
             intraday_values.append(
                 _required_decimal(parts[1], "minute main net")
+            )
+            intraday_large_values.append(
+                _required_decimal(parts[4], "minute large net")
+            )
+            intraday_super_values.append(
+                _required_decimal(parts[5], "minute super net")
             )
 
         latest = parsed_daily[-1]
@@ -421,6 +468,14 @@ class EastmoneyFundFlowSource:
             "intraday_main_net": (
                 str(sum(intraday_values, start=Decimal("0")))
                 if intraday_values else None
+            ),
+            "intraday_large_net": (
+                str(sum(intraday_large_values, start=Decimal("0")))
+                if intraday_large_values else None
+            ),
+            "intraday_super_net": (
+                str(sum(intraday_super_values, start=Decimal("0")))
+                if intraday_super_values else None
             ),
             "intraday_sample_count": len(intraday_values),
             "daily_endpoint": daily_endpoint,
@@ -464,6 +519,14 @@ class EastmoneyFundFlowSource:
             intraday_main_net=(
                 sum(intraday_values, start=Decimal("0"))
                 if intraday_values else None
+            ),
+            intraday_large_net=(
+                sum(intraday_large_values, start=Decimal("0"))
+                if intraday_large_values else None
+            ),
+            intraday_super_net=(
+                sum(intraday_super_values, start=Decimal("0"))
+                if intraday_super_values else None
             ),
             daily_sample_count=len(parsed_daily),
             intraday_sample_count=len(intraday_values),

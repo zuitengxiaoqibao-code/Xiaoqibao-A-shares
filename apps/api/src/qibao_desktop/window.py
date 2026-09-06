@@ -52,6 +52,10 @@ def run_window(
         width=1500,
         height=920,
         min_size=(1080, 700),
+        fullscreen=False,
+        # Start in a maximized native window while keeping the title bar and
+        # system restore button available for manual windowed viewing.
+        maximized=True,
         background_color="#06080d",
     )
 

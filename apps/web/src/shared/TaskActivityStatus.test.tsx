@@ -37,11 +37,28 @@ describe("TaskActivityStatus", () => {
     expect(screen.queryByText("离线")).not.toBeInTheDocument();
   });
 
+  it("shows an invalid AI response as an abnormal result instead of a connection failure", () => {
+    render(<TaskActivityStatus ai={{ configured: true, state: "output_invalid", message: "AI 输出未通过证据校验" }} />);
+
+    expect(screen.getByText("AI 状态")).toBeInTheDocument();
+    expect(screen.getByText("异常")).toBeInTheDocument();
+    expect(screen.queryByText("离线")).not.toBeInTheDocument();
+  });
+
   it("cleans its singleton state between tests", () => {
     render(<TaskActivityStatus ai={{ configured: true, state: "connected", message: "AI 已连接" }} />);
     expect(screen.getByText("AI 状态")).toBeInTheDocument();
     expect(screen.getByText("在线")).toBeInTheDocument();
     expect(screen.queryByText("AI 已连接")).not.toBeInTheDocument();
     expect(screen.queryByText("正在加载事件")).not.toBeInTheDocument();
+  });
+
+  it("keeps the watchlist monitor state visible below system status", () => {
+    updateTaskActivity({ id: "a-share-watchlist-monitor", label: "个股自选", stage: "休市", state: "succeeded", detail: "已保存 2 只" });
+    render(<TaskActivityStatus ai={{ configured: true, state: "connected" }} />);
+
+    expect(screen.getByText("个股自选")).toBeInTheDocument();
+    expect(screen.getByText("休市")).toBeInTheDocument();
+    expect(screen.getByText("已保存 2 只")).toBeInTheDocument();
   });
 });

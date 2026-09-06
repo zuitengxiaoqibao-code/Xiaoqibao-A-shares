@@ -142,7 +142,9 @@ def test_portable_smoke_probes_portfolio_risk_and_company_research_contracts() -
     )[0]
     assert "-Method Post" not in portfolio_probe
     assert "$PortfolioRiskBody" not in script
-    assert "/api/v1/a-shares/600519/company-research" in script
+    assert "/api/v1/a-shares/300456/company-research/tasks" in script
+    assert "/api/v1/a-shares/company-research/tasks/$CompanyResearchTaskId" in script
+    assert "$CompanyResearchTask.progress.status -ne \"succeeded\"" in script
     assert "$PortfolioRisk.status -notin" in script
     assert "$CompanyResearch.status -notin" in script
 
@@ -188,6 +190,16 @@ def test_portable_build_stages_when_the_current_release_is_in_use() -> None:
     assert "applied automatically on the next launch" in script
 
 
+def test_portable_build_reclaims_orphaned_staged_releases() -> None:
+    build_path = _project_root() / "scripts" / "build-portable.ps1"
+    script = build_path.read_text(encoding="utf-8")
+
+    assert "orphaned staged releases" in script
+    assert "PendingStage" in script
+    assert "XiaoQiBao-Portable-staged-*" in script
+    assert "Remove-Item -LiteralPath $_.FullName -Recurse -Force" in script
+
+
 def test_portable_build_writes_release_size_and_incremental_copy_manifest() -> None:
     build_path = _project_root() / "scripts" / "build-portable.ps1"
     script = build_path.read_text(encoding="utf-8")
@@ -224,6 +236,24 @@ def test_portable_smoke_waits_for_deferred_quant_scan_to_settle() -> None:
     assert 'candidate_scan_state -eq "pending"' in script
     assert "$QuantBackgroundDeadline" in script
     assert "background candidate scan" in script
+
+
+def test_portable_smoke_does_not_cancel_slow_quant_poll_at_ten_seconds() -> None:
+    smoke_path = _project_root() / "scripts" / "run-portable-smoke.ps1"
+    script = smoke_path.read_text(encoding="utf-8")
+
+    marker = '$QuantStrategy = Invoke-RestMethod -Uri ("http://127.0.0.1:{0}/api/v1/a-shares/quant-strategy?limit=12" -f $Port)'
+    assert marker in script
+    assert marker + " -TimeoutSec 10" not in script
+
+
+def test_runtime_http_clients_allow_long_data_source_reads() -> None:
+    main_path = _project_root() / "apps" / "api" / "src" / "qibao_api" / "main.py"
+    script = main_path.read_text(encoding="utf-8")
+
+    assert "httpx.AsyncClient(timeout=10)" not in script
+    assert "httpx.Client(timeout=10)" not in script
+    assert "read=60" in script
 
 
 def test_portable_spec_does_not_collect_cross_platform_or_unused_tool_submodules() -> None:

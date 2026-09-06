@@ -27,6 +27,7 @@ from qibao_api.contracts.market_overview import (
     OverviewLargeOrderFlow,
     OverviewLiquidity,
     OverviewLiveFeedItem,
+    OverviewMinutePoint,
     OverviewMarketDataStatus,
     OverviewOfficialEvent,
     OverviewRegimeAssessment,
@@ -36,6 +37,7 @@ from qibao_api.contracts.market_overview import (
     OverviewSectorStock,
     OverviewSentiment,
 )
+from qibao_api.gongbu.shenwan_industry import resolve_shenwan_industry
 
 
 HUNDRED = Decimal("100")
@@ -45,6 +47,11 @@ LIVE_MAX_AGE = timedelta(minutes=2)
 
 
 class MarketOverviewService:
+    @staticmethod
+    def _source_tag(source, suffix: str) -> str:
+        source_id = str(getattr(source, "last_source_id", getattr(source, "source_id", "unknown")))
+        return f"{source_id}-{suffix}"
+
     def __init__(
         self,
         *,
@@ -270,6 +277,10 @@ class MarketOverviewService:
         merged_minutes = cls._merge_minute_series(
             response.minute_series, current.minute_series,
         )
+        merged_minutes_by_index = cls._merge_minute_series_by_index(
+            response.minute_series_by_index,
+            current.minute_series_by_index,
+        )
         response_minute_at = max(
             (item.observed_at for item in response.minute_series),
             default=None,
@@ -281,6 +292,8 @@ class MarketOverviewService:
         updates: dict[str, object] = {}
         if merged_minutes != response.minute_series:
             updates["minute_series"] = merged_minutes
+        if merged_minutes_by_index != response.minute_series_by_index:
+            updates["minute_series_by_index"] = merged_minutes_by_index
         if current_minute_at is not None and (
             response_minute_at is None or current_minute_at >= response_minute_at
         ):
@@ -293,6 +306,15 @@ class MarketOverviewService:
             updates["live_feed"] = cls._merge_live_feed(
                 response.live_feed, current.live_feed,
             )
+        if current.sectors and not response.sectors:
+            # A transient sector-source failure must not blank a same-day
+            # verified heatmap while the index tape continues to refresh.
+            updates["sectors"] = current.sectors
+            updates["sector_stocks"] = current.sector_stocks
+            updates["warnings"] = tuple(dict.fromkeys((
+                *response.warnings,
+                "sector_snapshot_refresh_failed_using_previous",
+            )))
         if updates.get("indices") and updates.get("minute_series", response.minute_series):
             updates["status"] = "ready"
         if current.observed_at > response.observed_at:
@@ -307,9 +329,11 @@ class MarketOverviewService:
         a slow news/sector/review source from freezing the index minute chart
         and verified intraday events at the premarket snapshot.
         """
+        started_at = datetime.now(timezone.utc)
         refresh_now = self.clock()
         indices: tuple = ()
         minute_series: tuple = ()
+        minute_series_by_index: dict[str, tuple] = {}
         warnings: list[str] = []
         sources: list[str] = []
         local_market = None
@@ -322,14 +346,15 @@ class MarketOverviewService:
             indices, index_warnings = self.source.fetch_indices()
             warnings.extend(index_warnings)
             if indices:
-                sources.append("tencent-index")
+                sources.append(self._source_tag(self.source, "index"))
         except (httpx.HTTPError, OSError, ValueError):
             warnings.append("index_quotes_unavailable")
         try:
-            minute_series, minute_warnings = self.source.fetch_minutes()
+            minute_series_by_index, minute_warnings = self._fetch_index_minutes()
+            minute_series = minute_series_by_index.get("sh000001", ())
             warnings.extend(minute_warnings)
-            if minute_series:
-                sources.append("tencent-index-minute")
+            if any(minute_series_by_index.values()):
+                sources.append(self._source_tag(self.source, "index-minute"))
         except (httpx.HTTPError, OSError, ValueError):
             warnings.append("minute_series_unavailable")
 
@@ -346,15 +371,24 @@ class MarketOverviewService:
             merged_minutes = self._merge_minute_series(
                 current.minute_series, minute_series,
             )
+            merged_minutes_by_index = self._merge_minute_series_by_index(
+                current.minute_series_by_index,
+                minute_series_by_index,
+            )
             updates: dict[str, object] = {}
             if indices:
                 updates["indices"] = indices
             if merged_minutes:
                 updates["minute_series"] = merged_minutes
+            if merged_minutes_by_index:
+                updates["minute_series_by_index"] = merged_minutes_by_index
             if indices and merged_minutes:
                 updates["status"] = "ready"
             if local_market is not None:
                 updates["market_stocks"] = local_market.market_stocks
+                if local_market.sectors:
+                    updates["sectors"] = local_market.sectors
+                    updates["sector_stocks"] = local_market.sector_stocks
                 updates["market_data"] = OverviewMarketDataStatus(
                     source=local_market.source,
                     quality=local_market.quality,
@@ -395,6 +429,11 @@ class MarketOverviewService:
             self._cached = response
             self._cached_at = refresh_now
             self._write_cache(response)
+            self._record_shared_snapshots(
+                response,
+                reused=False,
+                started_at=started_at,
+            )
 
         # News is intentionally outside the service lock. A repository backed
         # by a large cache must never block callers that only need the tape.
@@ -428,6 +467,16 @@ class MarketOverviewService:
             self._cached = response
             self._cached_at = refresh_now
             self._write_cache(response)
+            if event_updates:
+                # Events are enriched after the latency-critical tape publish.
+                # Publish the completed snapshot as well; otherwise SSE
+                # consumers can remain on the earlier zero-event frame until
+                # a later HTTP poll happens to win the race.
+                self._record_shared_snapshots(
+                    response,
+                    reused=False,
+                    started_at=started_at,
+                )
 
     @staticmethod
     def _merge_minute_series(previous: tuple, incoming: tuple) -> tuple:
@@ -436,6 +485,51 @@ class MarketOverviewService:
         by_time = {item.observed_at: item for item in previous}
         by_time.update({item.observed_at: item for item in incoming})
         return tuple(by_time[key] for key in sorted(by_time))
+
+    @classmethod
+    def _merge_minute_series_by_index(cls, previous: dict, incoming: dict) -> dict:
+        keys = set(previous) | set(incoming)
+        merged = {}
+        for key in sorted(keys):
+            points = cls._merge_minute_series(
+                previous.get(key, ()), incoming.get(key, ()),
+            )
+            if points:
+                merged[key] = points
+        return merged
+
+    def _fetch_index_minutes(self) -> tuple[dict[str, tuple], tuple[str, ...]]:
+        instruments = ("sh000001", "sz399001", "sz399006")
+        grouped = getattr(self.source, "fetch_minutes_by_index", None)
+        if callable(grouped):
+            values, warnings = grouped(instruments)
+            values = dict(values)
+            warnings = list(warnings)
+            if not any(values.values()) and "minute_series_unavailable" not in warnings:
+                warnings.append("minute_series_unavailable")
+            return values, tuple(warnings)
+
+        values: dict[str, tuple] = {}
+        warnings: list[str] = []
+        for instrument in instruments:
+            try:
+                try:
+                    points, item_warnings = self.source.fetch_minutes(instrument)
+                except TypeError:
+                    if instrument != "sh000001":
+                        raise
+                    points, item_warnings = self.source.fetch_minutes()
+            except (httpx.HTTPError, OSError, ValueError):
+                points = ()
+                item_warnings = (f"minute_series_unavailable:{instrument}",)
+            except TypeError:
+                points = ()
+                item_warnings = (f"minute_series_unavailable:{instrument}",)
+            values[instrument] = points
+            warnings.extend(item_warnings)
+        if not any(values.values()):
+            warnings.append("minute_series_unavailable")
+        return values, tuple(warnings)
 
     @staticmethod
     def _temporal_payload_for_day(
@@ -446,6 +540,18 @@ class MarketOverviewService:
             item for item in response.minute_series
             if item.observed_at.astimezone(CHINA_TZ).date() == trading_day
         )
+        minute_series_by_index = {
+            instrument: tuple(
+                item for item in points
+                if item.observed_at.astimezone(CHINA_TZ).date() == trading_day
+            )
+            for instrument, points in response.minute_series_by_index.items()
+        }
+        minute_series_by_index = {
+            instrument: points
+            for instrument, points in minute_series_by_index.items()
+            if points
+        }
         anomalies = tuple(
             item for item in response.anomalies
             if item.occurred_at.astimezone(CHINA_TZ).date() == trading_day
@@ -457,6 +563,8 @@ class MarketOverviewService:
         updates: dict[str, object] = {}
         if minute_series != response.minute_series:
             updates["minute_series"] = minute_series
+        if minute_series_by_index != response.minute_series_by_index:
+            updates["minute_series_by_index"] = minute_series_by_index
         if anomalies != response.anomalies:
             updates["anomalies"] = anomalies
         if live_feed != response.live_feed:
@@ -860,21 +968,31 @@ class MarketOverviewService:
             indices, index_warnings = self.source.fetch_indices()
             warnings.extend(index_warnings)
             if indices:
-                sources.append("tencent-index")
+                sources.append(self._source_tag(self.source, "index"))
         except (httpx.HTTPError, OSError, ValueError):
             indices = ()
             warnings.append("index_quotes_unavailable")
         try:
-            minute_series, minute_warnings = self.source.fetch_minutes()
-            minute_series = tuple(
-                item for item in minute_series
-                if item.observed_at.astimezone(CHINA_TZ).date() == as_of
-            )
+            minute_series_by_index, minute_warnings = self._fetch_index_minutes()
+            minute_series_by_index = {
+                instrument: tuple(
+                    item for item in points
+                    if item.observed_at.astimezone(CHINA_TZ).date() == as_of
+                )
+                for instrument, points in minute_series_by_index.items()
+            }
+            minute_series_by_index = {
+                instrument: points
+                for instrument, points in minute_series_by_index.items()
+                if points
+            }
+            minute_series = minute_series_by_index.get("sh000001", ())
             warnings.extend(minute_warnings)
-            if minute_series:
-                sources.append("tencent-index-minute")
+            if minute_series_by_index:
+                sources.append(self._source_tag(self.source, "index-minute"))
         except (httpx.HTTPError, OSError, ValueError):
             minute_series = ()
+            minute_series_by_index = {}
             warnings.append("minute_series_unavailable")
 
         if local_market is not None:
@@ -938,6 +1056,7 @@ class MarketOverviewService:
             first_limit_candidates = ()
             warnings.append("first_limit_up_unavailable")
 
+        verified_sector_fallback = False
         if local_market is not None and local_market.sectors:
             sectors = local_market.sectors
             stocks_by_sector = local_market.sector_stocks
@@ -950,7 +1069,7 @@ class MarketOverviewService:
                 stock_quotes, stock_warnings = self.source.fetch_stocks(requested_symbols)
                 warnings.extend(stock_warnings)
                 if stock_quotes:
-                    sources.append("tencent-stock-batch")
+                    sources.append(self._source_tag(self.source, "stock-batch"))
             except (httpx.HTTPError, OSError, ValueError):
                 stock_quotes = ()
                 warnings.append("sector_stock_quotes_unavailable")
@@ -960,6 +1079,18 @@ class MarketOverviewService:
                 stock_quotes,
                 first_limit_candidates,
             )
+        if not sectors:
+            sectors, sector_snapshot_stale = self._verified_sector_heatmap(
+                cutoff=now,
+            )
+            if sectors:
+                verified_sector_fallback = True
+                stocks_by_sector = {}
+                sources.append("eastmoney-sector-fund-flow-cache")
+                if sector_snapshot_stale:
+                    warnings.append(
+                        "板块行情更新暂时中断，正在显示今日最近一次已验证数据"
+                    )
 
         review = None
         if self.market_review_source is not None:
@@ -1017,7 +1148,10 @@ class MarketOverviewService:
             stock_sample="representative" if market_stocks else "none",
             stock_sample_count=len(market_stocks),
             sector_sample=(
-                "strong_sector" if local_market is not None and sectors
+                "strong_sector" if (
+                    (local_market is not None and sectors)
+                    or verified_sector_fallback
+                )
                 else "news_linked" if sectors
                 else "none"
             ),
@@ -1047,6 +1181,11 @@ class MarketOverviewService:
                 [sentiment.observed_at]
                 + [item.observed_at for item in indices]
                 + [item.observed_at for item in minute_series[-1:]]
+                + [
+                    item.observed_at
+                    for points in minute_series_by_index.values()
+                    for item in points[-1:]
+                ]
                 + ([local_market.observed_at] if local_market is not None else []),
             ),
             sentiment=sentiment,
@@ -1059,6 +1198,7 @@ class MarketOverviewService:
             data_scope=data_scope,
             indices=indices,
             minute_series=minute_series,
+            minute_series_by_index=minute_series_by_index,
             anomalies=anomalies,
             live_feed=live_feed,
             sectors=sectors,
@@ -1220,13 +1360,33 @@ class MarketOverviewService:
                 continue
             if snapshot is None:
                 continue
-            main_net_yi = (snapshot.latest_main_net / Decimal("100000000")).quantize(
+            observed_trade_date = snapshot.observed_at.astimezone(CHINA_TZ).date()
+            intraday_values = (
+                getattr(snapshot, "intraday_main_net", None),
+                getattr(snapshot, "intraday_large_net", None),
+                getattr(snapshot, "intraday_super_net", None),
+            )
+            use_intraday = (
+                observed_trade_date == as_of
+                and getattr(snapshot, "intraday_sample_count", 0) > 0
+                and all(value is not None for value in intraday_values)
+            )
+            main_net, large_net, super_net = (
+                intraday_values
+                if use_intraday
+                else (
+                    snapshot.latest_main_net,
+                    snapshot.latest_large_net,
+                    snapshot.latest_super_net,
+                )
+            )
+            main_net_yi = (main_net / Decimal("100000000")).quantize(
                 TWO_PLACES, rounding=ROUND_HALF_UP,
             )
-            large_net_yi = (snapshot.latest_large_net / Decimal("100000000")).quantize(
+            large_net_yi = (large_net / Decimal("100000000")).quantize(
                 TWO_PLACES, rounding=ROUND_HALF_UP,
             )
-            super_net_yi = (snapshot.latest_super_net / Decimal("100000000")).quantize(
+            super_net_yi = (super_net / Decimal("100000000")).quantize(
                 TWO_PLACES, rounding=ROUND_HALF_UP,
             )
             direction = (
@@ -1237,14 +1397,18 @@ class MarketOverviewService:
             records.append(OverviewLargeOrderFlow(
                 symbol=stock.symbol,
                 name=stock.name,
-                latest_trade_date=snapshot.latest_trade_date,
+                latest_trade_date=as_of if use_intraday else snapshot.latest_trade_date,
                 observed_at=snapshot.observed_at,
                 main_net_yi=main_net_yi,
                 large_net_yi=large_net_yi,
                 super_net_yi=super_net_yi,
                 direction=direction,
                 source=snapshot.source,
-                quality=("ready" if snapshot.latest_trade_date == as_of else "stale"),
+                quality=(
+                    "ready"
+                    if use_intraday or snapshot.latest_trade_date == as_of
+                    else "stale"
+                ),
             ))
         return tuple(sorted(
             records,
@@ -1267,11 +1431,29 @@ class MarketOverviewService:
             return (), 0, 0
 
         latest = snapshots[-1]
-        tracked = tuple(sorted(
-            latest.items,
+        # Keep both sides of capital rotation visible. Selecting only the
+        # largest absolute values can legitimately produce twelve inflow rows
+        # and silently erase the outflow column on the dashboard.
+        inflows = sorted(
+            (item for item in latest.items if item.main_net_yi > 0),
+            key=lambda item: item.main_net_yi,
+            reverse=True,
+        )
+        outflows = sorted(
+            (item for item in latest.items if item.main_net_yi < 0),
             key=lambda item: abs(item.main_net_yi),
             reverse=True,
-        )[:12])
+        )
+        tracked_items = list(inflows[:6]) + list(outflows[:6])
+        if len(tracked_items) < 12:
+            selected_codes = {item.sector_code for item in tracked_items}
+            remaining = sorted(
+                (item for item in latest.items if item.sector_code not in selected_codes),
+                key=lambda item: abs(item.main_net_yi),
+                reverse=True,
+            )
+            tracked_items.extend(remaining[: 12 - len(tracked_items)])
+        tracked = tuple(tracked_items)
         tracked_codes = {item.sector_code for item in tracked}
         points_by_code: dict[str, list[OverviewSectorFundFlowPoint]] = defaultdict(list)
         for snapshot in snapshots:
@@ -1284,15 +1466,19 @@ class MarketOverviewService:
             for item in snapshot.items:
                 if item.sector_code not in tracked_codes:
                     continue
+                assignment = resolve_shenwan_industry(item.sector_name, "sector-fund-flow", item.sector_code, observed_at=snapshot.observed_at)
                 points_by_code[item.sector_code].append(OverviewSectorFundFlowPoint(
                     sector_code=item.sector_code,
                     sector_name=item.sector_name,
                     observed_at=snapshot.observed_at,
+                    change_percent=getattr(item, "change_percent", None),
                     main_net_yi=item.main_net_yi,
                     large_net_yi=item.large_net_yi,
                     super_net_yi=item.super_net_yi,
                     source=snapshot.source,
                     quality=point_quality,
+                    shenwan_industry=assignment.industry,
+                    industry_system="申万" if assignment.is_verified else "待核验",
                 ))
         points = tuple(
             point
@@ -1300,6 +1486,57 @@ class MarketOverviewService:
             for point in points_by_code.get(tracked_item.sector_code, ())
         )
         return points, len(points_by_code), len(snapshots)
+
+    def _verified_sector_heatmap(
+        self,
+        *,
+        cutoff: datetime,
+    ) -> tuple[tuple[OverviewSector, ...], bool]:
+        if self.sector_fund_flow_repository is None:
+            return (), False
+        try:
+            snapshot = self.sector_fund_flow_repository.latest()
+        except (AttributeError, OSError, RuntimeError, ValueError):
+            return (), False
+        if snapshot is None:
+            return (), False
+        cutoff_local = cutoff.astimezone(CHINA_TZ)
+        observed_local = snapshot.observed_at.astimezone(CHINA_TZ)
+        if observed_local.date() != cutoff_local.date():
+            return (), False
+        age = cutoff.astimezone(timezone.utc) - snapshot.observed_at.astimezone(timezone.utc)
+        stale = age > LIVE_MAX_AGE
+        values = []
+        for item in snapshot.items:
+            if (
+                item.change_percent is None
+                or item.rising_count is None
+                or item.falling_count is None
+            ):
+                continue
+            stock_count = item.rising_count + item.falling_count
+            if stock_count <= 0:
+                continue
+            assignment = resolve_shenwan_industry(item.sector_name, "sector-fund-flow", item.sector_code, observed_at=snapshot.observed_at)
+            values.append(OverviewSector(
+                sector_id=item.sector_code,
+                name=item.sector_name,
+                change_percent=item.change_percent,
+                amount_yi=item.amount_yi,
+                rising_count=item.rising_count,
+                falling_count=item.falling_count,
+                stock_count=stock_count,
+                shenwan_industry=assignment.industry,
+                industry_system="申万" if assignment.is_verified else "待核验",
+            ))
+        return (
+            tuple(sorted(
+                values,
+                key=lambda item: abs(item.change_percent or Decimal("0")),
+                reverse=True,
+            )[:40]),
+            stale,
+        )
 
     def _official_events(self, cutoff: datetime) -> tuple[OverviewOfficialEvent, ...]:
         if self.official_calendar_source is None:
@@ -1349,6 +1586,11 @@ class MarketOverviewService:
                     return "closed"
             except (OSError, RuntimeError, ValueError):
                 pass
+        # Keep the previous-close snapshot in the overnight window. The
+        # explicit pre-open state starts at 08:00, when users expect a clear
+        # "等待开盘中" indicator rather than a misleading live label.
+        if local_now.time() < time(8, 0):
+            return "closed"
         if local_now.time() < time(9, 25):
             return "premarket"
         if local_now.time() < time(15, 0):
@@ -1553,6 +1795,7 @@ class MarketOverviewService:
                 sum(valid_changes, Decimal()) / Decimal(len(valid_changes))
                 if valid_changes else None
             )
+            assignment = resolve_shenwan_industry(name, "market-overview")
             sectors.append(OverviewSector(
                 sector_id=sector_id,
                 name=name,
@@ -1569,6 +1812,8 @@ class MarketOverviewService:
                 rising_count=sum(item.change_percent is not None and item.change_percent > 0 for item in rows),
                 falling_count=sum(item.change_percent is not None and item.change_percent < 0 for item in rows),
                 stock_count=len(rows),
+                shenwan_industry=assignment.industry,
+                industry_system="申万" if assignment.is_verified else "待核验",
             ))
             stocks_by_sector[sector_id] = tuple(rows[:20])
         sectors.sort(

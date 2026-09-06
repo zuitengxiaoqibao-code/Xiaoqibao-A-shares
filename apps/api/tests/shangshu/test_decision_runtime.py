@@ -12,6 +12,7 @@ from qibao_api.a_shares.models import (
     FactorSnapshot,
 )
 from qibao_api.contracts.decision import EvidenceReference
+from qibao_api.contracts.industry import ShenwanIndustry
 from qibao_api.gongbu.market_feed import MarketFeedSnapshot
 from qibao_api.shangshu.decision_runtime import (
     DecisionSymbolSource,
@@ -129,16 +130,55 @@ def test_polling_feed_rejects_a_batch_that_is_still_incomplete_after_retry():
         return httpx.Response(200, content=tencent_quote_line("600000"))
 
     cutoff = datetime(2026, 7, 15, 10, 31, tzinfo=timezone(timedelta(hours=8)))
+    def fallback_client_factory():
+        return httpx.Client(transport=httpx.MockTransport(handler))
+
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(ValueError, match="incomplete Tencent quote batch.*000001"):
-            TencentPollingMarketFeed(client, Compliance()).snapshot_many(
+            TencentPollingMarketFeed(
+                client,
+                Compliance(),
+                fallback_client_factory=fallback_client_factory,
+            ).snapshot_many(
                 ("600000", "000001"), cutoff=cutoff,
             )
 
     assert requested_urls == [
         "https://qt.gtimg.cn/q=sh600000,sz000001",
         "https://qt.gtimg.cn/q=sz000001",
+        "https://qt.gtimg.cn/q=sz000001",
     ]
+
+
+def test_polling_feed_uses_a_direct_client_when_environment_network_is_incomplete():
+    primary_urls = []
+    direct_urls = []
+
+    def primary_handler(request: httpx.Request) -> httpx.Response:
+        primary_urls.append(str(request.url))
+        return httpx.Response(200, content=b"")
+
+    def direct_handler(request: httpx.Request) -> httpx.Response:
+        direct_urls.append(str(request.url))
+        return httpx.Response(200, content=tencent_quote_line("600000"))
+
+    def fallback_client_factory():
+        return httpx.Client(transport=httpx.MockTransport(direct_handler))
+
+    cutoff = datetime(2026, 7, 15, 10, 31, tzinfo=timezone(timedelta(hours=8)))
+    with httpx.Client(transport=httpx.MockTransport(primary_handler)) as client:
+        snapshots = TencentPollingMarketFeed(
+            client,
+            Compliance(),
+            fallback_client_factory=fallback_client_factory,
+        ).snapshot_many(("600000",), cutoff=cutoff)
+
+    assert primary_urls == [
+        "https://qt.gtimg.cn/q=sh600000",
+        "https://qt.gtimg.cn/q=sh600000",
+    ]
+    assert direct_urls == ["https://qt.gtimg.cn/q=sh600000"]
+    assert [item.symbol for item in snapshots] == ["600000"]
 
 
 class Candidates:
@@ -223,7 +263,13 @@ def test_market_risk_includes_verified_topics_industries_and_candidate_fund_flow
         ),
     ])
     classifications = SimpleNamespace(latest=lambda symbol, as_of, cutoff=None: SimpleNamespace(
-        industry="银行" if symbol == "600000" else "白酒",
+        industry="供应商原始分类",
+        shenwan_industry=ShenwanIndustry(
+            code="SW801780" if symbol == "600000" else "SW801120",
+            name="银行" if symbol == "600000" else "食品饮料",
+            level="一级",
+            version="SW2021",
+        ),
     ))
     flows = SimpleNamespace(latest=lambda symbol, as_of, cutoff=None: SimpleNamespace(
         flow_direction="inflow" if symbol == "600000" else "outflow",
@@ -235,7 +281,7 @@ def test_market_risk_includes_verified_topics_industries_and_candidate_fund_flow
     ).summarize(date(2026, 7, 15), NOW)
 
     assert result.hot_topics == ("人工智能",)
-    assert result.industries == ("软件服务", "银行", "白酒")
+    assert result.industries == ("软件服务", "银行", "食品饮料")
     assert (result.fund_flow_inflow_count, result.fund_flow_outflow_count) == (1, 1)
     assert result.fund_flow_available_count == 2
 

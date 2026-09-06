@@ -156,7 +156,7 @@ export function QuantShadowLedgerPanel({ records, loading, error, analytics = nu
         <div><span>生存者偏差检查</span><strong>{calibration.integrity.survivorship_check === "passed" ? "通过" : calibration.integrity.survivorship_check === "failed" ? "失败" : "不可用"}</strong></div>
         <div><span>重复决策检查</span><strong>{calibration.integrity.duplicate_decision_check === "passed" ? "通过" : "失败"}</strong></div>
       </div>
-      {(calibration.limitations.length > 0 || calibration.integrity.limitations.length > 0) && <div className="quant-shadow-findings">{[...calibration.limitations, ...calibration.integrity.limitations].map((item, index) => <span key={`${item}-${index}`}>{item}</span>)}</div>}
+      {(calibration.limitations.length > 0 || calibration.integrity.limitations.length > 0) && <div className="quant-shadow-findings">{[...new Set([...calibration.limitations, ...calibration.integrity.limitations])].map((item) => <span key={item}>{item}</span>)}</div>}
     </section>}
     {loading && !records.length && <div className="quant-shadow-empty" role="status"><Clock3 size={18} /><b>正在读取冻结决策</b></div>}
     {error && <div className="quant-shadow-empty error" role="alert"><b>{error}</b><p>保留上一次真实账本，不用空响应覆盖。</p></div>}
