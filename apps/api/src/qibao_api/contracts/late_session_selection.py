@@ -146,6 +146,7 @@ class LateSessionAIAnalysis(BaseModel):
 class LateSessionSelectionResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
+    snapshot_id: str | None = None
     status: Literal["ready", "partial", "unavailable"]
     trading_date: date
     server_time: AwareDatetime
@@ -168,3 +169,18 @@ class LateSessionSelectionResponse(BaseModel):
     behaviors: tuple[LateSessionBehavior, ...] = ()
     source_evidence: tuple[str, ...] = ()
     limitations: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_candidates(self) -> "LateSessionSelectionResponse":
+        if self.candidate_count != len(self.candidates):
+            raise ValueError("candidate_count must match candidates")
+        symbols = [item.quote.symbol for item in self.candidates]
+        if len(symbols) != len(set(symbols)):
+            raise ValueError("candidate symbols must be unique")
+        return self
+
+
+class LateSessionAIRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    snapshot_id: str = Field(pattern=r"^[a-f0-9]{64}$")

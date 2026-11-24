@@ -33,7 +33,10 @@ class HistorySyncJob(BaseModel):
     skipped_count: int = Field(ge=0)
     pending_count: int = Field(ge=0)
     tdx_ready_count: int = Field(ge=0)
+    eltdx_ready_count: int = Field(default=0, ge=0)
     baidu_ready_count: int = Field(ge=0)
+    eastmoney_ready_count: int = Field(default=0, ge=0)
+    tencent_ready_count: int = Field(default=0, ge=0)
     created_at: AwareDatetime
     updated_at: AwareDatetime
 
@@ -45,9 +48,10 @@ class HistorySyncItem(BaseModel):
     symbol: str = Field(pattern=r"^\d{6}$")
     state: HistorySyncItemState
     attempts: int = Field(ge=0)
-    source: Literal["mootdx", "baidu"] | None = None
+    source: Literal["mootdx", "eltdx", "baidu", "eastmoney", "tencent"] | None = None
     written_rows: int = Field(ge=0)
     error_code: str | None = None
+    error_detail: str | None = None
     updated_at: AwareDatetime
 
 
@@ -58,6 +62,8 @@ class HistoryCoverageSummary(BaseModel):
     universe_count: int = Field(ge=0)
     backfill_complete_count: int = Field(ge=0)
     eligible_count: int = Field(ge=0)
+    new_listing_complete_count: int = Field(default=0, ge=0)
+    confirmed_suspended_count: int = Field(default=0, ge=0)
     target_date_count: int = Field(ge=0)
     target_date_coverage_percent: float | None = Field(default=None, ge=0, le=100)
     dominant_trade_date: date | None = None

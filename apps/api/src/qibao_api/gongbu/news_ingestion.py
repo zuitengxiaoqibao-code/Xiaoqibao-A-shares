@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 from datetime import datetime, timezone
@@ -24,12 +25,12 @@ class NewsIngestionService:
         self.realtime_snapshot_bus = realtime_snapshot_bus
 
     async def sync(self) -> dict[str, int]:
-        self.compliance.require_feature_sources("market_news", AssetKind.A_SHARE)
+        await asyncio.to_thread(self.compliance.require_feature_sources, "market_news", AssetKind.A_SHARE)
         articles = await self.source.fetch()
         return await self._ingest(articles)
 
     async def sync_symbol(self, symbol: str) -> dict[str, int]:
-        self.compliance.require_feature_sources("market_news", AssetKind.A_SHARE)
+        await asyncio.to_thread(self.compliance.require_feature_sources, "market_news", AssetKind.A_SHARE)
         if self.stock_source is None:
             return {
                 "fetched": 0, "inserted": 0, "clusters": 0, "events": 0,
@@ -49,28 +50,32 @@ class NewsIngestionService:
     ) -> dict[str, int]:
         accepted_articles = []
         for article in articles:
-            event = self.linker.link(article, context_instruments=context_instruments)
+            # Linking reads the instrument directory, which may be locked by
+            # a concurrent data repair. Keep that wait off the API event loop.
+            event = await asyncio.to_thread(
+                self.linker.link, article, context_instruments=context_instruments,
+            )
             if self.quality_policy.evaluate(article, event).accepted:
                 accepted_articles.append(article)
         clusters = deduplicate_articles(accepted_articles)
-        inserted = self.repository.append_articles(tuple(accepted_articles))
+        inserted = await asyncio.to_thread(self.repository.append_articles, tuple(accepted_articles))
         for cluster in clusters:
-            self.repository.append_cluster(cluster)
+            await asyncio.to_thread(self.repository.append_cluster, cluster)
         article_ids = tuple(article.article_id for article in accepted_articles)
         article_by_id = {
             article.article_id: article
-            for article in self.repository.articles_by_ids(article_ids)
+            for article in await asyncio.to_thread(self.repository.articles_by_ids, article_ids)
         }
         event_count = 0
         interpretation_count = 0
         generated_count = 0
-        interpretations = tuple(self.repository.interpretations())
+        interpretations = tuple(await asyncio.to_thread(self.repository.interpretations))
         for cluster in clusters:
             primary = article_by_id[cluster.primary_article_id]
-            event = self.linker.link(
-                primary, context_instruments=context_instruments
+            event = await asyncio.to_thread(
+                self.linker.link, primary, context_instruments=context_instruments,
             )
-            event_inserted, event_corrected = self.repository.reconcile_event(event)
+            event_inserted, event_corrected = await asyncio.to_thread(self.repository.reconcile_event, event)
             event_count += int(event_inserted)
             needs_interpretation = False
             if self.ai_gateway is not None:
@@ -87,13 +92,13 @@ class NewsIngestionService:
             if should_interpret:
                 generated_count += 1
                 interpretation = await self.ai_gateway.interpret(event)
-                appended = self.repository.append_interpretation(interpretation)
+                appended = await asyncio.to_thread(self.repository.append_interpretation, interpretation)
                 interpretation_count += int(appended)
                 if appended:
                     interpretations = (*interpretations, interpretation)
         archive_expired = getattr(self.repository, "archive_expired", None)
         if callable(archive_expired):
-            archive_expired(now=articles[0].fetched_at if articles else None)
+            await asyncio.to_thread(archive_expired, now=articles[0].fetched_at if articles else None)
         result = {
             "fetched": len(articles),
             "inserted": inserted,
@@ -101,7 +106,7 @@ class NewsIngestionService:
             "events": event_count,
             "interpretations": interpretation_count,
         }
-        self._publish_realtime_snapshot()
+        await asyncio.to_thread(self._publish_realtime_snapshot)
         return result
 
     def _publish_realtime_snapshot(self) -> None:

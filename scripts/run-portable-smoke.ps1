@@ -1,6 +1,7 @@
 ﻿param(
     [int]$Port = 18765,
     [switch]$KeepSmokeRoot,
+    [switch]$VerifySpeech,
     [switch]$UseReleaseData,
     [string]$ReleaseRootOverride = "",
     [string]$PortableRootOverride = "",
@@ -235,6 +236,32 @@ try {
         $HomeResponse.Content -notmatch "id=.root."
     ) {
         throw "Portable frontend smoke failed"
+    }
+    if ($VerifySpeech) {
+        $SpeechAudioPath = Join-Path $StartupEvidenceDirectory "edge-tts-smoke.mp3"
+        $SpeechPayload = @{ text = "易数智算，语音连接测试。" } | ConvertTo-Json -Compress
+        $SpeechResponse = Invoke-WebRequest `
+            -Uri "http://127.0.0.1:$Port/api/v1/speech/synthesize" `
+            -Method Post `
+            -ContentType "application/json; charset=utf-8" `
+            -Body ($Utf8.GetBytes($SpeechPayload)) `
+            -OutFile $SpeechAudioPath `
+            -PassThru `
+            -TimeoutSec 30 `
+            -UseBasicParsing
+        $SpeechBytes = [IO.File]::ReadAllBytes($SpeechAudioPath)
+        $HasMp3Header = $SpeechBytes.Length -ge 3 -and (
+            ($SpeechBytes[0] -eq 0x49 -and $SpeechBytes[1] -eq 0x44 -and $SpeechBytes[2] -eq 0x33) -or
+            ($SpeechBytes[0] -eq 0xFF -and ($SpeechBytes[1] -band 0xE0) -eq 0xE0)
+        )
+        if (
+            $SpeechResponse.StatusCode -ne 200 -or
+            [string]$SpeechResponse.Headers["Content-Type"] -notmatch "^audio/mpeg" -or
+            -not $HasMp3Header
+        ) {
+            throw "Portable Edge TTS cloud synthesis did not return MP3 audio"
+        }
+        Write-Host ("Edge TTS cloud synthesis passed: {0} bytes; audio={1}" -f $SpeechBytes.Length, $SpeechAudioPath)
     }
     $StageStartedMs = $StartedAt.ElapsedMilliseconds
     $Overview = Invoke-RestMethod `

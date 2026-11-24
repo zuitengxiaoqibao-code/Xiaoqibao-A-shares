@@ -342,6 +342,7 @@ class MarketOverviewResponse(BaseModel):
     minute_series_by_index: dict[str, tuple[OverviewMinutePoint, ...]] = Field(default_factory=dict)
     anomalies: tuple[OverviewAnomaly, ...] = ()
     live_feed: tuple[OverviewLiveFeedItem, ...] = ()
+    stock_names: dict[str, str] = Field(default_factory=dict)
     sectors: tuple[OverviewSector, ...] = ()
     sector_stocks: dict[str, tuple[OverviewSectorStock, ...]] = Field(
         default_factory=dict

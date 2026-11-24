@@ -229,6 +229,11 @@ class RecordingHistorySupplementService:
     def run(self, job_id):
         self.run_calls.append(job_id)
 
+    def start_job(self, executor):
+        job = self.create_job()
+        executor.submit(self.run, job.job_id)
+        return job
+
 
 def make_tdx_import_client(service, executor):
     app.dependency_overrides[get_tdx_import_service] = lambda: service
@@ -333,6 +338,55 @@ def test_official_history_metadata_decode_error_is_localized() -> None:
     assert response.json()["detail"] == (
         "本地行情数据库暂时不可读取，可能正在被其他任务占用，请等待当前任务完成后重试"
     )
+
+
+def test_official_repair_submission_failure_returns_503_and_retryable_record(tmp_path) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from qibao_api.gongbu.tdx_official_package import OfficialTdxPackageService
+
+    service = OfficialTdxPackageService(cache_dir=tmp_path / "cache",
+        state_path=tmp_path / "job.json", tdx_import_service=object(), client=object())
+    executor = ThreadPoolExecutor(max_workers=1)
+    executor.shutdown()
+    # Use the router alone: no application startup, network, or user databases.
+    from fastapi import FastAPI
+    from qibao_api.routes.data import router
+    isolated = FastAPI()
+    isolated.include_router(router)
+    isolated.dependency_overrides[get_history_supplement_service] = lambda: service
+    isolated.dependency_overrides[get_history_supplement_executor] = lambda: executor
+    with TestClient(isolated) as client:
+        response = client.post("/api/v1/a-shares/history-supplement/official/start")
+        current = client.get("/api/v1/a-shares/history-supplement/current").json()
+    assert response.status_code == 503
+    assert "重新启动" in response.json()["detail"]
+    assert current["state"] == "failed"
+    assert current["error_stage"] == "submit_failed"
+    assert service.create_job().state == "pending"
+
+
+def test_official_repair_conflict_still_returns_409() -> None:
+    class BusyService(RecordingHistorySupplementService):
+        def start_job(self, executor):
+            raise ValueError("已有官方日线补齐任务正在执行")
+
+    with make_supplement_client(BusyService(), RecordingExecutor()) as client:
+        response = client.post("/api/v1/a-shares/history-supplement/official/start")
+    assert response.status_code == 409
+
+
+def test_history_submission_failure_pauses_job_instead_of_leaving_it_active():
+    from concurrent.futures import ThreadPoolExecutor
+    from fastapi import HTTPException
+    from qibao_api.routes.data import _submit
+    service = RecordingFullMarketHistoryService()
+    job = service.create_backfill()
+    executor = ThreadPoolExecutor(max_workers=1)
+    executor.shutdown()
+    with pytest.raises(HTTPException) as caught:
+        _submit(service, executor, job)
+    assert caught.value.status_code == 503
+    assert service.pause_calls == [job.job_id]
 
 
 def test_history_endpoint_returns_empty_list_before_sync() -> None:

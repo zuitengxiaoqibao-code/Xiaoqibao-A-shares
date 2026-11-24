@@ -279,7 +279,7 @@ export function MonitorCenterView() {
     let player: HTMLAudioElement | null = null;
     let objectUrl: string | null = null;
     try {
-      const response = await fetch("/api/v1/speech/synthesize", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: "一树-A股观测台监控语音测试，提醒通道正常。" }) });
+      const response = await fetch("/api/v1/speech/synthesize", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: "易数-A股观测台监控语音测试，提醒通道正常。" }) });
       if (!response.ok) throw new Error(`语音合成失败（${response.status}）`);
       const blob = await response.blob();
       if (!blob.size) throw new Error("语音合成返回空音频");

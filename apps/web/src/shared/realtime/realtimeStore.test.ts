@@ -16,6 +16,40 @@ function event(kind: string, sequence: number): RealtimeStreamEvent<{ value: num
 }
 
 describe("RealtimeStore", () => {
+  it("rejects old and duplicate events even while hidden", () => {
+    const store = new RealtimeStore();
+    const listener = vi.fn();
+    store.subscribe("market_overview", listener);
+    store.setVisible(false);
+    store.publish(event("market_overview", 2));
+    store.publish(event("market_overview", 1));
+    store.publish(event("market_overview", 2));
+    store.setVisible(true);
+    expect(store.getLatest("market_overview")?.sequence).toBe(2);
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts reset sequences after a server restart and rejects the previous stream", () => {
+    const store = new RealtimeStore();
+    const old = { ...event("market_overview", 100), stream_id: "old", stream_started_at: "2026-11-19T00:00:00Z" };
+    const fresh = { ...event("market_overview", 1), stream_id: "new", stream_started_at: "2026-11-19T01:00:00Z" };
+    store.publish(old);
+    store.publish(fresh);
+    store.publish({ ...old, sequence: 101 });
+    expect(store.getLatest("market_overview")?.sequence).toBe(1);
+    expect(store.getLatest("market_overview")?.stream_id).toBe("new");
+  });
+
+  it("isolates snapshot mutations across producers and listeners", () => {
+    const store = new RealtimeStore();
+    store.subscribe("market_overview", (snapshot) => { (snapshot.payload as { value: number }).value = 90; });
+    const snapshot = event("market_overview", 1);
+    store.publish(snapshot);
+    snapshot.payload.value = 80;
+    store.getLatest<{ value: number }>("market_overview")!.payload.value = 70;
+    expect(store.getLatest<{ value: number }>("market_overview")?.payload.value).toBe(1);
+  });
+
   it("delivers only matching topics to each subscriber", () => {
     const store = new RealtimeStore();
     const market = vi.fn();

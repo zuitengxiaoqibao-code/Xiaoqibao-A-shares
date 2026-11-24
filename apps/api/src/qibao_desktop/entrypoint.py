@@ -1,4 +1,5 @@
 import argparse
+from contextlib import ExitStack
 from datetime import datetime
 import json
 import logging
@@ -81,11 +82,22 @@ def _create_local_api_server(port: int):
     )
 
 
+def _stop_local_api_server(server) -> None:
+    server.stop()
+    if getattr(server, "is_alive", False):
+        # Keep the single-instance mutex while workers finish releasing their
+        # databases. A quick restart must not open them in a second process.
+        logger.info("desktop shutdown stage=waiting-for-api-workers")
+        server.wait()
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="xiaoqibao")
     parser.add_argument("--portable-root", type=Path)
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--headless", action="store_true")
+    parser.add_argument("--check-market-adapters", type=Path)
+    parser.add_argument("--probe-market-adapters", type=Path)
     parser.add_argument("--instance-name", default="xiaoqibao-portable")
     parser.add_argument("--apply-pending-update", type=Path)
     parser.add_argument("--parent-pid", type=int)
@@ -287,17 +299,26 @@ def _prepare_runtime(portable_root: Path | None):
 def main(argv: list[str] | None = None) -> int:
     multiprocessing.freeze_support()
     args = _parser().parse_args(argv)
+    if args.check_market_adapters is not None or args.probe_market_adapters is not None:
+        from qibao_desktop.market_adapter_check import check_market_adapters
+
+        return check_market_adapters(args.probe_market_adapters or args.check_market_adapters,
+                                    online=args.probe_market_adapters is not None)
     if args.apply_pending_update is not None:
         return _run_update_helper(args.apply_pending_update, args.parent_pid)
     server = None
     try:
-        with SingleInstance(args.instance_name):
+        with SingleInstance(args.instance_name) as instance, ExitStack() as cleanup:
             if not args.headless and _handoff_pending_update(args.portable_root):
                 return 0
+            retain = getattr(instance, "retain_until_process_exit", None)
+            if retain is not None:
+                retain()
             if args.headless:
                 layout = _prepare_runtime(args.portable_root)
                 promote_previous_data_layout(layout)
                 server = _create_local_api_server(args.port)
+                cleanup.callback(_stop_local_api_server, server)
                 server.start()
                 server.wait()
             else:
@@ -308,6 +329,7 @@ def main(argv: list[str] | None = None) -> int:
                 layout = _prepare_runtime(args.portable_root)
                 promote_previous_data_layout(layout)
                 server = _create_local_api_server(args.port)
+                cleanup.callback(_stop_local_api_server, server)
                 server.launch()
 
                 def start_application() -> str:
@@ -320,14 +342,12 @@ def main(argv: list[str] | None = None) -> int:
                         layout.logs_dir / "xiaoqibao.log"
                     ),
                 )
+                logger.info("desktop shutdown stage=window-loop-returned")
         return 0
     except AlreadyRunningError:
-        activated = activate_existing_window("一树电子商务-A股观测台")
+        activated = activate_existing_window("易数智算-A股观测台")
         logger.warning("xiaoqibao is already running; activated=%s", activated)
         return 2
     except Exception:
         logger.exception("desktop startup failed")
         return 1
-    finally:
-        if server is not None:
-            server.stop()

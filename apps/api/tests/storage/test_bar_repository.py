@@ -266,3 +266,59 @@ def test_existing_primary_key_schema_migrates_without_losing_rows(tmp_path) -> N
     with duckdb.connect(str(database)) as connection:
         assert connection.execute("SELECT count(*) FROM daily_bars").fetchone()[0] == 2
     assert repository.latest("600000")[0].close == Decimal("9.80")
+
+
+def test_failed_migration_preserves_old_schema_and_can_retry(tmp_path) -> None:
+    database = tmp_path / "market.duckdb"
+    with duckdb.connect(str(database)) as connection:
+        connection.execute("""CREATE TABLE daily_bars (
+            symbol VARCHAR, trade_date DATE, open DECIMAL(18,4), high DECIMAL(18,4),
+            low DECIMAL(18,4), close DECIMAL(18,4), volume BIGINT,
+            amount DECIMAL(24,4), source VARCHAR, ingested_at TIMESTAMP,
+            PRIMARY KEY(symbol, trade_date))""")
+        connection.execute("""INSERT INTO daily_bars VALUES
+            ('600000', '2026-07-13', 9, 10, 8, 9.5, 1000, 9500, NULL, current_timestamp)""")
+    repository = BarRepository(database, tmp_path / "parquet")
+    with pytest.raises(duckdb.ConstraintException):
+        repository.latest("600000")
+    assert not repository._schema_ready
+    with duckdb.connect(str(database)) as connection:
+        assert connection.execute("SELECT count(*) FROM daily_bars").fetchone()[0] == 1
+        assert "observation_id" not in {row[1] for row in connection.execute(
+            "PRAGMA table_info('daily_bars')"
+        ).fetchall()}
+        connection.execute("UPDATE daily_bars SET source = 'legacy'")
+    assert repository.latest("600000")[0].source == "legacy"
+    assert BarRepository(database, tmp_path / "parquet").latest("600000")[0].close == Decimal("9.5")
+
+
+def test_unfinished_legacy_migration_is_not_silently_accepted(tmp_path) -> None:
+    database = tmp_path / "market.duckdb"
+    with duckdb.connect(str(database)) as connection:
+        connection.execute("CREATE TABLE daily_bars_legacy (symbol VARCHAR)")
+        connection.execute("INSERT INTO daily_bars_legacy VALUES ('600000')")
+    repository = BarRepository(database, tmp_path / "parquet")
+    with pytest.raises(RuntimeError, match="Unfinished"):
+        repository.latest("600000")
+    assert not repository._schema_ready
+
+
+def test_bulk_insert_keeps_decimal_precision_and_deduplicates_late_rows(tmp_path) -> None:
+    repository = BarRepository(tmp_path / "market.duckdb", tmp_path / "parquet")
+    bars = make_history("600000", 1500)
+    bars = [bar.model_copy(update={
+        "open": Decimal("9"), "high": Decimal("10"),
+        "low": Decimal("8"), "close": Decimal("9"),
+    }) for bar in bars]
+    last = bars[-1].model_copy(update={
+        "close": Decimal("9.1234"), "amount": Decimal("12345678901234567890.1234"),
+        "volume": 9_007_199_254_740_993,
+    })
+    bars[-1] = last
+
+    assert repository.append_preferred_batch(bars + [last], (last.source,)) == (1500, 0, 0)
+    assert repository.append_preferred_batch(bars, (last.source,)) == (0, 0, 1500)
+    stored = repository.latest("600000", 1)[0]
+    assert stored.close == last.close
+    assert stored.amount == last.amount
+    assert stored.volume == last.volume

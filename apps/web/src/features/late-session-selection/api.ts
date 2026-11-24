@@ -12,9 +12,10 @@ export async function loadLateSessionSelection(settings?: LateSessionRuleSetting
 }
 
 export async function loadLateSessionAIAnalysis(selection: LateSessionSelectionResponse): Promise<LateSessionAIAnalysis> {
+  if (!selection.snapshot_id) throw new Error("筛选快照缺失，请刷新筛选结果后重试。");
   return apiClient.post<LateSessionAIAnalysis>(
     "/api/v1/a-shares/late-session-selection/ai-analysis",
-    selection,
+    { snapshot_id: selection.snapshot_id },
     { context: "尾盘选股 AI 分析" },
   );
 }

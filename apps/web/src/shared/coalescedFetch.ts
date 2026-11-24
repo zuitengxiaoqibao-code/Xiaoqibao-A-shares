@@ -177,6 +177,10 @@ export function coalescedFetch(input: RequestInfo | URL, init?: RequestInit): Pr
 
   const key = requestKey(input, init);
   let entry = inFlight.get(key);
+  if (entry?.controller.signal.aborted) {
+    inFlight.delete(key);
+    entry = undefined;
+  }
   if (entry) {
     stats.coalescedCallers += 1;
   } else {
@@ -192,7 +196,9 @@ export function coalescedFetch(input: RequestInfo | URL, init?: RequestInit): Pr
     const startedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
     current.response = scheduleNetworkRequest(
       requestDomainGroup(input),
-      () => fetch(input, { ...init, signal: controller.signal }),
+      () => controller.signal.aborted
+        ? Promise.reject(abortError())
+        : fetch(input, { ...init, signal: controller.signal }),
     );
     current.response.then(
       (response) => {

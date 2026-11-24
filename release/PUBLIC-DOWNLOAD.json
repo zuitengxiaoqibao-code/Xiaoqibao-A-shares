@@ -1,0 +1,15 @@
+{
+  "build_version": "20261123T083519Z",
+  "build_source_commit": "9f774ab9bf396930c8028264822a02a69e0ea676",
+  "build_source_state": "dirty",
+  "exe_sha256": "7712d90bae8f649f901c7cd33d9e9b4e921028fcf05331adc06784f09d868957",
+  "program_files_verified": 2528,
+  "persistent_data_included": false,
+  "repository": "https://github.com/zuitengxiaoqibao-code/Xiaoqibao-A-shares",
+  "python": "3.12.16",
+  "archive": "XiaoQiBao-Portable-Windows-x64.zip",
+  "archive_bytes": 100529879,
+  "archive_sha256": "ce4f0228a3ec08a0a0c255dbcbd682159a8538b113854905980e8d34781e2291",
+  "python_dependency_count": 72,
+  "javascript_package_count": 193
+}

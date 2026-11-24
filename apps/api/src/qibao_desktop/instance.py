@@ -40,6 +40,7 @@ class SingleInstance:
     def __init__(self, name: str) -> None:
         self.name = name
         self._handle = None
+        self._retain_until_exit = False
 
     @staticmethod
     def _kernel32():
@@ -70,7 +71,15 @@ class SingleInstance:
             raise AlreadyRunningError("xiaoqibao is already running")
         self._handle = handle
 
+    def retain_until_process_exit(self) -> None:
+        # Python joins remaining worker threads after main() returns. Windows
+        # must retain this handle throughout that final shutdown as well.
+        # The OS closes it automatically when the process actually exits.
+        self._retain_until_exit = True
+
     def close(self) -> None:
+        if self._retain_until_exit:
+            return
         if self._handle is None:
             return
         kernel32 = self._kernel32()

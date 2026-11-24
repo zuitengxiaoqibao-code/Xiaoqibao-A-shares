@@ -37,6 +37,15 @@ const overview = {
 } as unknown as MarketOverviewResponse;
 
 describe("DistinctMarketWorkspace", () => {
+  it("shows directory names for opening news symbols outside the quote sample", () => {
+    render(<DistinctMarketWorkspace feature="开盘啦" data={{ ...overview,
+      market_stocks: [], sector_stocks: {}, review: null, large_order_flows: [], official_events: [],
+      stock_names: { "600001": "本地目录公司" },
+    }} />);
+    expect(screen.getAllByText("本地目录公司").length).toBeGreaterThan(0);
+    expect(screen.queryByText("名称待补齐")).not.toBeInTheDocument();
+  });
+
   it("uses the established flat menu name without changing the stable workspace key", () => {
     render(<DistinctMarketWorkspace feature="问财选股" data={overview} />);
 

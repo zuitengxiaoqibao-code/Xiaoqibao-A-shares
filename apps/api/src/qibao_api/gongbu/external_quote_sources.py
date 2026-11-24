@@ -292,7 +292,7 @@ class ExternalQuoteFallbackSource:
             values, primary_warnings = (), (f"primary_{method}_failed:{type(error).__name__}",)
         warnings.extend(primary_warnings)
         if values:
-            self.last_source_id = getattr(self.primary, "source_id", "primary")
+            self.last_source_id = getattr(self.primary, "last_source_id", getattr(self.primary, "source_id", "primary"))
             return values, tuple(warnings)
         for fallback in self.fallbacks:
             try:
@@ -301,7 +301,7 @@ class ExternalQuoteFallbackSource:
                 values, fallback_warnings = (), (f"{getattr(fallback, 'source_id', 'external')}_{method}_failed:{type(error).__name__}",)
             warnings.extend(fallback_warnings)
             if values:
-                self.last_source_id = getattr(fallback, "source_id", "external")
+                self.last_source_id = getattr(fallback, "last_source_id", getattr(fallback, "source_id", "external"))
                 return values, tuple(warnings)
         return (), tuple(warnings)
 

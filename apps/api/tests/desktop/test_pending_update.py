@@ -1,10 +1,45 @@
 import json
 import os
+import shutil
 from datetime import datetime
 
 import pytest
 
 from qibao_desktop.pending_update import PendingUpdate, load_pending_update
+
+
+def test_failed_rollback_preserves_recovery_files_and_attempts_other_files(tmp_path, monkeypatch):
+    target, stage = tmp_path / "target", tmp_path / "stage"
+    target.mkdir()
+    stage.mkdir()
+    for name in ("a.txt", "b.txt"):
+        (target / name).write_text(f"old-{name}")
+        (stage / name).write_text(f"new-{name}")
+    copy = shutil.copy2
+    replace = os.replace
+
+    def fail_replace(source, destination):
+        if destination.name == "b.txt":
+            raise OSError("replace locked")
+        replace(source, destination)
+
+    def fail_restore(source, destination):
+        if "-rollback-" in str(source) and destination.name == "a.txt":
+            raise OSError("restore locked")
+        return copy(source, destination)
+
+    monkeypatch.setattr("qibao_desktop.pending_update.os.replace", fail_replace)
+    monkeypatch.setattr("qibao_desktop.pending_update.shutil.copy2", fail_restore)
+    update = PendingUpdate("v5", stage, target, datetime.now())
+    with pytest.raises(RuntimeError, match="replace locked.*restore locked.*Recovery files"):
+        update.apply()
+    recovery = next(tmp_path.glob(".target-rollback-*"))
+    assert (recovery / "a.txt").read_text() == "old-a.txt"
+    assert (target / "b.txt").read_text() == "old-b.txt"
+    assert not list(target.glob("*.update-tmp"))
+    with pytest.raises(OSError, match="replace locked"):
+        update.apply()
+    assert (recovery / "a.txt").read_text() == "old-a.txt"
 
 
 def test_pending_update_rejects_stage_outside_dist_root(tmp_path) -> None:

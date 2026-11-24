@@ -1,5 +1,6 @@
 import { AlertTriangle, ArchiveRestore, BarChart3, CheckCircle2, Clock3, Database, DatabaseBackup, Download, FolderOpen, Pause, Play, RotateCcw, ServerCog, Trash2 } from "lucide-react";
 import { useEffect, useState, type SyntheticEvent } from "react";
+import { RepairProgressNumbers } from "../data-settings/RepairProgressNumbers";
 
 import type { BackupRecord, BackupVerification, CacheCleanupResult, CleanupPreview, ObservabilitySnapshot, OperationsDiagnostics, OperationsStatus, PerformanceSummary } from "./types";
 import type { HistoryRepairAudit, HistoryRepairCenter, HistorySyncController, HistorySyncStarter, HistorySupplementJob, HistorySupplementLoader, HistorySupplementStarter, OfficialTdxInfoLoader, OfficialTdxPackageInfo, TdxImportController, TdxImportJob, TdxImportScanner, TdxImportStarter, TdxImportLoader, TdxImportScan } from "../data-settings/types";
@@ -96,6 +97,7 @@ const supplementStageLabel: Record<string, string> = {
 const supplementSourceLabel: Record<string, string> = {
   tdx_local: "本机通达信", tdx_official: "通达信官方包",
   mootdx: "通达信在线", baidu: "百度历史后备",
+  eltdx: "通达信 eltdx 连接池",
 };
 
 type DisclosureKey = "diagnostics" | "observability" | "historyAudit" | "inventory" | "performance" | "jobs";
@@ -281,7 +283,6 @@ export function OperationsView(props: Props) {
         const scanCount = supplement.scan_scanned_files ?? 0;
         const scanDayFiles = supplement.scan_day_files ?? 0;
         const scanReadable = supplement.scan_readable_files ?? 0;
-        const scanPercentReady = !scanning || scanTotal !== null;
         const hasScanEvidence = scanCount > 0 && scanTotal !== null;
         const scanDetail = waitingDatabase
           ? scanTotal === null
@@ -300,11 +301,11 @@ export function OperationsView(props: Props) {
           : null;
         return <div className={`data-repair-progress ${active ? "is-active" : ""} ${scanning || waitingDatabase ? "is-scanning" : ""}`} data-state={active ? "active" : supplement.state} role="status" aria-live="polite">
           <div className="data-repair-stage" data-testid={`repair-stage-${supplement.stage}`} data-state={active ? "active" : supplement.state}>
-            <b>{supplementStageLabel[supplement.stage] ?? "正在处理"}{scanPercentReady ? ` · ${supplement.percent.toFixed(2)}%` : ""}</b>
+            <b>{supplementStageLabel[supplement.stage] ?? "正在处理"}</b>
             <small>{scanDetail ?? supplement.result_detail ?? `任务更新时间 ${new Date(supplement.updated_at).toLocaleString("zh-CN")}`}</small>
             {(scanning || waitingDatabase) && <small className="data-repair-scan-meta">{waitingDatabase ? "扫描已完成 · 正在等待数据库释放并自动重试" : [currentFile, speed].filter(Boolean).join(" · ") || "正在读取本机日线文件"}</small>}
           </div>
-          {scanPercentReady ? <progress max={100} value={supplement.percent}/> : <progress max={100}/>}
+          <RepairProgressNumbers job={supplement} />
         </div>;
       })()}
       {supplement?.source_attempts?.length ? <div className="data-source-ladder">{supplement.source_attempts.map((item) => <article key={item.source} className={item.state}><span>{item.state === "completed" ? <CheckCircle2 size={15}/> : item.state === "failed" ? <AlertTriangle size={15}/> : <Clock3 size={15}/>}<b>{supplementSourceLabel[item.source] ?? item.source}</b></span><small>{item.detail}</small></article>)}</div> : null}

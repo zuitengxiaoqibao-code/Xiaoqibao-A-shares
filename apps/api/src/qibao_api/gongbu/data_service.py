@@ -6,6 +6,7 @@ from qibao_api.gongbu.tdx_history import DataSourceUnavailable
 
 
 SOURCE_NAMES = {
+    "eltdx": "通达信（eltdx）",
     "mootdx": "通达信",
     "baidu": "百度股市通",
 }

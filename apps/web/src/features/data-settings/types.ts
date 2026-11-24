@@ -106,11 +106,14 @@ export type HistorySyncJob = {
   skipped_count: number;
   pending_count: number;
   tdx_ready_count: number;
+  eltdx_ready_count?: number;
   baidu_ready_count: number;
   created_at: string;
   updated_at: string;
 };
 export type HistoryCoverageSummary = {
+  new_listing_complete_count?: number;
+  confirmed_suspended_count?: number;
   target_date: string;
   universe_count: number;
   backfill_complete_count: number;
@@ -171,6 +174,10 @@ export type HistorySupplementJob = {
   job_id: string; state: "pending" | "running" | "completed" | "partial" | "failed";
   stage: "queued" | "checking_metadata" | "checking_cache" | "validating_cache" | "downloading" | "validating" | "extracting" | "scanning" | "waiting_database" | "importing" | "online_repair" | "final_review" | "completed" | "partial" | "failed";
   percent: number; source_url: string; package_modified_at?: string | null;
+  phase_key?: string | null; phase_label?: string | null; phase_percent?: number | null;
+  phase_eta_seconds?: number | null; phase_rate?: number | null; phase_unit?: string | null;
+  phase_started_at?: string | null; online_repaired_rows?: number;
+  online_skipped?: number;
   package_size_label?: string | null; downloaded_bytes: number; total_bytes?: number | null;
   package_sha256?: string | null; package_path?: string | null;
   day_file_count: number; supported_file_count: number; latest_trade_date?: string | null;
@@ -180,7 +187,7 @@ export type HistorySupplementJob = {
   online_failed: number; online_pending: number; final_target_date?: string | null;
   scan_scanned_files?: number; scan_total_files?: number | null; scan_day_files?: number;
   scan_readable_files?: number; scan_current_file?: string | null; scan_speed?: number | null;
-  scan_eta_seconds?: number | null;
+  scan_eta_seconds?: number | null; pending_write_rows?: number;
   final_dominant_trade_date?: string | null; final_dominant_coverage_percent?: number | null;
   final_history_coverage_percent?: number | null; remaining_gap_count: number; final_quality?: string | null;
   final_blockers: string[]; result_detail?: string | null;

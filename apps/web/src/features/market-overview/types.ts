@@ -333,6 +333,7 @@ export type MarketOverviewResponse = {
   live_feed: OverviewLiveFeedItem[];
   sectors: OverviewSector[];
   sector_stocks: Record<string, OverviewSectorStock[]>;
+  stock_names?: Record<string, string>;
   market_stocks: OverviewFeatureStock[];
   large_order_flows?: OverviewLargeOrderFlow[];
   sector_fund_flow?: OverviewSectorFundFlowPoint[];

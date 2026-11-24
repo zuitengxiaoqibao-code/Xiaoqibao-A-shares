@@ -68,7 +68,9 @@ import { analyzePortfolioRisk, loadPortfolioRisk, loadWatchlistRisk, removePortf
 import { A_SHARE_WATCHLIST_CHANGED_EVENT, hydrateAShareWatchlist, readAShareWatchlist } from "../features/stock-cockpit/watchlist";
 import { updateTaskActivity } from "../shared/taskActivity";
 import { MonitorTtsAnnouncer } from "../features/monitor-center/MonitorTtsAnnouncer";
+import { StartupDataIntegrity } from "../features/data-settings/StartupDataIntegrity";
 import { RealtimeProvider } from "../shared/realtime/RealtimeProvider";
+import { loadMarketStage } from "../shared/marketSession";
 
 const REALTIME_TOPICS = [
   "ai_analysis",
@@ -85,22 +87,10 @@ export function App() {
   useEffect(() => { void loadAShareInstrumentDirectory().catch(() => undefined); }, []);
   useEffect(() => {
     let active = true;
-    const marketState = () => {
-      const parts = new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(new Date());
-      const weekday = parts.find((part) => part.type === "weekday")?.value ?? "";
-      const hour = Number(parts.find((part) => part.type === "hour")?.value ?? 0);
-      const minute = Number(parts.find((part) => part.type === "minute")?.value ?? 0);
-      const value = hour * 60 + minute;
-      const weekdayOpen = !weekday.includes("六") && !weekday.includes("日");
-      const morning = value >= 570 && value <= 690;
-      const afternoon = value >= 780 && value <= 900;
-      if (!weekdayOpen) return "休市";
-      if (value > 690 && value < 780) return "已暂停";
-      return morning || afternoon ? "正在更新" : "休市";
-    };
     const registerWatchlist = async () => {
       const symbols = readAShareWatchlist();
-      const stage = marketState();
+      const stage = await loadMarketStage();
+      if (!active) return;
       if (!symbols.length) {
         updateTaskActivity({ id: "a-share-watchlist-monitor", label: "个股自选", stage, state: "succeeded", detail: symbols.length ? `已保存 ${symbols.length} 只` : "尚未添加自选股", percent: 100 });
         return;
@@ -125,7 +115,7 @@ export function App() {
       window.clearInterval(timer);
     };
   }, []);
-  return <RealtimeProvider topics={REALTIME_TOPICS}><SelectedInstrumentProvider><MonitorTtsAnnouncer synthesize={synthesizeSpeech} /><Dashboard
+  return <RealtimeProvider topics={REALTIME_TOPICS}><SelectedInstrumentProvider><MonitorTtsAnnouncer synthesize={synthesizeSpeech} /><StartupDataIntegrity loadCoverage={loadHistoryCoverage} loadJob={loadHistorySupplement} startRepair={startOfficialTdxSupplement} /><Dashboard
     loadSnapshot={loadSnapshot}
     syncHistory={syncHistory}
     runBacktest={runBacktest}

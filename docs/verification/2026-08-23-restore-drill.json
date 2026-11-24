@@ -1,9 +1,0 @@
-{
-  "status": "pass",
-  "mode": "temporary-copy",
-  "database_count": 36,
-  "migration_version": 1,
-  "critical_api_status": "pass",
-  "verified_at": "2026-08-23T11:50:56.7155353Z",
-  "source_release_hash": "7240C046DB6A7F533646FCA284C52382A32A25FF7F06CB36510A9776CE3495B0"
-}

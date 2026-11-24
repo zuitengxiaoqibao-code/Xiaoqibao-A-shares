@@ -68,6 +68,7 @@ class BaiduHistorySource:
                     "Origin": "https://gushitong.baidu.com",
                     "Referer": "https://gushitong.baidu.com/",
                 },
+                timeout=httpx.Timeout(8, connect=3),
             )
             response.raise_for_status()
             payload = response.json()

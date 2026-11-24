@@ -56,8 +56,10 @@ export function buildDataScreenModel(snapshot: MarketOverviewResponse | null): D
     .slice(0, 10)
     .map((item) => ({
       ...item,
-      name: item.shenwan_industry?.name ?? "申万行业待核验",
-      industry_system: item.shenwan_industry ? "申万" : "待核验",
+      // Keep the provider's actual sector label. Shenwan is a separate
+      // classification overlay and may legitimately be unverified.
+      name: item.name || item.shenwan_industry?.name || "未命名板块",
+      industry_system: item.industry_system ?? (item.shenwan_industry ? "申万" : "待核验"),
       tone: tone(item.change_percent),
       breadthPercent: item.stock_count ? item.rising_count / item.stock_count * 100 : null,
       leaderName: snapshot.sector_stocks[item.sector_id]?.[0]?.name ?? null,

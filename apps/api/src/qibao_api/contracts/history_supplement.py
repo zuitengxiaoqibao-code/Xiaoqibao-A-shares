@@ -40,6 +40,15 @@ class HistorySupplementJob(BaseModel):
         "completed", "partial", "failed",
     ]
     percent: float = Field(ge=0, le=100)
+    phase_key: str | None = None
+    phase_label: str | None = None
+    phase_percent: float | None = Field(default=None, ge=0, le=100)
+    phase_eta_seconds: float | None = Field(default=None, ge=0)
+    phase_rate: float | None = Field(default=None, ge=0)
+    phase_unit: str | None = None
+    phase_started_at: AwareDatetime | None = None
+    phase_start_count: int = Field(default=0, ge=0)
+    online_repaired_rows: int = Field(default=0, ge=0)
     source_url: str
     package_modified_at: AwareDatetime | None = None
     package_size_label: str | None = None
@@ -65,8 +74,10 @@ class HistorySupplementJob(BaseModel):
     total_extract_files: int = Field(default=0, ge=0)
     processed_files: int = Field(default=0, ge=0)
     total_import_files: int = Field(default=0, ge=0)
+    pending_write_rows: int = Field(default=0, ge=0)
     online_total: int = Field(default=0, ge=0)
     online_ready: int = Field(default=0, ge=0)
+    online_skipped: int = Field(default=0, ge=0)
     online_failed: int = Field(default=0, ge=0)
     online_pending: int = Field(default=0, ge=0)
     scan_scanned_files: int = Field(default=0, ge=0)

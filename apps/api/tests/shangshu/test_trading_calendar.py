@@ -1,4 +1,6 @@
 from datetime import date, datetime
+from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -6,6 +8,7 @@ from qibao_api.shangshu.trading_calendar import (
     ExchangeCalendarsTradingDaySchedule,
     StoredTradingCalendar,
     TencentIndexTradingDaySignal,
+    market_session_status,
 )
 
 
@@ -90,3 +93,38 @@ def test_tencent_index_signal_confirms_payload_date_and_caches() -> None:
     assert signal.confirmed_date() == date(2026, 7, 15)
     assert signal.confirmed_date() == date(2026, 7, 15)
     assert client.calls == 1
+
+
+@pytest.mark.parametrize("hour,minute,phase", [
+    (9, 29, "pre_open"), (9, 30, "intraday"), (11, 30, "lunch_break"),
+    (13, 0, "intraday"), (15, 0, "post_close"),
+])
+def test_server_market_phase_boundaries(hour, minute, phase):
+    now = datetime(2026, 11, 19, hour, minute, tzinfo=ZoneInfo("Asia/Shanghai"))
+    calendar = SimpleNamespace(is_trading_day=lambda _date: True)
+    assert market_session_status(now, calendar).phase == phase
+
+
+def test_weekday_holiday_is_closed_and_unavailable_calendar_is_unknown():
+    now = datetime(2026, 10, 1, 10, tzinfo=ZoneInfo("Asia/Shanghai"))
+    calendar = SimpleNamespace(is_trading_day=lambda _date: False)
+    assert market_session_status(now, calendar).phase == "closed"
+    assert market_session_status(now, None).phase == "unknown"
+
+
+def test_market_session_route_uses_shared_calendar_and_server_time():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from qibao_api.dependencies import get_server_time
+    from qibao_api.routes.operations import router
+
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_server_time] = lambda: datetime(2026, 10, 1, 2, tzinfo=ZoneInfo("UTC"))
+    client = TestClient(app)
+    assert client.get("/api/v1/operations/market-session").json()["phase"] == "unknown"
+    app.state.trading_calendar = SimpleNamespace(is_trading_day=lambda _date: False)
+    response = client.get("/api/v1/operations/market-session")
+    assert response.status_code == 200
+    assert response.json()["phase"] == "closed"
+    assert response.json()["trading_date"] == "2026-10-01"

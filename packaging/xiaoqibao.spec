@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_data_files, copy_metadata
 
 
 spec_dir = Path(SPECPATH)
@@ -29,8 +29,11 @@ hiddenimports = [
     # mootdx is used only through its Quotes client; tools/downloaders are
     # not part of the application runtime.
     "mootdx.quotes",
+    "eltdx._native",
+    "axdata_core.adapters.tencent.request",
 ]
-datas = collect_data_files("exchange_calendars") + collect_data_files("webview")
+datas = (collect_data_files("exchange_calendars") + collect_data_files("webview")
+         + collect_data_files("eltdx") + copy_metadata("eltdx") + copy_metadata("axdata"))
 
 a = Analysis(
     [str(api_src / "qibao_desktop" / "__main__.py")],

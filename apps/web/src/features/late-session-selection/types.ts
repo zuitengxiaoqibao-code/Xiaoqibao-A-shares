@@ -82,6 +82,7 @@ export type LateSessionBehavior = {
 };
 
 export type LateSessionSelectionResponse = {
+  snapshot_id?: string | null;
   status: "ready" | "partial" | "unavailable";
   trading_date: string;
   server_time: string;

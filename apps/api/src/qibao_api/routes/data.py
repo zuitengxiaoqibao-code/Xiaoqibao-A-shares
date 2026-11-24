@@ -83,11 +83,12 @@ def start_official_history_supplement(
     executor: Annotated[Executor, Depends(get_history_supplement_executor)],
 ) -> HistorySupplementJob:
     try:
-        job = service.create_job()
+        return service.start_job(executor)
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
-    executor.submit(service.run, job.job_id)
-    return job
+    except RuntimeError as error:
+        raise HTTPException(status_code=503,
+            detail="后台修复服务未能启动或正在关闭，请重新启动程序后重试；已有数据和缓存已保留。") from error
 
 
 def _local_paths(service: TdxLocalImportService, paths: tuple[str, ...]) -> tuple[Path, ...]:
@@ -202,7 +203,14 @@ def _submit(
     executor: Executor,
     job: HistorySyncJob,
 ) -> HistorySyncJob:
-    executor.submit(service.run, job.job_id)
+    try:
+        executor.submit(service.run, job.job_id)
+    except RuntimeError as error:
+        # The same shutdown race affects incremental/retry entry points.
+        # Pause instead of leaving a newly persisted task permanently active.
+        service.pause(job.job_id)
+        raise HTTPException(status_code=503,
+            detail="日线同步后台服务正在关闭，任务已暂停且已有数据保留；请重新启动程序后继续。") from error
     return job
 
 

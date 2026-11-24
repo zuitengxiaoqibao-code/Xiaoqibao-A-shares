@@ -311,6 +311,7 @@ $Toolchain = [ordered]@{
     node = (& node.exe --version 2>&1 | Select-Object -First 1).ToString().Trim()
     pnpm = (& pnpm.cmd --version 2>&1 | Select-Object -First 1).ToString().Trim()
     pyinstaller = (& $Python -m PyInstaller --version 2>&1 | Select-Object -Last 1).ToString().Trim()
+    edge_tts = (& $Python -c "import edge_tts; print(edge_tts.__version__)").Trim()
 }
 $ReleaseManifest = [ordered]@{
     version = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")

@@ -1,5 +1,6 @@
 import hashlib
 import json
+import sqlite3
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from collections import defaultdict
@@ -72,6 +73,7 @@ class MarketOverviewService:
         initial_refresh_delay_seconds: float = 0,
         shared_snapshot_registry=None,
         realtime_snapshot_bus=None,
+        instrument_directory=None,
     ) -> None:
         if initial_refresh_delay_seconds < 0:
             raise ValueError("initial_refresh_delay_seconds must not be negative")
@@ -94,6 +96,7 @@ class MarketOverviewService:
         self.initial_refresh_delay_seconds = initial_refresh_delay_seconds
         self.shared_snapshot_registry = shared_snapshot_registry
         self.realtime_snapshot_bus = realtime_snapshot_bus
+        self.instrument_directory = instrument_directory
         self._lock = threading.RLock()
         self._cached_at: datetime | None = None
         self._cached: MarketOverviewResponse | None = None
@@ -843,7 +846,24 @@ class MarketOverviewService:
             updates["sources"] = tuple(dict.fromkeys((*response.sources, source)))
         if warning is not None:
             updates["warnings"] = tuple(dict.fromkeys((*response.warnings, warning)))
+        names = self._event_stock_names((*response.live_feed, *response.anomalies))
+        if names:
+            updates["stock_names"] = {**response.stock_names, **names}
         return response.model_copy(update=updates) if updates else response
+
+    def _event_stock_names(self, events) -> dict[str, str]:
+        if self.instrument_directory is None:
+            return {}
+        names = {}
+        for symbol in dict.fromkeys(symbol for item in events for symbol in item.symbols):
+            try:
+                instrument = self.instrument_directory.resolve(symbol)
+            except (OSError, RuntimeError, ValueError, sqlite3.Error):
+                continue
+            name = instrument.name.strip() if instrument is not None else ""
+            if name and name != symbol and name != "名称待补齐":
+                names[symbol] = name
+        return names
 
     def _build(self, now: datetime) -> MarketOverviewResponse:
         local_now = now.astimezone(CHINA_TZ)
@@ -1061,25 +1081,6 @@ class MarketOverviewService:
             sectors = local_market.sectors
             stocks_by_sector = local_market.sector_stocks
         else:
-            sector_names, sector_symbols = self._sector_members(events)
-            requested_symbols = tuple(dict.fromkeys(
-                symbol for name in sector_names for symbol in sector_symbols[name]
-            ))[:80]
-            try:
-                stock_quotes, stock_warnings = self.source.fetch_stocks(requested_symbols)
-                warnings.extend(stock_warnings)
-                if stock_quotes:
-                    sources.append(self._source_tag(self.source, "stock-batch"))
-            except (httpx.HTTPError, OSError, ValueError):
-                stock_quotes = ()
-                warnings.append("sector_stock_quotes_unavailable")
-            sectors, stocks_by_sector = self._sectors(
-                sector_names,
-                sector_symbols,
-                stock_quotes,
-                first_limit_candidates,
-            )
-        if not sectors:
             sectors, sector_snapshot_stale = self._verified_sector_heatmap(
                 cutoff=now,
             )
@@ -1091,6 +1092,27 @@ class MarketOverviewService:
                     warnings.append(
                         "板块行情更新暂时中断，正在显示今日最近一次已验证数据"
                     )
+            else:
+                # News themes are a useful last-resort context, but they are
+                # not a substitute for the broader market sector catalogue.
+                sector_names, sector_symbols = self._sector_members(events)
+                requested_symbols = tuple(dict.fromkeys(
+                    symbol for name in sector_names for symbol in sector_symbols[name]
+                ))[:80]
+                try:
+                    stock_quotes, stock_warnings = self.source.fetch_stocks(requested_symbols)
+                    warnings.extend(stock_warnings)
+                    if stock_quotes:
+                        sources.append(self._source_tag(self.source, "stock-batch"))
+                except (httpx.HTTPError, OSError, ValueError):
+                    stock_quotes = ()
+                    warnings.append("sector_stock_quotes_unavailable")
+                sectors, stocks_by_sector = self._sectors(
+                    sector_names,
+                    sector_symbols,
+                    stock_quotes,
+                    first_limit_candidates,
+                )
 
         review = None
         if self.market_review_source is not None:
@@ -1201,6 +1223,7 @@ class MarketOverviewService:
             minute_series_by_index=minute_series_by_index,
             anomalies=anomalies,
             live_feed=live_feed,
+            stock_names=self._event_stock_names((*live_feed, *anomalies)),
             sectors=sectors,
             sector_stocks=stocks_by_sector,
             market_stocks=market_stocks,

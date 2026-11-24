@@ -91,6 +91,35 @@ def test_entrypoint_sets_portable_paths_and_stops_after_window(
     assert not previous_data.exists()
 
 
+def test_shutdown_keeps_single_instance_until_api_workers_finish(tmp_path, monkeypatch):
+    order = []
+
+    class TrackedInstance(FakeInstance):
+        def retain_until_process_exit(self):
+            order.append("instance-retained-until-process-exit")
+
+        def __exit__(self, *_args):
+            order.append("instance-released")
+            super().__exit__(*_args)
+
+    class SlowShutdownServer(FakeServer):
+        is_alive = True
+
+        def stop(self):
+            order.append("stop-requested")
+
+        def wait(self):
+            order.append("workers-finished")
+            self.is_alive = False
+
+    monkeypatch.setattr(entrypoint, "SingleInstance", TrackedInstance)
+    monkeypatch.setattr(entrypoint, "_create_local_api_server", lambda _port: SlowShutdownServer())
+    monkeypatch.setattr(entrypoint, "configure_desktop_logging", lambda _path: None)
+    monkeypatch.setattr(entrypoint, "run_window", lambda start, **_kwargs: start())
+    assert entrypoint.main(["--portable-root", str(tmp_path)]) == 0
+    assert order == ["instance-retained-until-process-exit", "stop-requested", "workers-finished", "instance-released"]
+
+
 def test_prepare_runtime_uses_release_manifest_commit_for_performance_generation(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -218,7 +247,7 @@ def test_second_launch_restores_existing_window(tmp_path: Path, monkeypatch) -> 
     )
 
     assert entrypoint.main(["--portable-root", str(tmp_path)]) == 2
-    assert restored == ["一树电子商务-A股观测台"]
+    assert restored == ["易数智算-A股观测台"]
 
 
 def test_entrypoint_accepts_an_explicit_instance_name_for_isolated_smoke(
@@ -400,7 +429,7 @@ def test_handoff_retries_deferred_update_on_next_launch(
 def test_release_process_scan_decodes_utf8_windows_paths(
     tmp_path: Path, monkeypatch
 ) -> None:
-    target_root = tmp_path / "一树-A股观测台"
+    target_root = tmp_path / "易数-A股观测台"
     executable = target_root / "xiaoqibao.exe"
     seen = {}
 

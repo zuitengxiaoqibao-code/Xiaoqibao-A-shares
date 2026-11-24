@@ -103,11 +103,20 @@ function timedSignal(signal: AbortSignal | null | undefined, timeoutMs: number) 
   };
 }
 
-async function parseJson<T>(response: Response): Promise<T> {
+function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+    work.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
+}
+
+async function parseJson<T>(response: Response, signal: AbortSignal): Promise<T> {
   if (typeof response.text !== "function" && typeof response.json === "function") {
-    return response.json() as Promise<T>;
+    return abortable(response.json() as Promise<T>, signal);
   }
-  const text = await response.text();
+  const text = await abortable(response.text(), signal);
   if (!text) return undefined as T;
   return JSON.parse(text) as T;
 }
@@ -127,11 +136,11 @@ class ApiClient {
         ? await coalescedFetch(input, { ...init, method, signal: timed.signal })
         : await fetch(input, { ...init, method, signal: timed.signal });
       if (!response.ok) {
-        const detail = await errorDetail(response);
+        const detail = await abortable(errorDetail(response), timed.signal);
         throw new Error(detail ?? contextualStatusError(context, response.status));
       }
       return {
-        data: await parseJson<T>(response),
+        data: await parseJson<T>(response, timed.signal),
         meta: {
           cacheState: "live",
           observedAt: new Date().toISOString(),
@@ -170,10 +179,10 @@ class ApiClient {
       const response = await coalescedFetch(input, { ...init, method: "GET", signal: timed.signal });
       if (response.status === 404) return null;
       if (!response.ok) {
-        const detail = await errorDetail(response);
+        const detail = await abortable(errorDetail(response), timed.signal);
         throw new Error(detail ?? contextualStatusError(context, response.status));
       }
-      return parseJson<T>(response);
+      return await parseJson<T>(response, timed.signal);
     } catch (caught) {
       if (timed.didTimeout()) throw new Error(`${context}请求超时，请稍后重试。`);
       if (caught instanceof DOMException && caught.name === "AbortError") throw caught;

@@ -72,6 +72,8 @@ class FakeSettings:
     [
         "/api/v1/a-shares/300456/company-research/tasks",
         "/api/v1/a-shares/company-research/versions/snapshot-1/ai/tasks",
+        "/api/v1/a-shares/late-session-selection/ai-analysis",
+        "/api/v1/a-shares/history-supplement/official/start",
     ],
 )
 def test_company_research_task_start_does_not_wait_for_runtime_write_gate(path: str) -> None:
@@ -85,7 +87,12 @@ def test_persistent_runtime_write_still_waits_for_runtime_write_gate() -> None:
 
 
 @pytest.mark.asyncio
-async def test_company_research_task_start_runs_while_runtime_write_gate_is_held() -> None:
+@pytest.mark.parametrize("path", [
+    "/api/v1/a-shares/300456/company-research/tasks",
+    "/api/v1/a-shares/late-session-selection/ai-analysis",
+    "/api/v1/a-shares/history-supplement/official/start",
+])
+async def test_company_research_task_start_runs_while_runtime_write_gate_is_held(path) -> None:
     write_gate = asyncio.Lock()
     await write_gate.acquire()
     called = False
@@ -93,7 +100,7 @@ async def test_company_research_task_start_runs_while_runtime_write_gate_is_held
         app=SimpleNamespace(state=SimpleNamespace(write_gate=write_gate)),
         method="POST",
         url=SimpleNamespace(
-            path="/api/v1/a-shares/300456/company-research/tasks"
+            path=path
         ),
         scope={},
     )
@@ -572,9 +579,11 @@ async def test_lifespan_injects_guarded_production_sources_and_closes_compliance
         assert isinstance(compliance, ComplianceRepository)
         assert isinstance(application.state.pipeline.quote_source, AuthorizedQuoteSource)
         fallback = application.state.market_data_service.source
-        assert len(fallback.sources) == 2
+        assert len(fallback.sources) == 3
         assert all(isinstance(source, AuthorizedHistorySource) for source in fallback.sources)
-        assert fallback.sources[0]._source.client_factory is main_module.create_tdx_client
+        assert fallback.sources[0]._source.source_name == "eltdx"
+        assert fallback.sources[1]._source.client_factory is main_module.create_tdx_client
+        assert len(compliance.list_feature_source_history("history_sync.eltdx", "a_share")) == 1
         assert len(compliance.list_feature_source_history("realtime_quotes", "a_share")) == 1
         assert compliance.list_feature_source_history("paper_orders", "a_share") == []
         assert len(compliance.list_feature_source_history("history_sync.baidu", "a_share")) == 1

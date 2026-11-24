@@ -235,7 +235,7 @@ export function DataSettingsView({
     setSpeechMessage("正在生成试听语音");
     try {
       const blob = await synthesizeSpeech({
-        text: "一树-A股观测台异动语音播报已就绪。",
+        text: "易数-A股观测台异动语音播报已就绪。",
         voice: speechVoice,
         rate: speechRate,
       }, nextController.signal);

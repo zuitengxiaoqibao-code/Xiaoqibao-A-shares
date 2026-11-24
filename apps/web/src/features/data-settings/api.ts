@@ -133,7 +133,7 @@ export const restartCurrentHistory = () => historySyncRequest(
   { method: "POST" },
 );
 
-async function historySupplementRequest<T>(path: string, init?: RequestInit): Promise<T> {
+async function historySupplementRequest<T>(path: string, init?: RequestInit & { timeoutMs?: number }): Promise<T> {
   return (await apiClient.request<T>(path, { ...init, context: "官方日线补齐" })).data;
 }
 
@@ -141,10 +141,10 @@ export const loadOfficialTdxInfo = () => historySupplementRequest<OfficialTdxPac
   "/api/v1/a-shares/history-supplement/official-info",
 );
 export const loadHistorySupplement = () => historySupplementRequest<HistorySupplementJob | null>(
-  "/api/v1/a-shares/history-supplement/current",
+  "/api/v1/a-shares/history-supplement/current", { timeoutMs: 5000 },
 );
 export const startOfficialTdxSupplement = () => historySupplementRequest<HistorySupplementJob>(
-  "/api/v1/a-shares/history-supplement/official/start", { method: "POST" },
+  "/api/v1/a-shares/history-supplement/official/start", { method: "POST", timeoutMs: 10000 },
 );
 
 async function tdxImportRequest<T>(path: string, init?: RequestInit): Promise<T> {

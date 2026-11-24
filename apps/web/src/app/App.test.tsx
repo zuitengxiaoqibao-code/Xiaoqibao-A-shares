@@ -10,6 +10,8 @@ vi.mock("../features/dashboard/Dashboard", () => ({
   Dashboard: () => <div>dashboard</div>,
 }));
 
+vi.mock("../shared/marketSession", () => ({ loadMarketStage: vi.fn(async () => "休市") }));
+
 vi.mock("../features/quant-analysis/api", async (importOriginal) => ({
   ...await importOriginal<typeof import("../features/quant-analysis/api")>(),
   registerWatchlistFocus,

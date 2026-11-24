@@ -146,7 +146,7 @@ export function buildWorkspaceMarketModel(data: MarketOverviewResponse): Workspa
   const stockNames = new Map<string, string>();
   const remember = (symbol: string, name: string | null | undefined) => {
     const normalized = name?.trim();
-    if (symbol && normalized && normalized !== symbol) stockNames.set(symbol, normalized);
+    if (symbol && normalized && normalized !== symbol && normalized !== "名称待补齐") stockNames.set(symbol, normalized);
   };
   (data.market_stocks ?? []).forEach((item) => remember(item.symbol, item.name));
   Object.values(data.sector_stocks ?? {}).flat().forEach((item) => remember(item.symbol, item.name));
@@ -164,6 +164,7 @@ export function buildWorkspaceMarketModel(data: MarketOverviewResponse): Workspa
       ...(data.review.dragon_tiger ?? []),
     ].forEach((item) => remember(item.symbol, item.name));
   }
+  Object.entries(data.stock_names ?? {}).forEach(([symbol, name]) => remember(symbol, name));
   return {
     stocks: deriveStocks(data),
     sectors: deriveSectors(data),

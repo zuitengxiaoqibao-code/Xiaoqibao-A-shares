@@ -1,4 +1,5 @@
 import json
+import pytest
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
@@ -194,3 +195,37 @@ def test_ai_parser_accepts_json_inside_markdown_code_fence() -> None:
     parsed = LateSessionAIAnalyzer._parse_content(content)
 
     assert parsed["summary"] == "规则结果已聚合"
+
+
+def _ai_snapshot():
+    return LateSessionSelectionResponse(
+        status="ready", trading_date=date(2026, 8, 17),
+        server_time=datetime(2026, 8, 17, 6, 30, tzinfo=timezone.utc),
+        phase="live_monitor", refresh_interval_ms=1000, next_refresh_ms=1000,
+        source_quality="ready", universe_count=1, quote_count=1, candidate_count=1,
+        rules=(), candidates=(LateSessionCandidateResult(quote=quote(), passed=True, rules=()),),
+    )
+
+
+def test_selection_rejects_inconsistent_counts_and_duplicate_symbols():
+    selection = _ai_snapshot().model_dump()
+    with pytest.raises(ValueError, match="candidate_count"):
+        LateSessionSelectionResponse(**{**selection, "candidate_count": 999})
+    with pytest.raises(ValueError, match="unique"):
+        LateSessionSelectionResponse(**{**selection, "candidate_count": 2, "candidates": selection["candidates"] * 2})
+
+
+@pytest.mark.parametrize("summary", ["当前价格 9999 元", "当前候选 999 只", "600519 表现强劲", "候选共 2026 只"])
+def test_ai_output_rejects_unverifiable_numbers_prices_and_codes(summary):
+    with pytest.raises(ValueError):
+        LateSessionAIAnalyzer(None)._validate_ai_payload(
+            {"summary": summary, "key_points": [], "risk_points": [], "data_gaps": []}, _ai_snapshot(),
+        )
+
+
+def test_ai_output_accepts_evidence_bound_aggregate():
+    result = LateSessionAIAnalyzer(None)._validate_ai_payload(
+        {"summary": "当前候选 1 只", "key_points": ["规则结果已核验"], "risk_points": [], "data_gaps": []},
+        _ai_snapshot(),
+    )
+    assert result.status == "ready"

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import math
 from collections.abc import Awaitable, Callable
@@ -227,6 +228,60 @@ class CninfoAShareUniverseSource:
         if not instruments:
             raise ValueError("Cninfo A-share universe response contains no active equities")
         return instruments
+
+
+class SinaAShareUniverseSource:
+    """Use the live listing table, rather than CNInfo's historical search index."""
+    source_name = "sina-a-share-universe"
+    base_url = "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center."
+
+    def __init__(self, client: httpx.AsyncClient, *, clock=lambda: datetime.now(timezone.utc)):
+        self.client = client
+        self.clock = clock
+
+    async def fetch(self) -> tuple[AShareInstrument, ...]:
+        headers = {"User-Agent": USER_AGENT, "Referer": "https://finance.sina.com.cn/"}
+        response = await self.client.get(self.base_url + "getHQNodeStockCount", params={"node": "hs_a"}, headers=headers, timeout=10)
+        response.raise_for_status()
+        total = int(response.json())
+        if total < MINIMUM_COMPLETE_A_SHARE_UNIVERSE_COUNT or total > 15000:
+            raise ValueError("新浪当前证券目录总数校验失败")
+        semaphore = asyncio.Semaphore(4)
+
+        async def page(number):
+            async with semaphore:
+                for attempt in range(2):
+                    try:
+                        result = await self.client.get(self.base_url + "getHQNodeData", params={
+                            "page": number, "num": 100, "sort": "symbol", "asc": 1, "node": "hs_a", "symbol": "",
+                        }, headers=headers, timeout=10)
+                        result.raise_for_status()
+                        rows = result.json()
+                        if not isinstance(rows, list):
+                            raise ValueError("新浪当前证券目录分页无效")
+                        return rows
+                    except (httpx.HTTPError, ValueError):
+                        if attempt:
+                            raise
+                        await asyncio.sleep(0.25)
+
+        pages = await asyncio.gather(*(page(number) for number in range(1, math.ceil(total / 100) + 1)))
+        rows = [row for batch in pages for row in batch]
+        if len({row.get("symbol") for row in rows}) != total:
+            raise ValueError("新浪当前证券目录分页数量不完整或有重复")
+        now = self.clock()
+        instruments = []
+        for row in rows:
+            code = str(row.get("code") or "")
+            try:
+                validate_a_share_code(code)
+            except ValueError:
+                continue
+            if code in NON_EQUITY_IDENTIFIERS:
+                continue
+            instruments.append(AShareInstrument(symbol=code, name=row["name"], exchange=market_prefix(code),
+                                               observed_at=now, quote_quality="unavailable", trading_status="active"))
+        return tuple(instruments)
 
 
 class FallbackAShareUniverseSource:

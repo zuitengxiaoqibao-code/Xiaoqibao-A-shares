@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import shutil
+import tempfile
 
 
 PERSISTENT_DIRECTORIES = frozenset(
@@ -61,13 +62,14 @@ class PendingUpdate:
         return sorted(obsolete, key=str)
 
     def apply(self) -> int:
-        rollback_root = self.target_root.parent / f".{self.target_root.name}-rollback-{self.version}"
-        if rollback_root.exists():
-            shutil.rmtree(rollback_root)
-        rollback_root.mkdir(parents=True)
+        rollback_root = Path(tempfile.mkdtemp(
+            prefix=f".{self.target_root.name}-rollback-", dir=self.target_root.parent,
+        ))
         replaced: list[PurePosixPath] = []
         created: list[PurePosixPath] = []
         removed: list[PurePosixPath] = []
+        temporary_files: list[Path] = []
+        cleanup_rollback = False
         try:
             for relative in self.obsolete_files():
                 target = self.target_root / Path(*relative.parts)
@@ -89,24 +91,40 @@ class PendingUpdate:
                 else:
                     created.append(relative)
                 temporary = target.with_name(f".{target.name}.update-tmp")
+                temporary_files.append(temporary)
                 shutil.copy2(source, temporary)
                 os.replace(temporary, target)
+            cleanup_rollback = True
             return len(removed) + len(replaced) + len(created)
-        except Exception:
+        except Exception as original_error:
+            restore_errors: list[str] = []
             for relative in created:
                 try:
                     (self.target_root / Path(*relative.parts)).unlink(missing_ok=True)
-                except OSError:
-                    pass
+                except OSError as error:
+                    restore_errors.append(f"{relative}: {error}")
             for relative in (*removed, *replaced):
                 backup = rollback_root / Path(*relative.parts)
                 target = self.target_root / Path(*relative.parts)
-                if backup.exists():
+                try:
                     target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(backup, target)
+                except OSError as error:
+                    restore_errors.append(f"{relative}: {error}")
+            if restore_errors:
+                raise RuntimeError(
+                    f"Update failed: {original_error}; rollback failed: "
+                    f"{'; '.join(restore_errors)}. Recovery files preserved at {rollback_root}"
+                ) from original_error
+            cleanup_rollback = True
             raise
         finally:
-            if rollback_root.exists():
+            for temporary in temporary_files:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            if cleanup_rollback:
                 shutil.rmtree(rollback_root, ignore_errors=True)
 
 

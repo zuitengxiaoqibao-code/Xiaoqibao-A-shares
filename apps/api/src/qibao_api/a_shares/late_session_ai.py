@@ -3,6 +3,7 @@ import logging
 import re
 from collections import Counter
 from datetime import datetime, timezone
+from decimal import Decimal
 from time import monotonic
 from typing import Any
 
@@ -105,6 +106,8 @@ class LateSessionAIAnalyzer:
                         "不得新增股票、不得编造字段、不得给出买卖、仓位、止损或止盈指令。"
                         "只返回 JSON：summary、key_points、risk_points、data_gaps。"
                         "每个列表最多 4 条，每条不超过 40 个汉字；重复原因必须合并计数。"
+                        "输入只有聚合证据，不得输出个股代码或价格；数字只能原样引用输入，"
+                        "候选总数必须等于 candidate_count，不得推测收益或概率。"
                     ),
                 },
                 {
@@ -171,6 +174,16 @@ class LateSessionAIAnalyzer:
         text = " ".join((values["summary"], *values["key_points"], *values["risk_points"], *values["data_gaps"]))
         if _TRADING_INSTRUCTION_PATTERN.search(text):
             raise ValueError("AI 返回包含交易指令")
+        if re.search(r"(?<!\d)\d{6}(?!\d)|(?:股价|现价|价格)|\d\s*元", text):
+            raise ValueError("聚合证据不支持个股代码或价格结论")
+        evidence = self._request(selection, "")["messages"][1]["content"]
+        number_pattern = r"(?<![\d.])-?\d+(?:\.\d+)?(?![\d.])"
+        allowed_numbers = {Decimal(value) for value in re.findall(number_pattern, evidence)}
+        if any(Decimal(value) not in allowed_numbers for value in re.findall(number_pattern, text)):
+            raise ValueError("AI 返回包含输入证据之外的数字")
+        for count in re.findall(r"(?:候选(?:股票|股)?(?:共|共有|总数为|数量为|有)?\s*)(\d+)\s*只", text):
+            if int(count) != selection.candidate_count:
+                raise ValueError("AI 候选计数与快照不符")
         return LateSessionAIAnalysis(
             status="ready",
             mode="ai",

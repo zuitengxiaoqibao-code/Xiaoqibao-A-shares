@@ -58,13 +58,21 @@ describe("buildDataScreenModel", () => {
     expect(buildDataScreenModel(snapshot({ sectors })).sectors).toHaveLength(10);
   });
 
-  it("does not present an unmapped supplier sector as a formal industry", () => {
+  it("preserves the supplier sector name when Shenwan mapping is unavailable", () => {
     const model = buildDataScreenModel(snapshot({
       sectors: [{ sector_id: "raw-1", name: "自定义概念", change_percent: "1.2", amount_yi: "1", limit_up_count: 0, rising_count: 1, falling_count: 0, stock_count: 1 }],
     }));
 
-    expect(model.sectors[0].name).toBe("申万行业待核验");
+    expect(model.sectors[0].name).toBe("自定义概念");
     expect(model.sectors[0].industry_system).toBe("待核验");
+  });
+
+  it("uses the backend classification status while preserving the original name", () => {
+    const model = buildDataScreenModel(snapshot({
+      sectors: [{ sector_id: "raw-1", name: "人工智能", industry_system: "待核验", shenwan_industry: { code: "801080", name: "电子", level: "一级", version: "2021" }, change_percent: "1.2", amount_yi: "1", limit_up_count: 0, rising_count: 1, falling_count: 0, stock_count: 1 }],
+    }));
+
+    expect(model.sectors[0]).toMatchObject({ name: "人工智能", industry_system: "待核验" });
   });
 
   it("deduplicates historical sector-flow samples and keeps the latest breakdown", () => {

@@ -44,9 +44,18 @@ from qibao_api.dependencies import (
 from qibao_api.gongbu.backup_service import BackupRecord, BackupVerification
 from qibao_api.operations.freshness import DEFAULT_FRESHNESS_POLICIES
 from qibao_api.a_shares.postclose_report import PostCloseReportRepository
+from qibao_api.shangshu.trading_calendar import MarketSessionStatus, market_session_status
 
 
 router = APIRouter(prefix="/api/v1/operations", tags=["工部运维"])
+
+
+@router.get("/market-session", response_model=MarketSessionStatus)
+def current_market_session(
+    request: Request,
+    now: Annotated[datetime, Depends(get_server_time)],
+) -> MarketSessionStatus:
+    return market_session_status(now, getattr(request.app.state, "trading_calendar", None))
 
 
 @router.get("/page-snapshots/{menu}")

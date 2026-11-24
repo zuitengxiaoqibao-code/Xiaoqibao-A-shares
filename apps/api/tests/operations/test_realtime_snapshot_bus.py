@@ -1,7 +1,58 @@
 import json
 from datetime import datetime, timezone
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 from qibao_api.operations.realtime_snapshot_bus import RealtimeSnapshotBus
+
+
+def test_bus_isolates_payloads_between_producer_subscribers_and_latest():
+    bus = RealtimeSnapshotBus()
+    first, second = bus.subscribe(), bus.subscribe()
+    payload = {"nested": {"value": 1}}
+    event = bus.publish("news_events", payload, observed_at=datetime.now(timezone.utc), source="test", freshness="live")
+    payload["nested"]["value"] = 2
+    event["payload"]["nested"]["value"] = 3
+    first.get_nowait()["payload"]["nested"]["value"] = 4
+    bus.latest("news_events")["payload"]["nested"]["value"] = 5
+    assert second.get_nowait()["payload"]["nested"]["value"] == 1
+    assert bus.latest("news_events")["payload"]["nested"]["value"] == 1
+    assert RealtimeSnapshotBus()._stream_id != event["stream_id"]
+
+
+def test_concurrent_publish_cannot_overtake_a_slow_delivery(monkeypatch):
+    bus = RealtimeSnapshotBus()
+    subscription = bus.subscribe()
+    delivering, release, second_started, second_returned = (threading.Event() for _ in range(4))
+    offer = bus._offer
+
+    def slow_offer(target, event):
+        if event["sequence"] == 1:
+            delivering.set()
+            assert release.wait(2)
+        offer(target, event)
+
+    monkeypatch.setattr(bus, "_offer", slow_offer)
+
+    def publish(second=False):
+        if second:
+            second_started.set()
+        bus.publish("news_events", {}, observed_at=datetime.now(timezone.utc), source="test", freshness="live")
+        if second:
+            second_returned.set()
+
+    with ThreadPoolExecutor(2) as executor:
+        first = executor.submit(publish)
+        assert delivering.wait(2)
+        second = executor.submit(publish, True)
+        try:
+            assert second_started.wait(2)
+            assert not second_returned.wait(0.05)
+        finally:
+            release.set()
+        first.result(timeout=2)
+        second.result(timeout=2)
+    assert [subscription.get_nowait()["sequence"] for _ in range(2)] == [1, 2]
 
 
 def test_bus_publishes_monotonic_events_and_replays_latest_snapshot() -> None:

@@ -26,8 +26,10 @@ describe("production copy", () => {
       .map(([, source]) => source)
       .join("\n");
 
-    expect(visibleSources).toContain("一树-A股观测台");
-    expect(visibleSources).toContain("上海一树电子商务有限公司");
+    expect(visibleSources).toContain("易数-A股观测台");
+    expect(visibleSources).toContain("易数智算");
+    expect(visibleSources).not.toMatch(/\u4e00\u6811/);
+    expect(visibleSources).not.toMatch(/易数\u7535\u5b50\u5546\u52a1/);
     expect(visibleSources).not.toContain("小七宝");
   });
 });

@@ -337,6 +337,46 @@ def test_shutdown_request_leaves_pending_work_restartable(tmp_path) -> None:
     assert value.tdx_source.calls == []
 
 
+def test_backfill_fills_older_gaps_even_when_latest_date_is_current(tmp_path) -> None:
+    from qibao_api.storage.bar_repository import BarRepository
+
+    repository = BarRepository(tmp_path / "market.duckdb", tmp_path / "parquet")
+    history = bars("600000", 300)
+    repository.upsert(history[-5:])
+    value = service(tmp_path, symbols=("600000",), coverage={},
+                    tdx=Source({"600000": history}), baidu=Source({}))
+    value.bar_repository = repository
+    completed = value.run(value.create_backfill().job_id)
+    assert completed.ready_count == 1
+    assert repository.coverage(["600000"], TARGET)["600000"].bar_count == 300
+    assert value.jobs.items(completed.job_id)[0].written_rows == 295
+
+
+def test_target_repair_retries_remaining_gaps_after_an_incomplete_source_response(tmp_path) -> None:
+    value = service(tmp_path, symbols=("600000",), coverage={},
+                    tdx=Source({"600000": bars("600000", 10)}), baidu=Source({}))
+    first = value.run(value.create_target_repair(TARGET).job_id)
+    assert first.state == "completed"
+    assert value.bar_repository.values["600000"][0] == 10
+    value.tdx_source.responses["600000"] = bars("600000", 300)
+    retry = value.create_target_repair(TARGET)
+    assert retry.job_id == first.job_id
+    assert retry.state == "pending"
+    assert retry.pending_count == 1
+    second = value.run(retry.job_id)
+    assert second.ready_count == 1
+    assert len(value.tdx_source.calls) == 2
+
+
+def test_invalid_primary_history_automatically_uses_valid_backup(tmp_path) -> None:
+    value = service(tmp_path, symbols=("600000",), coverage={},
+                    tdx=Source({"600000": bars("000001", 300)}),
+                    baidu=Source({"600000": bars("600000", 300, source="baidu")}))
+    result = value.run(value.create_backfill().job_id)
+    assert result.baidu_ready_count == 1
+    assert all(bar.symbol == "600000" for bar in value.bar_repository.writes)
+
+
 def test_pause_during_an_item_does_not_try_to_finish_pending_work(tmp_path) -> None:
     holder = {}
     tdx = CallbackSource(

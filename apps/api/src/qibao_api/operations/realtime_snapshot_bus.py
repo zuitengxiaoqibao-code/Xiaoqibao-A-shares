@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import queue
 import threading
-from datetime import datetime
+from copy import deepcopy
+from datetime import datetime, timezone
 from typing import Any
+from uuid import uuid4
 
 
 class RealtimeSnapshotBus:
@@ -22,6 +24,8 @@ class RealtimeSnapshotBus:
         self.max_queue_size = max_queue_size
         self._lock = threading.RLock()
         self._sequence = 0
+        self._stream_id = uuid4().hex
+        self._stream_started_at = datetime.now(timezone.utc).isoformat()
         self._latest: dict[str, dict[str, Any]] = {}
         self._subscribers: dict[queue.Queue[dict[str, Any]], frozenset[str] | None] = {}
         self._published = 0
@@ -52,7 +56,7 @@ class RealtimeSnapshotBus:
     def latest(self, kind: str) -> dict[str, Any] | None:
         with self._lock:
             event = self._latest.get(kind)
-            return dict(event) if event is not None else None
+            return deepcopy(event) if event is not None else None
 
     def publish(
         self,
@@ -72,18 +76,19 @@ class RealtimeSnapshotBus:
                 "event_id": f"{kind}-{self._sequence}",
                 "kind": kind,
                 "sequence": self._sequence,
+                "stream_id": self._stream_id,
+                "stream_started_at": self._stream_started_at,
                 "observed_at": observed_at.isoformat(),
                 "source": source,
                 "freshness": freshness,
-                "payload": payload,
+                "payload": deepcopy(payload),
             }
             self._latest[kind] = event
-            subscribers = tuple(self._subscribers.items())
-        for subscription, kinds in subscribers:
-            if kinds is not None and kind not in kinds:
-                continue
-            self._offer(subscription, event)
-        return event
+            for subscription, kinds in self._subscribers.items():
+                if kinds is not None and kind not in kinds:
+                    continue
+                self._offer(subscription, deepcopy(event))
+            return deepcopy(event)
 
     def _offer(self, subscription: queue.Queue[dict[str, Any]], event: dict[str, Any]) -> None:
         try:

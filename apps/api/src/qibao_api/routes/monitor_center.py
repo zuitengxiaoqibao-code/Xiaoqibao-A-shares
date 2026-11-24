@@ -118,7 +118,7 @@ def test_notification_settings(request: Request) -> dict[str, str]:
     if delivery is None:
         return {"status": "未配置", "message": "飞书投递器尚未初始化"}
     try:
-        result = delivery.send(title="一树-A股观测台测试", lines=("这是一条本机配置测试消息，不代表交易信号。",))
+        result = delivery.send(title="易数-A股观测台测试", lines=("这是一条本机配置测试消息，不代表交易信号。",))
         return {"status": result.status, "message": result.message}
     except Exception as error:
         raise HTTPException(status_code=503, detail=str(error)) from error

@@ -1,4 +1,6 @@
+import asyncio
 import json
+import threading
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -186,6 +188,41 @@ async def test_ingestion_requires_authorization_and_persists_complete_chain(tmp_
     assert len(repository.interpretations()) == 1
     repository.close()
     compliance.close()
+
+
+@pytest.mark.asyncio
+async def test_directory_wait_does_not_block_progress_requests(tmp_path) -> None:
+    entered = threading.Event()
+    release = threading.Event()
+    exited = threading.Event()
+    compliance = ComplianceRepository(tmp_path / "compliance.sqlite3")
+    compliance.set_feature_sources("market_news", AssetKind.A_SHARE, ("eastmoney",))
+    authorize(compliance)
+    repository = NewsRepository(tmp_path / "news.sqlite3")
+
+    def aliases():
+        entered.set()
+        try:
+            release.wait(2)
+            return {}
+        finally:
+            exited.set()
+
+    service = NewsIngestionService(
+        Source(), repository,
+        DeterministicNewsLinker(instrument_aliases=aliases, industry_keywords={}, theme_keywords={}),
+        compliance,
+    )
+    task = asyncio.create_task(service.sync())
+    try:
+        assert await asyncio.to_thread(entered.wait, 2)
+        # A progress request can run while the news worker waits for a writer.
+        assert not exited.is_set()
+    finally:
+        release.set()
+        await task
+        repository.close()
+        compliance.close()
 
 
 @pytest.mark.asyncio

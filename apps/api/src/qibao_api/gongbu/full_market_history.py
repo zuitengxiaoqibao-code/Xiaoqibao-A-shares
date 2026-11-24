@@ -1,6 +1,8 @@
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import time as monotonic_time
 from datetime import date, datetime, time, timedelta
-from threading import Event
+from threading import Event, RLock
 from zoneinfo import ZoneInfo
 
 from qibao_api.contracts.bars import DailyBar
@@ -34,6 +36,10 @@ class FullMarketHistoryService:
         clock: Callable[[], datetime],
         failure_pause_threshold: int = 20,
         trading_calendar=None,
+        fallback_sources=(),
+        max_workers: int = 1,
+        listing_date_source=None,
+        close_source=None,
     ) -> None:
         if failure_pause_threshold < 1:
             raise ValueError("failure_pause_threshold must be positive")
@@ -45,6 +51,13 @@ class FullMarketHistoryService:
         self.clock = clock
         self.failure_pause_threshold = failure_pause_threshold
         self.trading_calendar = trading_calendar
+        self.fallback_sources = tuple(fallback_sources)
+        self.max_workers = max(1, min(8, max_workers))
+        self._source_lock = RLock()
+        self._source_failures = {}
+        self.listing_date_source = listing_date_source
+        self.close_source = close_source
+        self._repair_sessions = None
         self._shutdown_requested = Event()
 
     def create_backfill(self) -> HistorySyncJob:
@@ -61,13 +74,69 @@ class FullMarketHistoryService:
         self,
         job_id: str,
         progress: Callable[[HistorySyncJob], None] | None = None,
+        comprehensive: bool = False,
     ) -> HistorySyncJob:
         job = self.jobs.get(job_id)
         if job.state in ("paused", "completed", "failed"):
             return job
+        self._repair_sessions = None
+        with self._source_lock:
+            self._source_failures.clear()
         consecutive_failures = 0
         started_at = self.clock()
         before = self.repair_center(job.target_date, limit=1)
+        # Only the coordinator updates progress. Network workers use independent
+        # clients; repository writes remain protected by their existing locks.
+        if comprehensive:
+            committed = {item.symbol: item.written_rows for item in self.jobs.items(job_id) if item.state == "pending"}
+            with ThreadPoolExecutor(max_workers=self.max_workers, thread_name_prefix="repair-fetch") as executor:
+                pending = [item for item in self.jobs.items(job_id) if item.state == "pending"]
+                if self.close_source is not None:
+                    try:
+                        self.close_source.prefetch(tuple(item.symbol for item in pending), job.target_date)
+                        coverage = self.bar_repository.coverage([item.symbol for item in pending], job.target_date)
+                        closing = [bar for bar in self.close_source.bars()
+                                   if coverage[bar.symbol].bar_count > 0
+                                   and coverage[bar.symbol].latest_trade_date is not None
+                                   and coverage[bar.symbol].latest_trade_date < job.target_date]
+                        for offset in range(0, len(closing), 256):
+                            if self._shutdown_requested.is_set() or self.jobs.is_pause_requested(job_id):
+                                return self.jobs.get(job_id)
+                            batch = closing[offset:offset + 256]
+                            inserted = self.bar_repository.append_missing_batch(batch)
+                            # Only record a one-row write when the complete batch
+                            # was committed. A concurrent writer falls back to
+                            # the normal per-symbol verification below.
+                            if inserted == len(batch):
+                                for bar in batch:
+                                    committed[bar.symbol] = committed.get(bar.symbol, 0) + 1
+                                ready = tuple(bar.symbol for bar in batch if coverage[bar.symbol].bar_count >= self.ELIGIBLE_BARS)
+                                self.jobs.complete_closing_batch(job_id, ready)
+                                if progress is not None:
+                                    progress(self.jobs.get(job_id))
+                        pending = [item for item in self.jobs.items(job_id) if item.state == "pending"]
+                    except Exception:
+                        pass  # Independent historical sources remain available.
+                symbols = [item.symbol for item in pending]
+                coverage_values = self.bar_repository.coverage(symbols, job.target_date)
+                short = [symbol for symbol in symbols if coverage_values[symbol].bar_count < self.ELIGIBLE_BARS
+                         or (self.close_source is not None and self.close_source.unavailable_reason(symbol, job.target_date))]
+                stored_values = self.bar_repository.latest_many(short, self.BACKFILL_BARS, job.target_date) if short and hasattr(self.bar_repository, "latest_many") else {}
+                self._repair_sessions = tuple(self.bar_repository.trade_dates(limit=400)) if hasattr(self.bar_repository, "trade_dates") else None
+                for offset in range(0, len(pending), self.max_workers):
+                    if self._shutdown_requested.is_set() or self.jobs.is_pause_requested(job_id):
+                        return self.jobs.get(job_id)
+                    batch = pending[offset:offset + self.max_workers]
+                    futures = []
+                    for item in batch:
+                        self.jobs.mark_running(job_id, item.symbol)
+                        futures.append(executor.submit(self._sync_item, job_id, item.symbol,
+                            coverage_values.get(item.symbol), stored_values.get(item.symbol), committed.get(item.symbol, 0)))
+                    for future in as_completed(futures):
+                        future.result()
+                        if progress is not None:
+                            progress(self.jobs.get(job_id))
+            # Reuse the normal completion/audit path, not the outage pause rule.
         while True:
             if self._shutdown_requested.is_set():
                 return self.jobs.get(job_id)
@@ -96,7 +165,7 @@ class FullMarketHistoryService:
             if self.jobs.is_pause_requested(job_id):
                 return self.jobs.mark_paused(job_id)
             self.jobs.mark_running(job_id, item.symbol)
-            state = self._sync_item(job_id, item.symbol)
+            state = self._sync_item(job_id, item.symbol, precommitted=item.written_rows)
             if progress is not None:
                 progress(self.jobs.get(job_id))
             if state == "failed":
@@ -148,8 +217,17 @@ class FullMarketHistoryService:
             minimum_bars=self.ELIGIBLE_BARS,
             backfill_bars=self.BACKFILL_BARS,
         )
+        evidence = self.jobs.listing_history_evidence(target_date)
+        recent = self.bar_repository.coverage(tuple(set(evidence) & set(symbols)), target_date) if evidence else {}
+        suspended = self.jobs.suspension_evidence(target_date)
+        suspended_values = self.bar_repository.coverage(tuple(set(suspended) & set(symbols)), target_date) if suspended else {}
+        confirmed_suspended = sum((item.bar_count, item.latest_trade_date) == suspended[symbol]
+                                  for symbol, item in suspended_values.items())
+        new_complete = sum(item.bar_count < self.ELIGIBLE_BARS
+                           and item.bar_count >= evidence[symbol] and item.latest_trade_date == target_date
+                           for symbol, item in recent.items())
         coverage = (
-            round(aggregate.history_ready_count / aggregate.universe_count * 100, 2)
+            round((aggregate.history_ready_count + new_complete) / aggregate.universe_count * 100, 2)
             if aggregate.universe_count else None
         )
         dominant_coverage = (
@@ -189,6 +267,8 @@ class FullMarketHistoryService:
             universe_count=aggregate.universe_count,
             backfill_complete_count=aggregate.backfill_complete_count,
             eligible_count=aggregate.history_ready_count,
+            new_listing_complete_count=new_complete,
+            confirmed_suspended_count=confirmed_suspended,
             target_date_count=target_date_count,
             target_date_coverage_percent=target_date_coverage,
             dominant_trade_date=aggregate.dominant_trade_date,
@@ -196,7 +276,7 @@ class FullMarketHistoryService:
             dominant_date_coverage_percent=dominant_coverage,
             coverage_percent=coverage,
             fragmented_latest_count=aggregate.fragmented_latest_count,
-            missing_history_count=aggregate.missing_history_count,
+            missing_history_count=max(0, aggregate.missing_history_count - new_complete),
             quality=quality,
             blockers=tuple(blockers),
             lag_trading_days=lag_trading_days,
@@ -210,15 +290,22 @@ class FullMarketHistoryService:
         """Create an online multi-source job only for symbols with a real gap."""
         symbols = self.directory.active_symbols()
         values = self.bar_repository.coverage(symbols, target_date)
+        evidence = self.jobs.listing_history_evidence(target_date)
+        suspended = self.jobs.suspension_evidence(target_date)
         gaps = tuple(
             symbol for symbol in symbols
-            if values[symbol].bar_count < self.ELIGIBLE_BARS
+            if ((values[symbol].bar_count < self.ELIGIBLE_BARS
+                and values[symbol].bar_count < evidence.get(symbol, self.ELIGIBLE_BARS))
             or values[symbol].latest_trade_date is None
-            or values[symbol].latest_trade_date < target_date
+            or values[symbol].latest_trade_date < target_date)
+            and (values[symbol].bar_count, values[symbol].latest_trade_date) != suspended.get(symbol)
         )
         if not gaps:
             return None
-        return self.jobs.create_job("backfill", target_date, gaps)
+        job = self.jobs.create_job("backfill", target_date, gaps)
+        if job.state in {"paused", "completed", "failed"}:
+            job = self.jobs.requeue_gaps(job.job_id, gaps)
+        return self.jobs.restrict_to_gaps(job.job_id, gaps)
 
     def repair_center(
         self,
@@ -234,16 +321,20 @@ class FullMarketHistoryService:
         symbols = self.directory.active_symbols()
         coverage = self.coverage(target_date)
         values = self.bar_repository.coverage(symbols, target_date)
+        evidence = self.jobs.listing_history_evidence(target_date)
+        suspended = self.jobs.suspension_evidence(target_date)
         gaps: list[HistoryCoverageGap] = []
         for symbol in symbols:
             item = values[symbol]
+            if (item.bar_count, item.latest_trade_date) == suspended.get(symbol):
+                continue
             if item.bar_count == 0:
                 kind = "missing_history"
-            elif item.bar_count < self.ELIGIBLE_BARS:
+            elif item.bar_count < self.ELIGIBLE_BARS and item.bar_count < evidence.get(symbol, self.ELIGIBLE_BARS):
                 kind = "insufficient_history"
             elif (
-                coverage.dominant_trade_date is not None
-                and item.latest_trade_date != coverage.dominant_trade_date
+                item.latest_trade_date is not None
+                and item.latest_trade_date < target_date
             ):
                 kind = "behind_dominant_date"
             else:
@@ -292,9 +383,40 @@ class FullMarketHistoryService:
             source="market.duckdb/daily_bars",
         )
 
-    def _sync_item(self, job_id: str, symbol: str) -> str:
+    def _sync_item(self, job_id: str, symbol: str, coverage_override=None, stored_override=None, precommitted=0) -> str:
         job = self.jobs.get(job_id)
-        coverage = self.bar_repository.coverage([symbol], job.target_date)[symbol]
+        coverage = coverage_override or self.bar_repository.coverage([symbol], job.target_date)[symbol]
+        if (self.close_source is not None and self.listing_date_source is not None
+                and coverage.bar_count >= self.ELIGIBLE_BARS
+                and self.close_source.unavailable_reason(symbol, job.target_date)):
+            try:
+                stored = stored_override if stored_override is not None else self.bar_repository.latest_many([symbol], self.BACKFILL_BARS, job.target_date)[symbol]
+                if self.listing_date_source.verify_history(symbol, stored, job.target_date):
+                    self.jobs.confirm_suspension(symbol, job.target_date, coverage.bar_count, coverage.latest_trade_date)
+                    self.jobs.complete_item(job_id, symbol, state="skipped", source=None, written_rows=precommitted)
+                    return "skipped"
+            except Exception:
+                pass
+        if (self.close_source is not None and coverage.bar_count > 0
+                and coverage.latest_trade_date is not None and coverage.latest_trade_date < job.target_date):
+            try:
+                bar = self.close_source.bar(symbol, job.target_date)
+                if bar is not None:
+                    written = self.bar_repository.append_missing([bar])
+                    precommitted += written
+                    stored = self.bar_repository.latest_many([symbol], self.BACKFILL_BARS, job.target_date)[symbol]
+                    if len(stored) >= self.ELIGIBLE_BARS or self._confirm_new_listing(symbol, stored, job.target_date):
+                        self.jobs.complete_item(job_id, symbol, state="ready", source="tencent", written_rows=precommitted)
+                        return "ready"
+            except Exception:
+                pass
+        if (self.listing_date_source is not None and coverage.bar_count < self.ELIGIBLE_BARS
+                and coverage.latest_trade_date == job.target_date):
+            stored = stored_override if stored_override is not None else self.bar_repository.latest_many([symbol], self.BACKFILL_BARS, job.target_date)[symbol]
+            if self._confirm_new_listing(symbol, stored, job.target_date):
+                state = "ready" if precommitted else "skipped"
+                self.jobs.complete_item(job_id, symbol, state=state, source="tencent" if precommitted else None, written_rows=precommitted)
+                return state
         if (
             job.mode == "backfill"
             and coverage.bar_count >= self.BACKFILL_BARS
@@ -310,7 +432,7 @@ class FullMarketHistoryService:
                 symbol,
                 state="skipped",
                 source=None,
-                written_rows=0,
+                written_rows=precommitted,
             )
             return "skipped"
 
@@ -320,42 +442,123 @@ class FullMarketHistoryService:
             else self.INCREMENTAL_WINDOW
         )
         try:
-            source, bars = self._fetch(symbol, limit)
+            source, bars = self._fetch(symbol, limit, target_date=job.target_date)
             verified = self._verify(symbol, bars, job.target_date)
             missing = [
                 bar
                 for bar in verified
-                if coverage.latest_trade_date is None
+                if job.mode == "backfill"
+                or coverage.latest_trade_date is None
                 or bar.trade_date > coverage.latest_trade_date
             ]
             written_rows = self.bar_repository.append_missing(missing)
+            if self.fallback_sources and len(verified) < self.ELIGIBLE_BARS:
+                combined = self.bar_repository.latest_many([symbol], self.BACKFILL_BARS, job.target_date)[symbol] if hasattr(self.bar_repository, "latest_many") else verified
+                self._confirm_new_listing(symbol, combined, job.target_date)
             self.jobs.complete_item(
                 job_id,
                 symbol,
                 state="ready",
                 source=source,
-                written_rows=written_rows,
+                written_rows=written_rows + precommitted,
             )
             return "ready"
         except Exception as error:
+            try:
+                reason = getattr(self.close_source, "unavailable_reason", lambda *_: None)(symbol, job.target_date)
+            except Exception:
+                reason = None
             self.jobs.complete_item(
                 job_id,
                 symbol,
                 state="failed",
                 source=None,
-                written_rows=0,
+                written_rows=precommitted,
                 error_code=type(error).__name__,
+                error_detail=((reason + "；" if reason else "") + str(error))[:1200],
             )
             return "failed"
 
-    def _fetch(self, symbol: str, limit: int) -> tuple[str, list[DailyBar]]:
+    def _confirm_new_listing(self, symbol: str, bars: list[DailyBar], target_date: date) -> bool:
+        """A short history is complete only with independent listing evidence
+        and every exchange session since listing, not just a short response."""
+        if not bars or bars[-1].trade_date != target_date or not hasattr(self.bar_repository, "trade_dates"):
+            return False
+        listing_sources = ((("sina", self.listing_date_source),) if self.listing_date_source is not None else ()) + self.fallback_sources
+        for name, source in listing_sources:
+            listing = getattr(source, "listing_date", None)
+            if listing is None:
+                continue
+            try:
+                listed = listing(symbol)
+                sessions = {day for day in (self._repair_sessions if self._repair_sessions is not None else self.bar_repository.trade_dates(limit=400))
+                            if listed <= day <= target_date}
+                available = {bar.trade_date for bar in bars}
+                complete = sessions == available
+                if not complete and available <= sessions:
+                    verify = getattr(source, "verify_history", None)
+                    complete = verify is not None and verify(symbol, bars, target_date, listed)
+                if listed in sessions and target_date in sessions and complete:
+                    self.jobs.confirm_listing_history(symbol, target_date, listed, len(available), name)
+                    return True
+            except Exception:
+                # Missing listing evidence cannot weaken the 250-bar rule.
+                continue
+        return False
+
+    def _fetch(self, symbol: str, limit: int, *, target_date: date) -> tuple[str, list[DailyBar]]:
+        if self.fallback_sources:
+            errors = []
+            # HTTP OHLCV+actual amount first: fast, bounded requests. Original
+            # TDX and Baidu paths remain independent fallbacks.
+            sources = (*self.fallback_sources, ("mootdx", self.tdx_source), ("baidu", self.baidu_source))
+            for name, source in sources:
+                with self._source_lock:
+                    failures, retry_after = self._source_failures.get(name, (0, 0))
+                if monotonic_time.monotonic() < retry_after:
+                    errors.append(f"{name}: 来源连续失败，冷却后自动重试")
+                    continue
+                for attempt in range(2):
+                    try:
+                        bars = self._verify(symbol, source.fetch_daily(symbol, limit), target_date)
+                        if not bars:
+                            raise DataSourceUnavailable("未返回目标日期范围日线")
+                        if bars[-1].trade_date != target_date:
+                            raise DataSourceUnavailable(f"最新日线 {bars[-1].trade_date} 未覆盖目标日 {target_date}")
+                        if len(bars) < self.ELIGIBLE_BARS:
+                            local = self.bar_repository.coverage([symbol], target_date)[symbol]
+                            if local.bar_count < self.ELIGIBLE_BARS:
+                                stored = self.bar_repository.latest_many([symbol], self.BACKFILL_BARS, target_date)[symbol] if hasattr(self.bar_repository, "latest_many") else []
+                                combined = {bar.trade_date: bar for bar in stored}
+                                combined.update({bar.trade_date: bar for bar in bars})
+                                merged = sorted(combined.values(), key=lambda bar: bar.trade_date)
+                                if len(merged) < self.ELIGIBLE_BARS and not self._confirm_new_listing(symbol, merged, target_date):
+                                    raise DataSourceUnavailable("历史不足 250 条，且尚未核实上市以来的全部日线，继续尝试下一来源")
+                        with self._source_lock:
+                            self._source_failures[name] = (0, 0)
+                        return name, bars
+                    except Exception as error:
+                        import httpx
+                        status = error.response.status_code if isinstance(error, httpx.HTTPStatusError) else None
+                        errors.append(f"{name}: HTTP {status}" if status else f"{name}: {type(error).__name__}: {str(error)[:160]}")
+                        transient = isinstance(error, (httpx.TransportError, OSError)) or status in {429, 500, 502, 503, 504} or (name == "mootdx" and type(error).__name__ == "TdxOperationError")
+                        if not attempt and transient and name != "mootdx":
+                            monotonic_time.sleep(0.2)
+                            continue
+                        with self._source_lock:
+                            failures = self._source_failures.get(name, (0, 0))[0] + 1
+                            self._source_failures[name] = (failures, monotonic_time.monotonic() + 30 if failures >= 3 and transient else 0)
+                        break
+            raise DataSourceUnavailable("；".join(errors))
         try:
             bars = self.tdx_source.fetch_daily(symbol, limit)
+            bars = self._verify(symbol, bars, target_date)
             if not bars:
                 raise DataSourceUnavailable("mootdx returned no daily bars")
             return "mootdx", bars
         except Exception:
             bars = self.baidu_source.fetch_daily(symbol, limit)
+            bars = self._verify(symbol, bars, target_date)
             if not bars:
                 raise DataSourceUnavailable("Baidu returned no daily bars")
             return "baidu", bars

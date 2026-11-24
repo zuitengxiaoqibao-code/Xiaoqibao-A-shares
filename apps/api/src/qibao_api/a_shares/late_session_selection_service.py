@@ -1,6 +1,8 @@
 import hashlib
 import json
 import threading
+from collections import OrderedDict
+from time import monotonic
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Callable
@@ -50,6 +52,33 @@ class LateSessionSelectionService:
         self._refresh_thread: threading.Thread | None = None
         self._refresh_thread_lock = threading.Lock()
         self._refresh_error: str | None = None
+        self._snapshot_lock = threading.RLock()
+        self._snapshots: OrderedDict[str, tuple[float, LateSessionSelectionResponse]] = OrderedDict()
+
+    def analysis_snapshot(self, snapshot_id: str) -> LateSessionSelectionResponse:
+        with self._snapshot_lock:
+            saved = self._snapshots.get(snapshot_id)
+            if saved is None or monotonic() - saved[0] > 900:
+                self._snapshots.pop(snapshot_id, None)
+                raise KeyError(snapshot_id)
+            return saved[1].model_copy(deep=True)
+
+    def _remember_snapshot(self, response: LateSessionSelectionResponse) -> LateSessionSelectionResponse:
+        canonical = response.model_dump_json(exclude={"snapshot_id"})
+        snapshot_id = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        response = response.model_copy(update={"snapshot_id": snapshot_id}, deep=True)
+        now = monotonic()
+        with self._snapshot_lock:
+            while self._snapshots:
+                first = next(iter(self._snapshots))
+                if now - self._snapshots[first][0] <= 900:
+                    break
+                self._snapshots.pop(first)
+            self._snapshots[snapshot_id] = (now, response.model_copy(deep=True))
+            self._snapshots.move_to_end(snapshot_id)
+            while len(self._snapshots) > 128:
+                self._snapshots.popitem(last=False)
+        return response
 
     def current(
         self,
@@ -354,6 +383,7 @@ class LateSessionSelectionService:
         return tuple(ranked[:maximum])
 
     def _publish_if_changed(self, response: LateSessionSelectionResponse) -> LateSessionSelectionResponse:
+        response = self._remember_snapshot(response)
         payload = response.model_dump(mode="json")
         fingerprint_payload = {
             "trading_date": payload.get("trading_date"),

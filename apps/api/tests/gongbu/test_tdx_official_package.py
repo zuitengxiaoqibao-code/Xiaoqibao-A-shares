@@ -2,7 +2,8 @@ import hashlib
 import io
 import struct
 import zipfile
-from datetime import date, datetime, timezone
+from concurrent.futures import Future, ThreadPoolExecutor
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -14,6 +15,119 @@ from qibao_api.gongbu.tdx_official_package import (
     parse_official_package_info,
 )
 from qibao_api.gongbu.tdx_local_import import TdxLocalDatabaseUnavailable
+
+
+def _submission_service(tmp_path):
+    return OfficialTdxPackageService(cache_dir=tmp_path / "cache",
+        state_path=tmp_path / "job.json", tdx_import_service=object(), client=object())
+
+
+class _QueuedExecutor:
+    def __init__(self):
+        self.future = Future()
+
+    def submit(self, *_args):
+        return self.future
+
+
+def test_rejected_submission_is_persisted_and_does_not_block_retry(tmp_path):
+    service = _submission_service(tmp_path)
+    executor = ThreadPoolExecutor(max_workers=1)
+    executor.shutdown()
+    with pytest.raises(RuntimeError):
+        service.start_job(executor)
+    failed = service.current_job()
+    assert failed.state == "failed"
+    assert failed.error_stage == "submit_failed"
+    assert failed.finished_at is not None
+    assert "重新启动" in failed.error_detail
+    assert all(item.state == "skipped" for item in failed.source_attempts)
+    retry = service.start_job(_QueuedExecutor())
+    assert retry.job_id != failed.job_id
+    assert retry.state == "pending"
+
+
+def test_cancelled_queued_task_releases_active_job(tmp_path):
+    service = _submission_service(tmp_path)
+    executor = _QueuedExecutor()
+    service.start_job(executor)
+    executor.future.cancel()
+    assert service.current_job().error_stage == "task_cancelled"
+    assert service.current_job().state == "failed"
+    assert service.create_job().state == "pending"
+
+
+def test_worker_crash_does_not_leave_fake_running_status(tmp_path):
+    service = _submission_service(tmp_path)
+    executor = _QueuedExecutor()
+    job = service.start_job(executor)
+    service._update(job, state="running", stage="online_repair")
+    executor.future.set_exception(RuntimeError("worker unavailable"))
+    failed = service.current_job()
+    assert failed.state == "failed"
+    assert failed.error_stage == "worker_failed"
+    assert "worker unavailable" in failed.error_detail
+
+
+def test_old_callback_cannot_overwrite_new_job_or_completed_result(tmp_path):
+    service = _submission_service(tmp_path)
+    executor = _QueuedExecutor()
+    first = service.start_job(executor)
+    completed = service._update(first, state="completed", stage="completed", percent=100)
+    executor.future.set_exception(RuntimeError("late error"))
+    assert service.current_job() == completed
+    second = service.create_job()
+    service._fail_background_job(first.job_id, "worker_failed", "stale callback")
+    assert service.current_job() == second
+
+
+def test_shutdown_rejects_new_tasks_without_creating_or_replacing_job(tmp_path):
+    service = _submission_service(tmp_path)
+    service.stop_accepting_jobs()
+    with pytest.raises(RuntimeError, match="关闭"):
+        service.start_job(_QueuedExecutor())
+    assert service.current_job() is None
+
+
+def test_real_executor_runs_job_and_completion_callback_preserves_result(tmp_path, monkeypatch):
+    service = _submission_service(tmp_path)
+    from threading import Event
+    finished = Event()
+
+    def run(job_id):
+        job = service.current_job()
+        assert job.job_id == job_id
+        service._update(job, state="completed", stage="completed", percent=100)
+        finished.set()
+
+    monkeypatch.setattr(service, "run", run)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        job = service.start_job(executor)
+        assert finished.wait(3)
+    assert service.current_job().job_id == job.job_id
+    assert service.current_job().state == "completed"
+
+
+def test_second_start_cannot_replace_queued_job(tmp_path):
+    service = _submission_service(tmp_path)
+    executor = _QueuedExecutor()
+    first = service.start_job(executor)
+    with pytest.raises(ValueError, match="正在执行"):
+        service.start_job(_QueuedExecutor())
+    assert service.current_job().job_id == first.job_id
+
+
+@pytest.mark.parametrize("state", ["pending", "running"])
+def test_restart_recovers_active_job_preserving_counts_and_cache(tmp_path, state):
+    service = _submission_service(tmp_path)
+    job = service.create_job()
+    service._update(job, state=state, imported_rows=123, downloaded_bytes=456)
+    recovered = service.recover_interrupted()
+    assert recovered.state == "failed"
+    assert recovered.error_stage == "restart_recovery"
+    assert recovered.imported_rows == 123
+    assert recovered.downloaded_bytes == 456
+    assert service.create_job().state == "pending"
 
 
 def _day_record(raw_date: int, close: int = 1000) -> bytes:
@@ -180,6 +294,7 @@ def test_official_package_job_downloads_validates_imports_and_survives_reopen(tm
     assert importer.options == {
         "progress": importer.options["progress"],
         "extraction_progress": importer.options["extraction_progress"],
+        "discovery_progress": importer.options["discovery_progress"],
         "incremental": True,
         "source": "tdx-package",
         "batch_size": 256,
@@ -249,6 +364,64 @@ def test_official_package_persists_local_scan_progress(tmp_path) -> None:
     assert completed.scan_current_file.endswith("sh600001.day")
     assert completed.scan_speed == 12.5
     assert completed.scan_eta_seconds == 0.16
+
+
+def test_repair_persists_committed_counts_during_local_and_package_import(tmp_path) -> None:
+    payload = _archive_bytes()
+    snapshots = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("_hsjdayinfo.js"):
+            return httpx.Response(200, text=(
+                'window.HSJDAY_SOFT_SIZE="520.67MB";\n'
+                'window.HSJDAY_SOFT_TIME="2026-08-18 15:58:48";'
+            ))
+        return httpx.Response(200, content=payload)
+
+    class ImportService:
+        def default_paths(self):
+            return (tmp_path / "vipdoc",)
+
+        def import_now(self, paths, **options):
+            local = paths == self.default_paths()
+            counts = (10, 30) if local else (5, 7)
+            for index, rows in enumerate(counts, start=1):
+                event = {
+                    "phase": "writing", "scanned_files": 2, "total_scan_files": 2,
+                    "day_files": 2, "readable_files": index,
+                    "processed_files": index, "total_import_files": 2,
+                    "imported_rows": 0 if index == 1 else counts[0],
+                    "replaced_rows": 0, "skipped_rows": 0, "failed_files": 0,
+                    "pending_write_rows": rows - (counts[0] if index > 1 else 0),
+                }
+                options["discovery_progress"](event)
+                writing = service.current_job()
+                assert writing.state == "running"
+                assert writing.pending_write_rows > 0
+                options["discovery_progress"]({
+                    **event, "phase": "batch_committed", "imported_rows": rows,
+                    "pending_write_rows": 0,
+                })
+                committed = service.current_job()
+                assert committed.pending_write_rows == 0
+                snapshots.append(committed.imported_rows)
+            return type("Result", (), {
+                "state": "completed", "imported_rows": counts[-1], "replaced_rows": 0,
+                "skipped_rows": 0, "failed_files": 0,
+                "latest_trade_date": "2026-08-18", "errors": (),
+            })()
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        service = OfficialTdxPackageService(
+            cache_dir=tmp_path / "cache", state_path=tmp_path / "job.json",
+            tdx_import_service=ImportService(), client=client,
+            as_of=date(2026, 8, 19),
+        )
+        completed = service.run(service.create_job().job_id)
+
+    assert snapshots == [10, 30, 35, 37]
+    assert completed.imported_rows == 37
+    assert completed.pending_write_rows == 0
 
 
 def test_current_job_reclassifies_legacy_completed_scan_database_lock(tmp_path) -> None:
@@ -370,6 +543,7 @@ def test_terminal_legacy_job_is_reconciled_against_current_coverage(tmp_path) ->
         pass
 
     class Coverage:
+        universe_count = 5000
         target_date = date(2026, 8, 19)
         dominant_trade_date = date(2026, 8, 18)
         dominant_date_coverage_percent = 87.27
@@ -408,11 +582,13 @@ def test_terminal_legacy_job_is_reconciled_against_current_coverage(tmp_path) ->
         finished_at=observed,
         source_attempts=(),
     )
+    service.clock = lambda: observed + timedelta(days=3)
 
     reconciled = service.reconcile_current_job()
 
     assert reconciled is not None
     assert reconciled.state == "partial"
+    assert reconciled.finished_at == observed
     assert reconciled.stage == "partial"
     assert reconciled.final_target_date == date(2026, 8, 19)
     assert reconciled.final_dominant_trade_date == date(2026, 8, 18)
@@ -421,6 +597,39 @@ def test_terminal_legacy_job_is_reconciled_against_current_coverage(tmp_path) ->
     assert reconciled.remaining_gap_count == 154
     assert reconciled.final_quality == "stale"
     assert "主导交易日仍落后" in (reconciled.result_detail or "")
+
+
+def test_failed_reconciliation_does_not_mutate_terminal_task(tmp_path):
+    from types import SimpleNamespace
+    service = _submission_service(tmp_path)
+    job = service._update(service.create_job(), state="partial", stage="partial", finished_at=service._now())
+
+    def unavailable(_target):
+        raise OSError("database is temporarily locked")
+
+    service.history_service = SimpleNamespace(default_target_date=lambda: date(2026, 11, 23), coverage=unavailable)
+    with pytest.raises(OSError):
+        service.reconcile_current_job()
+    assert service.current_job() == job
+
+
+def test_reconciliation_cannot_overwrite_newly_started_task(tmp_path):
+    from types import SimpleNamespace
+    service = _submission_service(tmp_path)
+    service._update(service.create_job(), state="partial", stage="partial", finished_at=service._now())
+    created = []
+
+    def coverage(target):
+        created.append(service.start_job(_QueuedExecutor()))
+        return SimpleNamespace(universe_count=5000, target_date=target, dominant_trade_date=target,
+            dominant_date_coverage_percent=100, coverage_percent=100, missing_history_count=0,
+            quality="ready", blockers=())
+
+    service.history_service = SimpleNamespace(default_target_date=lambda: date(2026, 11, 23), coverage=coverage)
+    result = service.reconcile_current_job()
+    assert result == created[0]
+    assert service.current_job() == created[0]
+    assert result.state == "pending"
 
 
 def test_full_repair_reports_real_validation_extraction_import_and_verification_progress(tmp_path) -> None:
@@ -452,6 +661,7 @@ def test_full_repair_reports_real_validation_extraction_import_and_verification_
             })()
 
     class Coverage:
+        universe_count = 5000
         target_date = date(2026, 8, 18)
         dominant_trade_date = date(2026, 8, 18)
         dominant_date_coverage_percent = 99.1
@@ -483,8 +693,9 @@ def test_full_repair_reports_real_validation_extraction_import_and_verification_
         )
         completed = service.run(service.create_job().job_id)
 
-    assert completed.state == "completed"
-    assert completed.stage == "completed"
+    assert completed.state == "partial"
+    assert completed.stage == "partial"
+    assert "不代表全部修复成功" in completed.result_detail
     assert completed.validated_bytes > 0
     assert completed.validated_bytes == completed.total_validation_bytes
     assert completed.extracted_files == 2
@@ -525,6 +736,7 @@ def test_full_repair_falls_back_when_local_database_date_is_temporarily_unavaila
             })()
 
     class Coverage:
+        universe_count = 5000
         target_date = date(2026, 8, 19)
         dominant_trade_date = date(2026, 8, 19)
         dominant_date_coverage_percent = 99.1
@@ -631,6 +843,7 @@ def test_full_repair_finishes_partial_when_final_coverage_is_still_stale(tmp_pat
             })()
 
     class StaleCoverage:
+        universe_count = 5000
         target_date = date(2026, 8, 18)
         dominant_trade_date = date(2026, 8, 15)
         dominant_date_coverage_percent = 91.0

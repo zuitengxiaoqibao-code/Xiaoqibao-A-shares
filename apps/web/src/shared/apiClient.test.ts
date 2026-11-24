@@ -10,6 +10,28 @@ afterEach(() => {
 });
 
 describe("apiClient", () => {
+  it.each(["get", "getOptional"] as const)("keeps %s timeout active while the response body stalls", async (method) => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true, status: 200,
+      text: () => new Promise<string>(() => {}),
+    })));
+    await expect(apiClient[method]("/api/slow-body", {
+      context: "行情数据", timeoutMs: 15,
+    })).rejects.toThrow("行情数据请求超时");
+  });
+
+  it("cancels a body read after headers have arrived", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true, status: 200,
+      text: () => new Promise<string>(() => {}),
+    })));
+    const controller = new AbortController();
+    const request = apiClient.getOptional("/api/slow-body", { signal: controller.signal });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    controller.abort();
+    await expect(request).rejects.toMatchObject({ name: "AbortError" });
+  });
+
   it("returns parsed JSON and response provenance for a GET", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(
       JSON.stringify({ value: 7 }),

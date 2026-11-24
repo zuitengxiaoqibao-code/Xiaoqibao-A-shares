@@ -77,6 +77,14 @@ class BarRepository:
 
     def _create_schema(self) -> None:
         with self._lock, self._raw_connect() as connection:
+            if connection.execute(
+                "SELECT count(*) FROM information_schema.tables "
+                "WHERE table_schema = 'main' AND table_name = 'daily_bars_legacy'"
+            ).fetchone()[0]:
+                raise RuntimeError(
+                    "Unfinished daily_bars migration: preserve daily_bars_legacy "
+                    "and recover it before initializing the repository"
+                )
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS daily_bars (
@@ -99,25 +107,39 @@ class BarRepository:
                 "WHERE table_name = 'daily_bars'"
             ).fetchall()
             if "observation_id" not in {row[0] for row in columns}:
-                connection.execute("ALTER TABLE daily_bars RENAME TO daily_bars_legacy")
-                connection.execute(
-                    """CREATE TABLE daily_bars (
-                        symbol VARCHAR NOT NULL, trade_date DATE NOT NULL,
-                        open DECIMAL(18, 4) NOT NULL, high DECIMAL(18, 4) NOT NULL,
-                        low DECIMAL(18, 4) NOT NULL, close DECIMAL(18, 4) NOT NULL,
-                        volume BIGINT NOT NULL, amount DECIMAL(24, 4) NOT NULL,
-                        source VARCHAR NOT NULL,
-                        ingested_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
-                        observation_id VARCHAR NOT NULL DEFAULT (uuid()::VARCHAR)
-                    )"""
-                )
-                connection.execute(
-                    """INSERT INTO daily_bars
-                    (symbol, trade_date, open, high, low, close, volume, amount, source, ingested_at)
-                    SELECT symbol, trade_date, open, high, low, close, volume, amount, source,
-                           ingested_at FROM daily_bars_legacy"""
-                )
-                connection.execute("DROP TABLE daily_bars_legacy")
+                connection.execute("BEGIN TRANSACTION")
+                try:
+                    self._migrate_legacy_schema(connection)
+                    connection.execute("COMMIT")
+                except Exception:
+                    connection.execute("ROLLBACK")
+                    raise
+
+    @staticmethod
+    def _migrate_legacy_schema(connection) -> None:
+        original_count = connection.execute("SELECT count(*) FROM daily_bars").fetchone()[0]
+        connection.execute("ALTER TABLE daily_bars RENAME TO daily_bars_legacy")
+        connection.execute(
+            """CREATE TABLE daily_bars (
+                symbol VARCHAR NOT NULL, trade_date DATE NOT NULL,
+                open DECIMAL(18, 4) NOT NULL, high DECIMAL(18, 4) NOT NULL,
+                low DECIMAL(18, 4) NOT NULL, close DECIMAL(18, 4) NOT NULL,
+                volume BIGINT NOT NULL, amount DECIMAL(24, 4) NOT NULL,
+                source VARCHAR NOT NULL,
+                ingested_at TIMESTAMP NOT NULL DEFAULT current_timestamp,
+                observation_id VARCHAR NOT NULL DEFAULT (uuid()::VARCHAR)
+            )"""
+        )
+        connection.execute(
+            """INSERT INTO daily_bars
+            (symbol, trade_date, open, high, low, close, volume, amount, source, ingested_at)
+            SELECT symbol, trade_date, open, high, low, close, volume, amount, source,
+                   ingested_at FROM daily_bars_legacy"""
+        )
+        copied_count = connection.execute("SELECT count(*) FROM daily_bars").fetchone()[0]
+        if copied_count != original_count:
+            raise RuntimeError("daily_bars migration row count mismatch")
+        connection.execute("DROP TABLE daily_bars_legacy")
 
     def upsert(self, bars: list[DailyBar]) -> None:
         rows = [
@@ -137,14 +159,29 @@ class BarRepository:
         if not rows:
             return
         with self._lock, self._connect() as connection:
-            connection.executemany(
-                """
-                INSERT INTO daily_bars
-                    (symbol, trade_date, open, high, low, close, volume, amount, source)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                rows,
+            self._insert_rows(connection, rows, "daily_bars")
+
+    @staticmethod
+    def _insert_rows(connection, rows: list[tuple], table: str) -> None:
+        """Scan a whole frame instead of executing an INSERT for every bar."""
+        import pandas as pd
+
+        if table not in {"daily_bars", "incoming_daily_bars"}:
+            raise ValueError("Unsupported daily bar table")
+        columns = ("symbol", "trade_date", "open", "high", "low", "close", "volume", "amount", "source")
+        frame = pd.DataFrame.from_records(rows, columns=columns)
+        # Keep exact decimals even when DuckDB's object sampling encounters
+        # only whole numbers before a later row with fractional prices.
+        for column in ("open", "high", "low", "close", "amount"):
+            frame[column] = frame[column].map(str)
+        connection.register("incoming_bar_frame", frame)
+        try:
+            connection.execute(
+                f"INSERT INTO {table} ({', '.join(columns)}) "
+                f"SELECT {', '.join(columns)} FROM incoming_bar_frame"
             )
+        finally:
+            connection.unregister("incoming_bar_frame")
 
     def append_missing(self, bars: list[DailyBar]) -> int:
         if not bars:
@@ -174,6 +211,26 @@ class BarRepository:
             missing = [bar for key, bar in grouped.items() if key not in existing]
             self.upsert(missing)
         return len(missing)
+
+    def append_missing_batch(self, bars: list[DailyBar]) -> int:
+        """Atomically insert a market-wide daily slice without per-symbol queries."""
+        if not bars:
+            return 0
+        unique = {(validate_a_share_code(bar.symbol), bar.trade_date): bar for bar in bars}
+        rows = [(bar.symbol, bar.trade_date, bar.open, bar.high, bar.low, bar.close,
+                 bar.volume, bar.amount, bar.source) for bar in unique.values()]
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN TRANSACTION")
+            try:
+                connection.execute("CREATE TEMP TABLE incoming_daily_bars AS SELECT symbol,trade_date,open,high,low,close,volume,amount,source FROM daily_bars LIMIT 0")
+                self._insert_rows(connection, rows, "incoming_daily_bars")
+                count = connection.execute("SELECT count(*) FROM incoming_daily_bars i WHERE NOT EXISTS (SELECT 1 FROM daily_bars d WHERE d.symbol=i.symbol AND d.trade_date=i.trade_date)").fetchone()[0]
+                connection.execute("INSERT INTO daily_bars (symbol,trade_date,open,high,low,close,volume,amount,source) SELECT * FROM incoming_daily_bars i WHERE NOT EXISTS (SELECT 1 FROM daily_bars d WHERE d.symbol=i.symbol AND d.trade_date=i.trade_date)")
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+        return int(count)
 
     def append_preferred(self, bars: list[DailyBar], preferred_sources: tuple[str, ...]) -> tuple[int, int, int]:
         """Append missing rows and supersede weaker source revisions when needed."""
@@ -229,10 +286,7 @@ class BarRepository:
                     volume BIGINT, amount DECIMAL(24, 4), source VARCHAR
                 )"""
             )
-            connection.executemany(
-                "INSERT INTO incoming_daily_bars VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                rows,
-            )
+            self._insert_rows(connection, rows, "incoming_daily_bars")
             preferred = list(preferred_sources)
             placeholders = ", ".join("?" for _ in preferred)
             summary = connection.execute(

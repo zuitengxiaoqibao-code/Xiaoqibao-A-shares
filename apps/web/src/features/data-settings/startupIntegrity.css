@@ -1,0 +1,49 @@
+.startup-integrity-backdrop { position: fixed; inset: 0; z-index: 1500; display: grid; place-items: center; padding: 24px; background: rgb(0 5 10 / 72%); }
+.startup-integrity-dialog { box-sizing: border-box; display: flex; flex-direction: column; width: min(880px, 100%); height: min(880px, calc(100dvh - 48px)); min-height: 0; overflow: hidden; padding: clamp(18px, 2vw, 26px); border: 1px solid #52717c; border-radius: 14px; background: #101b25; color: #e5edf3; box-shadow: 0 24px 80px #0009; }
+.startup-integrity-dialog header { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding-bottom: 16px; }
+.startup-integrity-dialog header > div { min-width: 0; }
+.startup-integrity-dialog header button { flex-shrink: 0; width: 100px; }
+.startup-integrity-dialog h2 { height: 30px; margin: 5px 0 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 23px; line-height: 30px; }
+.startup-integrity-body { flex: 1 1 0; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; overscroll-behavior: contain; }
+.startup-integrity-dialog small, .startup-integrity-dialog > p { color: #a7bac9; line-height: 1.6; }
+.startup-integrity-dialog p, .startup-integrity-dialog li { overflow-wrap: anywhere; }
+.startup-integrity-dialog button, .startup-integrity-reopen { cursor: pointer; min-height: 38px; padding: 9px 14px; border: 1px solid #405c6b; border-radius: 7px; color: #dce9f3; background: #172934; font: inherit; }
+.startup-integrity-dialog button:focus-visible, .startup-integrity-reopen:focus-visible { outline: 2px solid #58e0d0; outline-offset: 3px; }
+.startup-integrity-dialog button:disabled { cursor: default; opacity: .55; }
+.startup-integrity-dialog button.startup-integrity-primary { color: #062725; background: #5de1cb; border-color: #5de1cb; font-weight: 700; }
+.startup-integrity-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.startup-integrity-metrics > div { min-width: 0; height: 70px; box-sizing: border-box; padding: 10px; background: #172630; border-radius: 7px; }
+.startup-integrity-metrics span, .startup-integrity-metrics b { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.startup-integrity-metrics span { margin-bottom: 7px; color: #a7bac9; font-size: 12px; }
+.startup-integrity-metrics b { font-size: 16px; font-variant-numeric: tabular-nums; }
+.startup-integrity-snapshot-note { height: 20px; margin: 6px 0 10px; color: #a7bac9; font-size: 12px; line-height: 20px; }
+.startup-integrity-issues { padding-left: 22px; color: #efd28a; line-height: 1.8; }
+.startup-integrity-job { padding: 12px; border: 1px solid #36515d; border-radius: 8px; background: #0c1720; }
+.startup-integrity-stage { display: flex; align-items: center; justify-content: space-between; gap: 14px; height: 24px; margin-bottom: 8px; }
+.startup-integrity-stage b { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.startup-integrity-stage span { flex-shrink: 0; font-size: 12px; color: #a7bac9; }
+.startup-integrity-notice { height: 36px; margin: 8px 0; overflow-y: auto; color: #a7bac9; font-size: 12px; line-height: 18px; }
+.startup-integrity-notice[data-error="true"] { color: #ffadab; }
+.startup-integrity-details { margin: 8px 0 12px; border: 1px solid #304552; border-radius: 7px; font-size: 12px; }
+.startup-integrity-details summary { padding: 10px 12px; cursor: pointer; color: #b8ceda; }
+.startup-integrity-details summary:focus-visible, .startup-integrity-detail-scroll:focus-visible { outline: 2px solid #58e0d0; outline-offset: 3px; }
+.startup-integrity-detail-scroll { height: 144px; overflow-y: auto; scrollbar-gutter: stable; overscroll-behavior: contain; padding: 0 12px 12px; color: #a7bac9; line-height: 1.6; }
+.startup-integrity-sources { list-style: none; padding: 0; margin: 14px 0 0; display: grid; gap: 10px; font-size: 13px; }
+.startup-integrity-sources li { display: grid; grid-template-columns: 105px minmax(0, 1fr); gap: 10px; }
+.startup-integrity-sources span { color: #a7bac9; }
+.startup-integrity-sources [data-state="failed"] span, .startup-integrity-error, .startup-integrity-job [role="alert"] { color: #ffadab; }
+.startup-integrity-dialog footer { flex: 0 0 auto; display: grid; gap: 10px; padding-top: 12px; border-top: 1px solid #304552; }
+.startup-integrity-dialog footer > div { display: flex; justify-content: flex-end; gap: 12px; }
+.startup-integrity-dialog footer button { width: 160px; }
+.startup-integrity-reopen { position: fixed; bottom: 24px; right: 30px; z-index: 1300; width: min(420px, calc(100vw - 48px)); height: 42px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #f1db9d; font-variant-numeric: tabular-nums; box-shadow: 0 6px 22px #0007; }
+@media (max-width: 680px) {
+  .startup-integrity-backdrop { padding: 12px; }
+  .startup-integrity-dialog { height: calc(100dvh - 24px); padding: 16px; }
+  .startup-integrity-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .startup-integrity-dialog h2 { font-size: 18px; }
+  .startup-integrity-dialog footer button { width: auto; flex: 1; }
+}
+@media (max-height: 440px) {
+  .startup-integrity-dialog header { padding-bottom: 8px; }
+  .startup-integrity-dialog footer > small { display: none; }
+}

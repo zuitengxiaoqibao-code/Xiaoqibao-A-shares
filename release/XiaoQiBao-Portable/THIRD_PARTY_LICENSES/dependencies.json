@@ -1,0 +1,2617 @@
+{
+  "python_runtime": [
+    {
+      "name": "aiohappyeyeballs",
+      "version": "2.7.1",
+      "license_expression": null,
+      "license": "PSF-2.0",
+      "classifiers": [
+        "License :: OSI Approved :: Python Software Foundation License"
+      ],
+      "project_urls": [
+        "Bug Tracker, https://github.com/aio-libs/aiohappyeyeballs/issues",
+        "Changelog, https://github.com/aio-libs/aiohappyeyeballs/blob/main/CHANGELOG.md",
+        "Documentation, https://aiohappyeyeballs.readthedocs.io",
+        "Repository, https://github.com/aio-libs/aiohappyeyeballs"
+      ]
+    },
+    {
+      "name": "aiohttp",
+      "version": "3.14.3",
+      "license_expression": null,
+      "license": "Apache-2.0 AND MIT",
+      "classifiers": [],
+      "project_urls": [
+        "Homepage, https://github.com/aio-libs/aiohttp",
+        "Chat: Matrix, https://matrix.to/#/#aio-libs:matrix.org",
+        "Chat: Matrix Space, https://matrix.to/#/#aio-libs-space:matrix.org",
+        "CI: GitHub Actions, https://github.com/aio-libs/aiohttp/actions?query=workflow%3ACI",
+        "Coverage: codecov, https://codecov.io/github/aio-libs/aiohttp",
+        "Docs: Changelog, https://docs.aiohttp.org/en/stable/changes.html",
+        "Docs: RTD, https://docs.aiohttp.org",
+        "GitHub: issues, https://github.com/aio-libs/aiohttp/issues",
+        "GitHub: repo, https://github.com/aio-libs/aiohttp"
+      ]
+    },
+    {
+      "name": "aiosignal",
+      "version": "1.4.0",
+      "license_expression": null,
+      "license": "Apache 2.0",
+      "classifiers": [
+        "License :: OSI Approved :: Apache Software License"
+      ],
+      "project_urls": [
+        "Chat: Gitter, https://gitter.im/aio-libs/Lobby",
+        "CI: GitHub Actions, https://github.com/aio-libs/aiosignal/actions",
+        "Coverage: codecov, https://codecov.io/github/aio-libs/aiosignal",
+        "Docs: RTD, https://docs.aiosignal.org",
+        "GitHub: issues, https://github.com/aio-libs/aiosignal/issues",
+        "GitHub: repo, https://github.com/aio-libs/aiosignal"
+      ]
+    },
+    {
+      "name": "altgraph",
+      "version": "0.17.5",
+      "license_expression": null,
+      "license": "MIT",
+      "classifiers": [
+        "License :: OSI Approved :: MIT License"
+      ],
+      "project_urls": [
+        "Documentation, https://altgraph.readthedocs.io/en/latest/",
+        "Issue tracker, https://github.com/ronaldoussoren/altgraph/issues",
+        "Repository, https://github.com/ronaldoussoren/altgraph"
+      ]
+    },
+    {
+      "name": "annotated-types",
+      "version": "0.8.0",
+      "license_expression": "MIT",
+      "license": "",
+      "classifiers": [
+        "License :: OSI Approved :: MIT License"
+      ],
+      "project_urls": [
+        "Homepage, https://github.com/annotated-types/annotated-types",
+        "Source, https://github.com/annotated-types/annotated-types",
+        "Changelog, https://github.com/annotated-types/annotated-types/releases"
+      ]
+    },
+    {
+      "name": "anyio",
+      "version": "4.14.2",
+      "license_expression": "MIT",
+      "license": "",
+      "classifiers": [],
+      "project_urls": [
+        "Documentation, https://anyio.readthedocs.io/en/latest/",
+        "Changelog, https://anyio.readthedocs.io/en/stable/versionhistory.html",
+        "Source code, https://github.com/agronholm/anyio",
+        "Issue tracker, https://github.com/agronholm/anyio/issues"
+      ]
+    },
+    {
+      "name": "attrs",
+      "version": "26.1.0",
+      "license_expression": "MIT",
+      "license": "",
+      "classifiers": [],
+      "project_urls": [
+        "Documentation, https://www.attrs.org/",
+        "Changelog, https://www.attrs.org/en/stable/changelog.html",
+        "GitHub, https://github.com/python-attrs/attrs",
+        "Funding, https://github.com/sponsors/hynek",
+        "Tidelift, https://tidelift.com/subscription/pkg/pypi-attrs?utm_source=pypi-attrs&utm_medium=pypi"
+      ]
+    },
+    {
+      "name": "axdata",
+      "version": "0.1.4",
+      "license_expression": "Apache-2.0",
+      "license": "",
+      "classifiers": [],
+      "project_urls": []
+    },
+    {
+      "name": "bottle",
+      "version": "0.13.4",
+      "license_expression": null,
+      "license": "MIT",
+      "classifiers": [
+        "License :: OSI Approved :: MIT License"
+      ],
+      "project_urls": [
+        "Source, https://github.com/bottlepy/bottle"
+      ]
+    },
+    {
+      "name": "certifi",
+      "version": "2026.7.22",
+      "license_expression": null,
+      "license": "MPL-2.0",
+      "classifiers": [
+        "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)"
+      ],
+      "project_urls": [
+        "Source, https://github.com/certifi/python-certifi"
+      ]
+    },
+    {
+      "name": "cffi",
+      "version": "2.1.0",
+      "license_expression": "MIT-0",
+      "license": "",
+      "classifiers": [],
+      "project_urls": [
+        "Documentation, https://cffi.readthedocs.io/",
+        "Changelog, https://cffi.readthedocs.io/en/latest/whatsnew.html",
+        "Download, https://github.com/python-cffi/cffi/releases",
+        "Contact, https://groups.google.com/forum/#!forum/python-cffi",
+        "Source Code, https://github.com/python-cffi/cffi",
+        "Issue Tracker, https://github.com/python-cffi/cffi/issues"
+      ]
+    },
+    {
+      "name": "charset-normalizer",
+      "version": "3.5.2",
+      "license_expression": null,
+      "license": "MIT",
+      "classifiers": [],
+      "project_urls": [
+        "Changelog, https://github.com/jawah/charset_normalizer/blob/master/CHANGELOG.md",
+        "Documentation, https://charset-normalizer.readthedocs.io/",
+        "Code, https://github.com/jawah/charset_normalizer",
+        "Issue tracker, https://github.com/jawah/charset_normalizer/issues"
+      ]
+    },
+    {
+      "name": "click",
+      "version": "8.4.2",
+      "license_expression": "BSD-3-Clause",
+      "license": "",
+      "classifiers": [],
+      "project_urls": [
+        "Changes, https://click.palletsprojects.com/page/changes/",
+        "Chat, https://discord.gg/pallets",
+        "Documentation, https://click.palletsprojects.com/",
+        "Donate, https://palletsprojects.com/donate",
+        "Source, https://github.com/pallets/click/"
+      ]
+    },
+    {
+      "name": "clr-loader",
+      "version": "0.3.1",
+      "license_expression": null,
+      "license": "",
+      "classifiers": [],
+      "project_urls": [
+        "Sources, https://github.com/pythonnet/clr-loader",
+        "Documentation, https://pythonnet.github.io/clr-loader/"
+      ]
+    },
+    {
+      "name": "colorama",
+      "version": "0.4.6",
+      "license_expression": null,
+      "license": "",
+      "classifiers": [
+        "License :: OSI Approved :: BSD License"
+      ],
+      "project_urls": [
+        "Homepage, https://github.com/tartley/colorama"
+      ]
+    },
+    {
+      "name": "duckdb",
+      "version": "1.3.2",
+      "license_expression": null,
+      "license": "",
+      "classifiers": [
+        "License :: OSI Approved :: MIT License"
+      ],
+      "project_urls": [
+        "Documentation, https://duckdb.org/docs/stable/clients/python/overview",
+        "Source, https://github.com/duckdb/duckdb/blob/main/tools/pythonpkg",
+        "Issues, https://github.com/duckdb/duckdb/issues",
+        "Changelog, https://github.com/duckdb/duckdb/releases"
+      ]
+    },
+    {
+      "name": "edge-tts",
+      "version": "7.3.1",
+      "license_expression": null,
+      "license": "",
+      "classifiers": [
+        "License :: OSI Approved :: GNU Lesser General Public License v3 (LGPLv3)"
+      ],
+      "project_urls": [
+        "Bug Tracker, https://github.com/rany2/edge-tts/issues"
+      ]
+    },
+    {
+      "name": "eltdx",
+      "version": "3.3.5",
+      "license_expression": null,
+      "license": "",
+      "classifiers": [],
+      "project_urls": [
+        "Documentation, https://electkismet.github.io/eltdx/",
+        "Issues, https://github.com/electkismet/eltdx/issues",
+        "Source, https://github.com/electkismet/eltdx"
+      ]
+    },
+    {
+      "name": "exchange-calendars",
+      "version": "4.13.2",
+      "license_expression": "Apache-2.0",
+      "license": "",
+      "classifiers": [],
+      "project_urls": [
+        "homepage, https://github.com/gerrymanoim/exchange_calendars",
+        "documentation, https://github.com/gerrymanoim/exchange_calendars/tree/master/docs",
+        "Issue Tracker, https://github.com/gerrymanoim/exchange_calendars/issues",
+        "Source Code, https://github.com/gerrymanoim/exchange_calendars"
+      ]
+    },
+    {
+      "name": "fastapi",
+      "version": "0.116.1",
+      "license_expression": null,
+      "license": "",
+      "classifiers": [
+        "License :: OSI Approved :: MIT License"
+      ],
+      "project_urls": [
+        "Homepage, https://github.com/fastapi/fastapi",
+        "Documentation, https://fastapi.tiangolo.com/",
+        "Repository, https://github.com/fastapi/fastapi",
+        "Issues, https://github.com/fastapi/fastapi/issues",
+        "Changelog, https://fastapi.tiangolo.com/release-notes/"
+      ]
+    },
+    {
+      "name": "frozenlist",
+      "version": "1.8.0",
+      "license_expression": null,
+      "license": "Apache-2.0",
+      "classifiers": [],
+      "project_urls": [
+        "Chat: Matrix, https://matrix.to/#/#aio-libs:matrix.org",
+        "Chat: Matrix Space, https://matrix.to/#/#aio-libs-space:matrix.org",
+        "CI: Github Actions, https://github.com/aio-libs/frozenlist/actions",
+        "Code of Conduct, https://github.com/aio-libs/.github/blob/master/CODE_OF_CONDUCT.md",
+        "Coverage: codecov, https://codecov.io/github/aio-libs/frozenlist",
+        "Docs: Changelog, https://github.com/aio-libs/frozenlist/blob/master/CHANGES.rst#changelog",
+        "Docs: RTD, https://frozenlist.aio-libs.org",
+        "GitHub: issues, https://github.com/aio-libs/frozenlist/issues",
+        "GitHub: repo, https://github.com/aio-libs/frozenlist"
+      ]
+    },
+    {
+      "name": "greenlet",
+      "version": "3.5.4",
+      "license_expression": "MIT AND PSF-2.0",
+      "license": "",
+      "classifiers": [],
+      "project_urls": [
+        "Homepage, https://greenlet.readthedocs.io",
+        "Documentation, https://greenlet.readthedocs.io",
+        "Repository, https://github.com/python-greenlet/greenlet",
+        "Issues, https://github.com/python-greenlet/greenlet/issues",
+        "Changelog, https://greenlet.readthedocs.io/en/latest/changes.html"
+      ]
+    },
+    {
+      "name": "h11",
+      "version": "0.16.0",
+      "license_expression": null,
+      "license": "MIT",
+      "classifiers": [
+        "License :: OSI Approved :: MIT License"
+      ],
+      "project_urls": []
+    },
+    {
+      "name": "httpcore",
+      "version": "1.0.9",
+      "license_expression": "BSD-3-Clause",
+      "license": "",
+      "classifiers": [
+        "License :: OSI Approved :: BSD License"
+      ],
+      "project_urls": [
+        "Documentation, https://www.encode.io/httpcore",
+        "Homepage, https://www.encode.io/httpcore/",
+        "Source, https://github.com/encode/httpcore"
+      ]
+    },
+    {
+      "name": "httpx",
+      "version": "0.25.2",
+      "license_expression": "BSD-3-Clause",
+      "license": "",
+      "classifiers": [
+        "License :: OSI Approved :: BSD License"
+      ],
+      "project_urls": [
+        "Changelog, https://github.com/encode/httpx/blob/master/CHANGELOG.md",
+        "Documentation, https://www.python-httpx.org",
+        "Homepage, https://github.com/encode/httpx",
+        "Source, https://github.com/encode/httpx"
+      ]
+    },
+    {
+      "name": "idna",
+      "version": "3.18",
+      "license_expression": "BSD-3-Clause",
+      "license": "",
+      "classifiers": [],
+      "project_urls": [
+        "Changelog, https://github.com/kjd/idna/blob/master/HISTORY.md",
+        "Issue tracker, https://github.com/kjd/idna/issues",
+        "Source, https://github.com/kjd/idna"
+      ]
+    },
+    {
+      "name": "korean-lunar-calendar",
+      "version": "0.4.0",
+      "license_expression": "MIT",
+      "license": "",
+      "classifiers": [],
+      "project_urls": [
+        "Homepage, https://github.com/usingsky/korean_lunar_calendar_py",
+        "Repository, https://github.com/usingsky/korean_lunar_calendar_py",
+        "Issues, https://github.com/usingsky/korean_lunar_calendar_py/issues"
+      ]
+    },
+    {
+      "name": "lxml",
+      "version": "6.1.3",
+      "license_expression": null,
+      "license": "BSD-3-Clause",
+      "classifiers": [],
+      "project_urls": [
+        "Source, https://github.com/lxml/lxml",
+        "Bug Tracker, https://bugs.launchpad.net/lxml"
+      ]
+    },
+    {
+      "name": "mootdx",
+      "version": "0.11.7",
+      "license_expression": null,
+      "license": "MIT",
+      "classifiers": [
+        "License :: OSI Approved :: MIT License"
+      ],
+      "project_urls": [
+        "Repository, https://github.com/mootdx/mootdx"
+      ]
+    },
+    {
+      "name": "multidict",
+      "version": "6.7.1",
+      "license_expression": null,
+      "license": "Apache License 2.0",
+      "classifiers": [],
+      "project_urls": [
+        "Chat: Matrix, https://matrix.to/#/#aio-libs:matrix.org",
+        "Chat: Matrix Space, https://matrix.to/#/#aio-libs-space:matrix.org",
+        "CI: GitHub, https://github.com/aio-libs/multidict/actions",
+        "Code of Conduct, https://github.com/aio-libs/.github/blob/master/CODE_OF_CONDUCT.md",
+        "Coverage: codecov, https://codecov.io/github/aio-libs/multidict",
+        "Docs: Changelog, https://multidict.aio-libs.org/en/latest/changes/",
+        "Docs: RTD, https://multidict.aio-libs.org",
+        "GitHub: issues, https://github.com/aio-libs/multidict/issues",
+        "GitHub: repo, https://github.com/aio-libs/multidict"
+      ]
+    },
+    {
+      "name": "numpy",
+      "version": "2.5.1",
+      "license_expression": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0",
+      "license": "",
+      "classifiers": [],
+      "project_urls": [
+        "homepage, https://numpy.org",
+        "documentation, https://numpy.org/doc/",
+        "source, https://github.com/numpy/numpy",
+        "download, https://pypi.org/project/numpy/#files",
+        "tracker, https://github.com/numpy/numpy/issues",
+        "release notes, https://numpy.org/doc/stable/release"
+      ]
+    },
+    {
+      "name": "packaging",
+      "version": "26.2",
+      "license_expression": "Apache-2.0 OR BSD-2-Clause",
+      "license": "",
+      "classifiers": [],
+      "project_urls": [
+        "Documentation, https://packaging.pypa.io/",
+        "Source, https://github.com/pypa/packaging"
+      ]
+    },
+    {
+      "name": "pandas",
+      "version": "2.3.1",
+      "license_expression": null,
+      "license": "BSD 3-Clause License\n\n Copyright (c) 2008-2011, AQR Capital Management, LLC, Lambda Foundry, Inc. and PyData Development Team\n All rights reserved.\n\n Copyright (c) 2011-2023, Open source contributors.\n\n Redistribution and use in source and binary forms, with or without\n modification, are permitted provided that the following conditions are met:\n\n * Redistributions of source code must retain the above copyright notice, this\n   list of conditions and the following disclaimer.\n\n * Redistributions in binary form must reproduce the above copyright notice,\n   this list of conditions and the following disclaimer in the documentation\n   and/or other materials provided with the distribution.\n\n * Neither the name of the copyright holder nor the names of its\n   contributors may be used to endorse or promote products derived from\n   this software without specific prior written permission.\n\n THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS \"AS IS\"\n AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE\n IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE\n DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE\n FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL\n DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR\n SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER\n CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,\n OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE\n OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.\n",
+      "classifiers": [
+        "License :: OSI Approved :: BSD License"
+      ],
+      "project_urls": [
+        "homepage, https://pandas.pydata.org",
+        "documentation, https://pandas.pydata.org/docs/",
+        "repository, https://github.com/pandas-dev/pandas"
+      ]
+    },
+    {
+      "name": "pefile",
+      "version": "2024.8.26",
+      "license_expression": null,
+      "license": "MIT",
+      "classifiers": [],
+      "project_urls": []
+    },
+    {
+      "name": "prettytable",
+      "version": "3.18.0",
+      "license_expression": "BSD-3-Clause",
+      "license": "",
+      "classifiers": [],
+      "project_urls": [
+        "Changelog, https://github.com/prettytable/prettytable/releases",
+        "Funding, https://tidelift.com/subscription/pkg/pypi-prettytable?utm_source=pypi-prettytable&utm_medium=pypi",
+        "Homepage, https://github.com/prettytable/prettytable",
+        "Source, https://github.com/prettytable/prettytable"
+      ]
+    },
+    {
+      "name": "propcache",
+      "version": "0.5.2",
+      "license_expression": null,
+      "license": "Apache-2.0",
+      "classifiers": [
+        "License :: OSI Approved :: Apache Software License"
+      ],
+      "project_urls": [
+        "Chat: Matrix, https://matrix.to/#/#aio-libs:matrix.org",
+        "Chat: Matrix Space, https://matrix.to/#/#aio-libs-space:matrix.org",
+        "CI: GitHub Workflows, https://github.com/aio-libs/propcache/actions?query=branch:master",
+        "Code of Conduct, https://github.com/aio-libs/.github/blob/master/CODE_OF_CONDUCT.md",
+        "Coverage: codecov, https://codecov.io/github/aio-libs/propcache",
+        "Docs: Changelog, https://propcache.readthedocs.io/en/latest/changes/",
+        "Docs: RTD, https://propcache.readthedocs.io",
+        "GitHub: issues, https://github.com/aio-libs/propcache/issues",
+        "GitHub: repo, https://github.com/aio-libs/propcache"
+      ]
+    },
+    {
+      "name": "proxy-tools",
+      "version": "0.1.0",
+      "license_expression": null,
+      "license": "MIT",
+      "classifiers": [
+        "License :: OSI Approved :: MIT License"
+      ],
+      "project_urls": []
+    },
+    {
+      "name": "py-mini-racer",
+      "version": "0.6.0",
+      "license_expression": null,
+      "license": "ISCL",
+      "classifiers": [
+        "License :: OSI Approved :: ISC License (ISCL)"
+      ],
+      "project_urls": []
+    },
+    {
+      "name": "pyarrow",
+      "version": "26.0.1",
+      "license_expression": "Apache-2.0",
+      "license": "",
+      "classifiers": [],
+      "project_urls": [
+        "Homepage, https://arrow.apache.org/",
+        "Documentation, https://arrow.apache.org/docs/python",
+        "Repository, https://github.com/apache/arrow",
+        "Issues, https://github.com/apache/arrow/issues"
+      ]
+    },
+    {
+      "name": "pycparser",
+      "version": "3.0",
+      "license_expression": "BSD-3-Clause",
+      "license": "",
+      "classifiers": [],
+      "project_urls": [
+        "Homepage, https://github.com/eliben/pycparser"
+      ]
+    },
+    {
+      "name": "pydantic",
+      "version": "2.11.7",
+      "license_expression": "MIT",
+      "license": "",
+      "classifiers": [
+        "License :: OSI Approved :: MIT License"
+      ],
+      "project_urls": [
+        "Homepage, https://github.com/pydantic/pydantic",
+        "Documentation, https://docs.pydantic.dev",
+        "Funding, https://github.com/sponsors/samuelcolvin",
+        "Source, https://github.com/pydantic/pydantic",
+        "Changelog, https://docs.pydantic.dev/latest/changelog/"
+      ]
+    },
+    {
+      "name": "pydantic-core",
+      "version": "2.33.2",
+      "license_expression": null,
+      "license": "MIT",
+      "classifiers": [
+        "License :: OSI Approved :: MIT License"
+      ],
+      "project_urls": [
+        "Homepage, https://github.com/pydantic/pydantic-core",
+        "Funding, https://github.com/sponsors/samuelcolvin",
+        "Source, https://github.com/pydantic/pydantic-core"
+      ]
+    },
+    {
+      "name": "pydantic-settings",
+      "version": "2.10.1",
+      "license_expression": "MIT",
+      "license": "",
+      "classifiers": [
+        "License :: OSI Approved :: MIT License"
+      ],
+      "project_urls": [
+        "Homepage, https://github.com/pydantic/pydantic-settings",
+        "Funding, https://github.com/sponsors/samuelcolvin",
+        "Source, https://github.com/pydantic/pydantic-settings",
+        "Changelog, https://github.com/pydantic/pydantic-settings/releases",
+        "Documentation, https://docs.pydantic.dev/dev-v2/concepts/pydantic_settings/"
+      ]
+    },
+    {
+      "name": "pyinstaller",
+      "version": "6.21.0",
+      "license_expression": null,
+      "license": "GPLv2-or-later with a special exception which allows to use PyInstaller to build and distribute non-free programs (including commercial ones)",
+      "classifiers": [
+        "License :: OSI Approved :: GNU General Public License v2 (GPLv2)"
+      ],
+      "project_urls": [
+        "Homepage, https://pyinstaller.org",
+        "Documentation, https://pyinstaller.org",
+        "Source Code, https://github.com/pyinstaller/pyinstaller",
+        "Release Notes, https://pyinstaller.org/en/stable/CHANGES.html"
+      ]
+    },
+    {
+      "name": "pyinstaller-hooks-contrib",
+      "version": "2026.6",
+      "license_expression": null,
+      "license": "",
+      "classifiers": [
+        "License :: OSI Approved :: Apache Software License",
+        "License :: OSI Approved :: GNU General Public License v2 (GPLv2)"
+      ],
+      "project_urls": []
+    },
+    {
+      "name": "pyluach",
+      "version": "2.3.0",
+      "license_expression": null,
+      "license": "",
+      "classifiers": [
+        "License :: OSI Approved :: MIT License"
+      ],
+      "project_urls": [
+        "Documentation, https://readthedocs.org/projects/pyluach/",
+        "Source, https://github.com/simlist/pyluach"
+      ]
+    },
+    {
+      "name": "python-dateutil",
+      "version": "2.9.0.post0",
+      "license_expression": null,
+      "license": "Dual License",
+      "classifiers": [
+        "License :: OSI Approved :: BSD License",
+        "License :: OSI Approved :: Apache Software License"
+      ],
+      "project_urls": [
+        "Documentation, https://dateutil.readthedocs.io/en/stable/",
+        "Source, https://github.com/dateutil/dateutil"
+      ]
+    },
+    {
+      "name": "python-dotenv",
+      "version": "1.2.2",
+      "license_expression": null,
+      "license": "BSD-3-Clause",
+      "classifiers": [],
+      "project_urls": [
+        "Source, https://github.com/theskumar/python-dotenv"
+      ]
+    },
+    {
+      "name": "python-multipart",
+      "version": "0.0.20",
+      "license_expression": "Apache-2.0",
+      "license": "",
+      "classifiers": [
+        "License :: OSI Approved :: Apache Software License"
+      ],
+      "project_urls": [
+        "Homepage, https://github.com/Kludex/python-multipart",
+        "Documentation, https://kludex.github.io/python-multipart/",
+        "Changelog, https://github.com/Kludex/python-multipart/blob/master/CHANGELOG.md",
+        "Source, https://github.com/Kludex/python-multipart"
+      ]
+    },
+    {
+      "name": "pythonnet",
+      "version": "3.1.0",
+      "license_expression": "MIT",
+      "license": "",
+      "classifiers": [],
+      "project_urls": [
+        "Homepage, https://pythonnet.github.io/",
+        "Sources, https://github.com/pythonnet/pythonnet"
+      ]
+    },
+    {
+      "name": "pytz",
+      "version": "2026.3.post1",
+      "license_expression": null,
+      "license": "MIT",
+      "classifiers": [
+        "License :: OSI Approved :: MIT License"
+      ],
+      "project_urls": [
+        "Source, https://github.com/stub42/pytz.git",
+        "Issues, https://github.com/stub42/pytz/issues"
+      ]
+    },
+    {
+      "name": "pywebview",
+      "version": "6.2.1",
+      "license_expression": null,
+      "license": "BSD 3-Clause License\n\nCopyright (c) 2014-2017, Roman Sirokov\nAll rights reserved.\n\nRedistribution and use in source and binary forms, with or without\nmodification, are permitted provided that the following conditions are met:\n\n* Redistributions of source code must retain the above copyright notice, this\n  list of conditions and the following disclaimer.\n\n* Redistributions in binary form must reproduce the above copyright notice,\n  this list of conditions and the following disclaimer in the documentation\n  and/or other materials provided with the distribution.\n\n* Neither the name of the copyright holder nor the names of its\n  contributors may be used to endorse or promote products derived from\n  this software without specific prior written permission.\n\nTHIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS \"AS IS\"\nAND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE\nIMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE\nDISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE\nFOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL\nDAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR\nSERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER\nCAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,\nOR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE\nOF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.\n",
+      "classifiers": [
+        "License :: OSI Approved :: BSD License"
+      ],
+      "project_urls": [
+        "Homepage, https://pywebview.flowrl.com/",
+        "Repository, https://github.com/r0x0r/pywebview"
+      ]
+    },
+    {
+      "name": "pywin32-ctypes",
+      "version": "0.2.3",
+      "license_expression": null,
+      "license": "BSD-3-Clause",
+      "classifiers": [],
+      "project_urls": []
+    },
+    {
+      "name": "requests",
+      "version": "2.34.2",
+      "license_expression": null,
+      "license": "Apache-2.0",
+      "classifiers": [
+        "License :: OSI Approved :: Apache Software License"
+      ],
+      "project_urls": [
+        "Documentation, https://requests.readthedocs.io",
+        "Source, https://github.com/psf/requests"
+      ]
+    },
+    {
+      "name": "setuptools",
+      "version": "83.0.0",
+      "license_expression": "MIT",
+      "license": "",
+      "classifiers": [],
+      "project_urls": [
+        "Source, https://github.com/pypa/setuptools",
+        "Documentation, https://setuptools.pypa.io/",
+        "Changelog, https://setuptools.pypa.io/en/stable/history.html"
+      ]
+    },
+    {
+      "name": "six",
+      "version": "1.17.0",
+      "license_expression": null,
+      "license": "MIT",
+      "classifiers": [
+        "License :: OSI Approved :: MIT License"
+      ],
+      "project_urls": []
+    },
+    {
+      "name": "sniffio",
+      "version": "1.3.1",
+      "license_expression": null,
+      "license": "MIT OR Apache-2.0",
+      "classifiers": [
+        "License :: OSI Approved :: MIT License",
+        "License :: OSI Approved :: Apache Software License"
+      ],
+      "project_urls": [
+        "Homepage, https://github.com/python-trio/sniffio",
+        "Documentation, https://sniffio.readthedocs.io/",
+        "Changelog, https://sniffio.readthedocs.io/en/latest/history.html"
+      ]
+    },
+    {
+      "name": "sqlalchemy",
+      "version": "2.0.41",
+      "license_expression": null,
+      "license": "MIT",
+      "classifiers": [],
+      "project_urls": [
+        "Documentation, https://docs.sqlalchemy.org",
+        "Issue Tracker, https://github.com/sqlalchemy/sqlalchemy/"
+      ]
+    },
+    {
+      "name": "starlette",
+      "version": "0.47.3",
+      "license_expression": "BSD-3-Clause",
+      "license": "",
+      "classifiers": [
+        "License :: OSI Approved :: BSD License"
+      ],
+      "project_urls": [
+        "Homepage, https://github.com/encode/starlette",
+        "Documentation, https://www.starlette.io/",
+        "Changelog, https://www.starlette.io/release-notes/",
+        "Funding, https://github.com/sponsors/encode",
+        "Source, https://github.com/encode/starlette"
+      ]
+    },
+    {
+      "name": "tabulate",
+      "version": "0.10.0",
+      "license_expression": "MIT",
+      "license": "",
+      "classifiers": [],
+      "project_urls": [
+        "Homepage, https://github.com/astanin/python-tabulate"
+      ]
+    },
+    {
+      "name": "tdxpy",
+      "version": "0.2.7",
+      "license_expression": null,
+      "license": "MIT",
+      "classifiers": [
+        "License :: OSI Approved :: MIT License"
+      ],
+      "project_urls": [
+        "Repository, https://github.com/mootdx/tdxpy"
+      ]
+    },
+    {
+      "name": "tenacity",
+      "version": "8.5.0",
+      "license_expression": null,
+      "license": "Apache 2.0",
+      "classifiers": [
+        "License :: OSI Approved :: Apache Software License"
+      ],
+      "project_urls": []
+    },
+    {
+      "name": "toolz",
+      "version": "1.1.0",
+      "license_expression": "BSD-3-Clause",
+      "license": "",
+      "classifiers": [],
+      "project_urls": [
+        "homepage, https://github.com/pytoolz/toolz",
+        "repository, https://github.com/pytoolz/toolz",
+        "documentation, https://toolz.readthedocs.io/en/latest/",
+        "changelog, https://github.com/pytoolz/toolz/releases"
+      ]
+    },
+    {
+      "name": "tqdm",
+      "version": "4.70.0",
+      "license_expression": null,
+      "license": "MPL-2.0 AND MIT",
+      "classifiers": [],
+      "project_urls": [
+        "homepage, https://tqdm.github.io",
+        "repository, https://github.com/tqdm/tqdm",
+        "changelog, https://tqdm.github.io/releases",
+        "wiki, https://github.com/tqdm/tqdm/wiki"
+      ]
+    },
+    {
+      "name": "typing-extensions",
+      "version": "4.16.0",
+      "license_expression": "PSF-2.0",
+      "license": "",
+      "classifiers": [],
+      "project_urls": [
+        "Bug Tracker, https://github.com/python/typing_extensions/issues",
+        "Changes, https://github.com/python/typing_extensions/blob/main/CHANGELOG.md",
+        "Documentation, https://typing-extensions.readthedocs.io/",
+        "Home, https://github.com/python/typing_extensions",
+        "Q & A, https://github.com/python/typing/discussions",
+        "Repository, https://github.com/python/typing_extensions"
+      ]
+    },
+    {
+      "name": "typing-inspection",
+      "version": "0.4.2",
+      "license_expression": "MIT",
+      "license": "",
+      "classifiers": [],
+      "project_urls": [
+        "Homepage, https://github.com/pydantic/typing-inspection",
+        "Documentation, https://pydantic.github.io/typing-inspection/dev/",
+        "Source, https://github.com/pydantic/typing-inspection",
+        "Changelog, https://github.com/pydantic/typing-inspection/blob/main/HISTORY.md"
+      ]
+    },
+    {
+      "name": "tzdata",
+      "version": "2026.3",
+      "license_expression": null,
+      "license": "Apache-2.0",
+      "classifiers": [],
+      "project_urls": [
+        "Bug Reports, https://github.com/python/tzdata/issues",
+        "Source, https://github.com/python/tzdata",
+        "Documentation, https://tzdata.python.org"
+      ]
+    },
+    {
+      "name": "urllib3",
+      "version": "2.8.0",
+      "license_expression": "MIT",
+      "license": "",
+      "classifiers": [],
+      "project_urls": [
+        "Changelog, https://github.com/urllib3/urllib3/blob/main/CHANGES.rst",
+        "Documentation, https://urllib3.readthedocs.io",
+        "Code, https://github.com/urllib3/urllib3",
+        "Issue tracker, https://github.com/urllib3/urllib3/issues",
+        "Security policy, https://urllib3.readthedocs.io/en/latest/security.html"
+      ]
+    },
+    {
+      "name": "uvicorn",
+      "version": "0.35.0",
+      "license_expression": "BSD-3-Clause",
+      "license": "",
+      "classifiers": [
+        "License :: OSI Approved :: BSD License"
+      ],
+      "project_urls": [
+        "Changelog, https://www.uvicorn.org/release-notes",
+        "Funding, https://github.com/sponsors/encode",
+        "Homepage, https://www.uvicorn.org/",
+        "Source, https://github.com/encode/uvicorn"
+      ]
+    },
+    {
+      "name": "wcwidth",
+      "version": "0.8.2",
+      "license_expression": "MIT",
+      "license": "",
+      "classifiers": [],
+      "project_urls": [
+        "Homepage, https://github.com/jquast/wcwidth"
+      ]
+    },
+    {
+      "name": "websocket-client",
+      "version": "1.9.2",
+      "license_expression": null,
+      "license": "Apache-2.0",
+      "classifiers": [],
+      "project_urls": [
+        "Documentation, https://websocket-client.readthedocs.io/",
+        "Source, https://github.com/websocket-client/websocket-client/"
+      ]
+    },
+    {
+      "name": "yarl",
+      "version": "1.24.5",
+      "license_expression": null,
+      "license": "Apache-2.0",
+      "classifiers": [],
+      "project_urls": [
+        "Chat: Matrix, https://matrix.to/#/#aio-libs:matrix.org",
+        "Chat: Matrix Space, https://matrix.to/#/#aio-libs-space:matrix.org",
+        "CI: GitHub Workflows, https://github.com/aio-libs/yarl/actions?query=branch:master",
+        "Code of Conduct, https://github.com/aio-libs/.github/blob/master/CODE_OF_CONDUCT.md",
+        "Coverage: codecov, https://codecov.io/github/aio-libs/yarl",
+        "Docs: Changelog, https://yarl.aio-libs.org/en/latest/changes/",
+        "Docs: RTD, https://yarl.aio-libs.org",
+        "GitHub: issues, https://github.com/aio-libs/yarl/issues",
+        "GitHub: repo, https://github.com/aio-libs/yarl"
+      ]
+    }
+  ],
+  "javascript_build_environment": [
+    {
+      "name": "@adobe/css-tools",
+      "version": "4.5.0",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/adobe/css-tools.git"
+      }
+    },
+    {
+      "name": "@asamuzakjp/css-color",
+      "version": "2.8.2",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/asamuzaK/cssColor.git"
+      }
+    },
+    {
+      "name": "@babel/code-frame",
+      "version": "7.29.7",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/babel/babel.git",
+        "directory": "packages/babel-code-frame"
+      }
+    },
+    {
+      "name": "@babel/compat-data",
+      "version": "7.29.7",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/babel/babel.git",
+        "directory": "packages/babel-compat-data"
+      }
+    },
+    {
+      "name": "@babel/core",
+      "version": "7.29.7",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/babel/babel.git",
+        "directory": "packages/babel-core"
+      }
+    },
+    {
+      "name": "@babel/generator",
+      "version": "7.29.7",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/babel/babel.git",
+        "directory": "packages/babel-generator"
+      }
+    },
+    {
+      "name": "@babel/helper-compilation-targets",
+      "version": "7.29.7",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/babel/babel.git",
+        "directory": "packages/babel-helper-compilation-targets"
+      }
+    },
+    {
+      "name": "@babel/helper-globals",
+      "version": "7.29.7",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/babel/babel.git",
+        "directory": "packages/babel-helper-globals"
+      }
+    },
+    {
+      "name": "@babel/helper-module-imports",
+      "version": "7.29.7",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/babel/babel.git",
+        "directory": "packages/babel-helper-module-imports"
+      }
+    },
+    {
+      "name": "@babel/helper-module-transforms",
+      "version": "7.29.7",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/babel/babel.git",
+        "directory": "packages/babel-helper-module-transforms"
+      }
+    },
+    {
+      "name": "@babel/helper-plugin-utils",
+      "version": "7.29.7",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/babel/babel.git",
+        "directory": "packages/babel-helper-plugin-utils"
+      }
+    },
+    {
+      "name": "@babel/helper-string-parser",
+      "version": "7.29.7",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/babel/babel.git",
+        "directory": "packages/babel-helper-string-parser"
+      }
+    },
+    {
+      "name": "@babel/helper-validator-identifier",
+      "version": "7.29.7",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/babel/babel.git",
+        "directory": "packages/babel-helper-validator-identifier"
+      }
+    },
+    {
+      "name": "@babel/helper-validator-option",
+      "version": "7.29.7",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/babel/babel.git",
+        "directory": "packages/babel-helper-validator-option"
+      }
+    },
+    {
+      "name": "@babel/helpers",
+      "version": "7.29.7",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/babel/babel.git",
+        "directory": "packages/babel-helpers"
+      }
+    },
+    {
+      "name": "@babel/parser",
+      "version": "7.29.7",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/babel/babel.git",
+        "directory": "packages/babel-parser"
+      }
+    },
+    {
+      "name": "@babel/plugin-transform-react-jsx-self",
+      "version": "7.29.7",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/babel/babel.git",
+        "directory": "packages/babel-plugin-transform-react-jsx-self"
+      }
+    },
+    {
+      "name": "@babel/plugin-transform-react-jsx-source",
+      "version": "7.29.7",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/babel/babel.git",
+        "directory": "packages/babel-plugin-transform-react-jsx-source"
+      }
+    },
+    {
+      "name": "@babel/runtime",
+      "version": "7.29.7",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/babel/babel.git",
+        "directory": "packages/babel-runtime"
+      }
+    },
+    {
+      "name": "@babel/template",
+      "version": "7.29.7",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/babel/babel.git",
+        "directory": "packages/babel-template"
+      }
+    },
+    {
+      "name": "@babel/traverse",
+      "version": "7.29.7",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/babel/babel.git",
+        "directory": "packages/babel-traverse"
+      }
+    },
+    {
+      "name": "@babel/types",
+      "version": "7.29.7",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/babel/babel.git",
+        "directory": "packages/babel-types"
+      }
+    },
+    {
+      "name": "@csstools/color-helpers",
+      "version": "5.0.1",
+      "license": "MIT-0",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/csstools/postcss-plugins.git",
+        "directory": "packages/color-helpers"
+      }
+    },
+    {
+      "name": "@csstools/css-calc",
+      "version": "2.1.1",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/csstools/postcss-plugins.git",
+        "directory": "packages/css-calc"
+      }
+    },
+    {
+      "name": "@csstools/css-color-parser",
+      "version": "3.0.7",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/csstools/postcss-plugins.git",
+        "directory": "packages/css-color-parser"
+      }
+    },
+    {
+      "name": "@csstools/css-parser-algorithms",
+      "version": "3.0.4",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/csstools/postcss-plugins.git",
+        "directory": "packages/css-parser-algorithms"
+      }
+    },
+    {
+      "name": "@csstools/css-tokenizer",
+      "version": "3.0.3",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/csstools/postcss-plugins.git",
+        "directory": "packages/css-tokenizer"
+      }
+    },
+    {
+      "name": "@esbuild/win32-x64",
+      "version": "0.25.0",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/evanw/esbuild.git"
+      }
+    },
+    {
+      "name": "@esbuild/win32-x64",
+      "version": "0.28.1",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/evanw/esbuild.git"
+      }
+    },
+    {
+      "name": "@fontsource/jetbrains-mono",
+      "version": "5.3.0",
+      "license": "OFL-1.1",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/fontsource/font-files.git",
+        "directory": "fonts/google/jetbrains-mono"
+      }
+    },
+    {
+      "name": "@fontsource/orbitron",
+      "version": "5.3.0",
+      "license": "OFL-1.1",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/fontsource/font-files.git",
+        "directory": "fonts/google/orbitron"
+      }
+    },
+    {
+      "name": "@jest/types",
+      "version": "27.0.2",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/facebook/jest.git",
+        "directory": "packages/jest-types"
+      }
+    },
+    {
+      "name": "@jridgewell/gen-mapping",
+      "version": "0.3.12",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/jridgewell/sourcemaps.git",
+        "directory": "packages/gen-mapping"
+      }
+    },
+    {
+      "name": "@jridgewell/gen-mapping",
+      "version": "0.3.5",
+      "license": "MIT",
+      "repository": "https://github.com/jridgewell/gen-mapping"
+    },
+    {
+      "name": "@jridgewell/remapping",
+      "version": "2.3.5",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/jridgewell/sourcemaps.git",
+        "directory": "packages/remapping"
+      }
+    },
+    {
+      "name": "@jridgewell/resolve-uri",
+      "version": "3.1.2",
+      "license": "MIT",
+      "repository": "https://github.com/jridgewell/resolve-uri"
+    },
+    {
+      "name": "@jridgewell/set-array",
+      "version": "1.2.1",
+      "license": "MIT",
+      "repository": "https://github.com/jridgewell/set-array"
+    },
+    {
+      "name": "@jridgewell/sourcemap-codec",
+      "version": "1.4.10",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/jridgewell/sourcemap-codec.git"
+      }
+    },
+    {
+      "name": "@jridgewell/sourcemap-codec",
+      "version": "1.4.14",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/jridgewell/sourcemap-codec.git"
+      }
+    },
+    {
+      "name": "@jridgewell/sourcemap-codec",
+      "version": "1.5.0",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/jridgewell/sourcemap-codec.git"
+      }
+    },
+    {
+      "name": "@jridgewell/sourcemap-codec",
+      "version": "1.5.5",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/jridgewell/sourcemaps.git",
+        "directory": "packages/sourcemap-codec"
+      }
+    },
+    {
+      "name": "@jridgewell/trace-mapping",
+      "version": "0.3.31",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/jridgewell/sourcemaps.git",
+        "directory": "packages/trace-mapping"
+      }
+    },
+    {
+      "name": "@rolldown/pluginutils",
+      "version": "1.0.0-beta.19",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/rolldown/rolldown.git",
+        "directory": "packages/pluginutils"
+      }
+    },
+    {
+      "name": "@rollup/rollup-win32-x64-gnu",
+      "version": "4.62.2",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/rollup/rollup.git"
+      }
+    },
+    {
+      "name": "@rollup/rollup-win32-x64-msvc",
+      "version": "4.62.2",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/rollup/rollup.git"
+      }
+    },
+    {
+      "name": "@testing-library/dom",
+      "version": "10.4.1",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/testing-library/dom-testing-library"
+      }
+    },
+    {
+      "name": "@testing-library/jest-dom",
+      "version": "6.6.3",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/testing-library/jest-dom"
+      }
+    },
+    {
+      "name": "@testing-library/react",
+      "version": "16.3.0",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/testing-library/react-testing-library"
+      }
+    },
+    {
+      "name": "@types/aria-query",
+      "version": "5.0.4",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "directory": "types/aria-query"
+      }
+    },
+    {
+      "name": "@types/babel__core",
+      "version": "7.20.5",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "directory": "types/babel__core"
+      }
+    },
+    {
+      "name": "@types/babel__generator",
+      "version": "7.27.0",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "directory": "types/babel__generator"
+      }
+    },
+    {
+      "name": "@types/babel__template",
+      "version": "7.4.4",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "directory": "types/babel__template"
+      }
+    },
+    {
+      "name": "@types/babel__traverse",
+      "version": "7.28.0",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "directory": "types/babel__traverse"
+      }
+    },
+    {
+      "name": "@types/chai",
+      "version": "5.2.3",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "directory": "types/chai"
+      }
+    },
+    {
+      "name": "@types/deep-eql",
+      "version": "4.0.2",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "directory": "types/deep-eql"
+      }
+    },
+    {
+      "name": "@types/estree",
+      "version": "1.0.9",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "directory": "types/estree"
+      }
+    },
+    {
+      "name": "@types/istanbul-lib-coverage",
+      "version": "2.0.6",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "directory": "types/istanbul-lib-coverage"
+      }
+    },
+    {
+      "name": "@types/istanbul-lib-report",
+      "version": "3.0.3",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "directory": "types/istanbul-lib-report"
+      }
+    },
+    {
+      "name": "@types/istanbul-reports",
+      "version": "3.0.4",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "directory": "types/istanbul-reports"
+      }
+    },
+    {
+      "name": "@types/node",
+      "version": "26.1.1",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "directory": "types/node"
+      }
+    },
+    {
+      "name": "@types/react",
+      "version": "19.1.8",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "directory": "types/react"
+      }
+    },
+    {
+      "name": "@types/react-dom",
+      "version": "19.1.6",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "directory": "types/react-dom"
+      }
+    },
+    {
+      "name": "@types/yargs",
+      "version": "16.0.11",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "directory": "types/yargs"
+      }
+    },
+    {
+      "name": "@types/yargs-parser",
+      "version": "21.0.3",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "directory": "types/yargs-parser"
+      }
+    },
+    {
+      "name": "@vitejs/plugin-react",
+      "version": "4.6.0",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/vitejs/vite-plugin-react.git",
+        "directory": "packages/plugin-react"
+      }
+    },
+    {
+      "name": "@vitest/expect",
+      "version": "3.2.4",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/vitest-dev/vitest.git",
+        "directory": "packages/expect"
+      }
+    },
+    {
+      "name": "@vitest/mocker",
+      "version": "3.2.4",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/vitest-dev/vitest.git",
+        "directory": "packages/mocker"
+      }
+    },
+    {
+      "name": "@vitest/pretty-format",
+      "version": "3.2.4",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/vitest-dev/vitest.git",
+        "directory": "packages/pretty-format"
+      }
+    },
+    {
+      "name": "@vitest/pretty-format",
+      "version": "3.2.7",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/vitest-dev/vitest.git",
+        "directory": "packages/pretty-format"
+      }
+    },
+    {
+      "name": "@vitest/runner",
+      "version": "3.2.4",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/vitest-dev/vitest.git",
+        "directory": "packages/runner"
+      }
+    },
+    {
+      "name": "@vitest/snapshot",
+      "version": "3.2.4",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/vitest-dev/vitest.git",
+        "directory": "packages/snapshot"
+      }
+    },
+    {
+      "name": "@vitest/spy",
+      "version": "3.2.4",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/vitest-dev/vitest.git",
+        "directory": "packages/spy"
+      }
+    },
+    {
+      "name": "@vitest/utils",
+      "version": "3.2.4",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/vitest-dev/vitest.git",
+        "directory": "packages/utils"
+      }
+    },
+    {
+      "name": "agent-base",
+      "version": "7.1.0",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/TooTallNate/proxy-agents.git",
+        "directory": "packages/agent-base"
+      }
+    },
+    {
+      "name": "agent-base",
+      "version": "7.1.2",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/TooTallNate/proxy-agents.git",
+        "directory": "packages/agent-base"
+      }
+    },
+    {
+      "name": "ansi-regex",
+      "version": "5.0.1",
+      "license": "MIT",
+      "repository": "chalk/ansi-regex"
+    },
+    {
+      "name": "ansi-styles",
+      "version": "4.3.0",
+      "license": "MIT",
+      "repository": "chalk/ansi-styles"
+    },
+    {
+      "name": "ansi-styles",
+      "version": "5.2.0",
+      "license": "MIT",
+      "repository": "chalk/ansi-styles"
+    },
+    {
+      "name": "aria-query",
+      "version": "5.3.0",
+      "license": "Apache-2.0",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/A11yance/aria-query.git"
+      }
+    },
+    {
+      "name": "aria-query",
+      "version": "5.3.2",
+      "license": "Apache-2.0",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/A11yance/aria-query.git"
+      }
+    },
+    {
+      "name": "assertion-error",
+      "version": "2.0.1",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git@github.com:chaijs/assertion-error.git"
+      }
+    },
+    {
+      "name": "baseline-browser-mapping",
+      "version": "2.10.43",
+      "license": "Apache-2.0",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/web-platform-dx/baseline-browser-mapping.git"
+      }
+    },
+    {
+      "name": "browserslist",
+      "version": "4.28.6",
+      "license": "MIT",
+      "repository": "browserslist/browserslist"
+    },
+    {
+      "name": "cac",
+      "version": "6.7.14",
+      "license": "MIT",
+      "repository": {
+        "url": "egoist/cac",
+        "type": "git"
+      }
+    },
+    {
+      "name": "caniuse-lite",
+      "version": "1.0.30001805",
+      "license": "CC-BY-4.0",
+      "repository": "browserslist/caniuse-lite"
+    },
+    {
+      "name": "chai",
+      "version": "5.2.0",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/chaijs/chai"
+      }
+    },
+    {
+      "name": "chalk",
+      "version": "3.0.0",
+      "license": "MIT",
+      "repository": "chalk/chalk"
+    },
+    {
+      "name": "chalk",
+      "version": "4.1.2",
+      "license": "MIT",
+      "repository": "chalk/chalk"
+    },
+    {
+      "name": "check-error",
+      "version": "2.1.3",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+ssh://git@github.com/chaijs/check-error.git"
+      }
+    },
+    {
+      "name": "color-convert",
+      "version": "2.0.1",
+      "license": "MIT",
+      "repository": "Qix-/color-convert"
+    },
+    {
+      "name": "color-name",
+      "version": "1.1.4",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git@github.com:colorjs/color-name.git"
+      }
+    },
+    {
+      "name": "convert-source-map",
+      "version": "2.0.0",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git://github.com/thlorenz/convert-source-map.git"
+      }
+    },
+    {
+      "name": "css.escape",
+      "version": "1.5.1",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/mathiasbynens/CSS.escape.git"
+      }
+    },
+    {
+      "name": "cssstyle",
+      "version": "4.2.1",
+      "license": "MIT",
+      "repository": "jsdom/cssstyle"
+    },
+    {
+      "name": "csstype",
+      "version": "3.2.3",
+      "license": "MIT",
+      "repository": "https://github.com/frenic/csstype"
+    },
+    {
+      "name": "data-urls",
+      "version": "5.0.0",
+      "license": "MIT",
+      "repository": "jsdom/data-urls"
+    },
+    {
+      "name": "debug",
+      "version": "4.4.3",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git://github.com/debug-js/debug.git"
+      }
+    },
+    {
+      "name": "decimal.js",
+      "version": "10.6.0",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/MikeMcl/decimal.js.git"
+      }
+    },
+    {
+      "name": "deep-eql",
+      "version": "5.0.2",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git@github.com:chaijs/deep-eql.git"
+      }
+    },
+    {
+      "name": "dequal",
+      "version": "2.0.3",
+      "license": "MIT",
+      "repository": "lukeed/dequal"
+    },
+    {
+      "name": "dom-accessibility-api",
+      "version": "0.5.16",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/eps1lon/dom-accessibility-api.git"
+      }
+    },
+    {
+      "name": "dom-accessibility-api",
+      "version": "0.6.3",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/eps1lon/dom-accessibility-api.git"
+      }
+    },
+    {
+      "name": "echarts",
+      "version": "5.6.0",
+      "license": "Apache-2.0",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/apache/echarts.git"
+      }
+    },
+    {
+      "name": "electron-to-chromium",
+      "version": "1.5.389",
+      "license": "ISC",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/Kilian/electron-to-chromium.git"
+      }
+    },
+    {
+      "name": "entities",
+      "version": "4.5.0",
+      "license": "BSD-2-Clause",
+      "repository": {
+        "type": "git",
+        "url": "git://github.com/fb55/entities.git"
+      }
+    },
+    {
+      "name": "es-module-lexer",
+      "version": "1.7.0",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/guybedford/es-module-lexer.git"
+      }
+    },
+    {
+      "name": "esbuild",
+      "version": "0.25.0",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/evanw/esbuild.git"
+      }
+    },
+    {
+      "name": "esbuild",
+      "version": "0.28.1",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/evanw/esbuild.git"
+      }
+    },
+    {
+      "name": "escalade",
+      "version": "3.2.0",
+      "license": "MIT",
+      "repository": "lukeed/escalade"
+    },
+    {
+      "name": "estree-walker",
+      "version": "3.0.3",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/Rich-Harris/estree-walker"
+      }
+    },
+    {
+      "name": "expect-type",
+      "version": "1.4.0",
+      "license": "Apache-2.0",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/mmkal/expect-type.git"
+      }
+    },
+    {
+      "name": "fdir",
+      "version": "6.5.0",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/thecodrr/fdir.git"
+      }
+    },
+    {
+      "name": "gensync",
+      "version": "1.0.0-beta.2",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/loganfsmyth/gensync.git"
+      }
+    },
+    {
+      "name": "has-flag",
+      "version": "4.0.0",
+      "license": "MIT",
+      "repository": "sindresorhus/has-flag"
+    },
+    {
+      "name": "html-encoding-sniffer",
+      "version": "4.0.0",
+      "license": "MIT",
+      "repository": "jsdom/html-encoding-sniffer"
+    },
+    {
+      "name": "http-proxy-agent",
+      "version": "7.0.2",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/TooTallNate/proxy-agents.git",
+        "directory": "packages/http-proxy-agent"
+      }
+    },
+    {
+      "name": "https-proxy-agent",
+      "version": "7.0.6",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/TooTallNate/proxy-agents.git",
+        "directory": "packages/https-proxy-agent"
+      }
+    },
+    {
+      "name": "iconv-lite",
+      "version": "0.6.3",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git://github.com/ashtuchkin/iconv-lite.git"
+      }
+    },
+    {
+      "name": "indent-string",
+      "version": "4.0.0",
+      "license": "MIT",
+      "repository": "sindresorhus/indent-string"
+    },
+    {
+      "name": "is-potential-custom-element-name",
+      "version": "1.0.1",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/mathiasbynens/is-potential-custom-element-name.git"
+      }
+    },
+    {
+      "name": "js-tokens",
+      "version": "4.0.0",
+      "license": "MIT",
+      "repository": "lydell/js-tokens"
+    },
+    {
+      "name": "js-tokens",
+      "version": "9.0.1",
+      "license": "MIT",
+      "repository": "lydell/js-tokens"
+    },
+    {
+      "name": "jsdom",
+      "version": "26.1.0",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/jsdom/jsdom.git"
+      }
+    },
+    {
+      "name": "jsesc",
+      "version": "3.1.0",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/mathiasbynens/jsesc.git"
+      }
+    },
+    {
+      "name": "json5",
+      "version": "2.2.3",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/json5/json5.git"
+      }
+    },
+    {
+      "name": "lodash",
+      "version": "4.18.1",
+      "license": "MIT",
+      "repository": "lodash/lodash"
+    },
+    {
+      "name": "loupe",
+      "version": "3.2.1",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/chaijs/loupe"
+      }
+    },
+    {
+      "name": "lru-cache",
+      "version": "11.5.2",
+      "license": "BlueOak-1.0.0",
+      "repository": {
+        "type": "git",
+        "url": "git+ssh://git@github.com/isaacs/node-lru-cache.git"
+      }
+    },
+    {
+      "name": "lru-cache",
+      "version": "5.1.1",
+      "license": "ISC",
+      "repository": "git://github.com/isaacs/node-lru-cache.git"
+    },
+    {
+      "name": "lucide-react",
+      "version": "0.468.0",
+      "license": "ISC",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/lucide-icons/lucide.git",
+        "directory": "packages/lucide-react"
+      }
+    },
+    {
+      "name": "lz-string",
+      "version": "1.5.0",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/pieroxy/lz-string.git"
+      }
+    },
+    {
+      "name": "magic-string",
+      "version": "0.30.21",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/Rich-Harris/magic-string.git"
+      }
+    },
+    {
+      "name": "min-indent",
+      "version": "1.0.1",
+      "license": "MIT",
+      "repository": "https://github.com/thejameskyle/min-indent"
+    },
+    {
+      "name": "ms",
+      "version": "2.1.3",
+      "license": "MIT",
+      "repository": "vercel/ms"
+    },
+    {
+      "name": "nanoid",
+      "version": "3.3.15",
+      "license": "MIT",
+      "repository": "ai/nanoid"
+    },
+    {
+      "name": "node-releases",
+      "version": "2.0.51",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/chicoxyzzy/node-releases.git"
+      }
+    },
+    {
+      "name": "nwsapi",
+      "version": "2.2.24",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git://github.com/dperini/nwsapi.git"
+      }
+    },
+    {
+      "name": "parse5",
+      "version": "7.2.1",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git://github.com/inikulin/parse5.git"
+      }
+    },
+    {
+      "name": "pathe",
+      "version": "2.0.3",
+      "license": "MIT",
+      "repository": "unjs/pathe"
+    },
+    {
+      "name": "pathval",
+      "version": "2.0.1",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+ssh://git@github.com/chaijs/pathval.git"
+      }
+    },
+    {
+      "name": "picocolors",
+      "version": "1.1.1",
+      "license": "ISC",
+      "repository": "alexeyraspopov/picocolors"
+    },
+    {
+      "name": "picomatch",
+      "version": "4.0.5",
+      "license": "MIT",
+      "repository": "micromatch/picomatch"
+    },
+    {
+      "name": "postcss",
+      "version": "8.5.17",
+      "license": "MIT",
+      "repository": "postcss/postcss"
+    },
+    {
+      "name": "pretty-format",
+      "version": "27.0.2",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/facebook/jest.git",
+        "directory": "packages/pretty-format"
+      }
+    },
+    {
+      "name": "punycode",
+      "version": "2.3.1",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/mathiasbynens/punycode.js.git"
+      }
+    },
+    {
+      "name": "react",
+      "version": "19.1.0",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/facebook/react.git",
+        "directory": "packages/react"
+      }
+    },
+    {
+      "name": "react-dom",
+      "version": "19.1.0",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/facebook/react.git",
+        "directory": "packages/react-dom"
+      }
+    },
+    {
+      "name": "react-is",
+      "version": "17.0.1",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/facebook/react.git",
+        "directory": "packages/react-is"
+      }
+    },
+    {
+      "name": "react-refresh",
+      "version": "0.17.0",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/facebook/react.git",
+        "directory": "packages/react"
+      }
+    },
+    {
+      "name": "redent",
+      "version": "3.0.0",
+      "license": "MIT",
+      "repository": "sindresorhus/redent"
+    },
+    {
+      "name": "rollup",
+      "version": "4.62.2",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/rollup/rollup.git"
+      }
+    },
+    {
+      "name": "rrweb-cssom",
+      "version": "0.8.0",
+      "license": "MIT",
+      "repository": "rrweb-io/CSSOM"
+    },
+    {
+      "name": "safer-buffer",
+      "version": "2.1.2",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/ChALkeR/safer-buffer.git"
+      }
+    },
+    {
+      "name": "saxes",
+      "version": "6.0.0",
+      "license": "ISC",
+      "repository": "https://github.com/lddubeau/saxes.git"
+    },
+    {
+      "name": "scheduler",
+      "version": "0.26.0",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/facebook/react.git",
+        "directory": "packages/scheduler"
+      }
+    },
+    {
+      "name": "semver",
+      "version": "6.3.1",
+      "license": "ISC",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/npm/node-semver.git"
+      }
+    },
+    {
+      "name": "siginfo",
+      "version": "2.0.0",
+      "license": "ISC",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/emilbayes/siginfo.git"
+      }
+    },
+    {
+      "name": "source-map-js",
+      "version": "1.2.1",
+      "license": "BSD-3-Clause",
+      "repository": "7rulnik/source-map-js"
+    },
+    {
+      "name": "stackback",
+      "version": "0.0.2",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git://github.com/shtylman/node-stackback.git"
+      }
+    },
+    {
+      "name": "std-env",
+      "version": "3.9.0",
+      "license": "MIT",
+      "repository": "unjs/std-env"
+    },
+    {
+      "name": "strip-indent",
+      "version": "3.0.0",
+      "license": "MIT",
+      "repository": "sindresorhus/strip-indent"
+    },
+    {
+      "name": "strip-literal",
+      "version": "3.1.0",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/antfu/strip-literal.git"
+      }
+    },
+    {
+      "name": "supports-color",
+      "version": "7.2.0",
+      "license": "MIT",
+      "repository": "chalk/supports-color"
+    },
+    {
+      "name": "symbol-tree",
+      "version": "3.2.4",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/jsdom/js-symbol-tree.git"
+      }
+    },
+    {
+      "name": "tinybench",
+      "version": "2.9.0",
+      "license": "MIT",
+      "repository": "tinylibs/tinybench"
+    },
+    {
+      "name": "tinyexec",
+      "version": "0.3.2",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/tinylibs/tinyexec.git"
+      }
+    },
+    {
+      "name": "tinyglobby",
+      "version": "0.2.17",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/SuperchupuDev/tinyglobby.git"
+      }
+    },
+    {
+      "name": "tinypool",
+      "version": "1.1.1",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/tinylibs/tinypool.git"
+      }
+    },
+    {
+      "name": "tinyrainbow",
+      "version": "2.0.0",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/tinylibs/tinyrainbow.git"
+      }
+    },
+    {
+      "name": "tinyspy",
+      "version": "4.0.4",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/tinylibs/tinyspy.git"
+      }
+    },
+    {
+      "name": "tldts",
+      "version": "6.1.32",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+ssh://git@github.com/remusao/tldts.git"
+      }
+    },
+    {
+      "name": "tldts-core",
+      "version": "6.1.32",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+ssh://git@github.com/remusao/tldts.git"
+      }
+    },
+    {
+      "name": "tough-cookie",
+      "version": "5.1.1",
+      "license": "BSD-3-Clause",
+      "repository": {
+        "type": "git",
+        "url": "git://github.com/salesforce/tough-cookie.git"
+      }
+    },
+    {
+      "name": "tr46",
+      "version": "5.1.1",
+      "license": "MIT",
+      "repository": "https://github.com/jsdom/tr46"
+    },
+    {
+      "name": "tslib",
+      "version": "2.3.0",
+      "license": "0BSD",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/Microsoft/tslib.git"
+      }
+    },
+    {
+      "name": "typescript",
+      "version": "5.8.3",
+      "license": "Apache-2.0",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/microsoft/TypeScript.git"
+      }
+    },
+    {
+      "name": "undici-types",
+      "version": "8.3.0",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/nodejs/undici.git"
+      }
+    },
+    {
+      "name": "update-browserslist-db",
+      "version": "1.2.3",
+      "license": "MIT",
+      "repository": "browserslist/update-db"
+    },
+    {
+      "name": "vite",
+      "version": "7.0.4",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/vitejs/vite.git",
+        "directory": "packages/vite"
+      }
+    },
+    {
+      "name": "vite",
+      "version": "7.3.6",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/vitejs/vite.git",
+        "directory": "packages/vite"
+      }
+    },
+    {
+      "name": "vite-node",
+      "version": "3.2.4",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/vitest-dev/vitest.git",
+        "directory": "packages/vite-node"
+      }
+    },
+    {
+      "name": "vitest",
+      "version": "3.2.4",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/vitest-dev/vitest.git",
+        "directory": "packages/vitest"
+      }
+    },
+    {
+      "name": "w3c-xmlserializer",
+      "version": "5.0.0",
+      "license": "MIT",
+      "repository": "jsdom/w3c-xmlserializer"
+    },
+    {
+      "name": "webidl-conversions",
+      "version": "7.0.0",
+      "license": "BSD-2-Clause",
+      "repository": "jsdom/webidl-conversions"
+    },
+    {
+      "name": "whatwg-encoding",
+      "version": "3.1.1",
+      "license": "MIT",
+      "repository": "jsdom/whatwg-encoding"
+    },
+    {
+      "name": "whatwg-mimetype",
+      "version": "4.0.0",
+      "license": "MIT",
+      "repository": "jsdom/whatwg-mimetype"
+    },
+    {
+      "name": "whatwg-url",
+      "version": "14.1.1",
+      "license": "MIT",
+      "repository": "jsdom/whatwg-url"
+    },
+    {
+      "name": "why-is-node-running",
+      "version": "2.3.0",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/mafintosh/why-is-node-running.git"
+      }
+    },
+    {
+      "name": "ws",
+      "version": "8.21.0",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/websockets/ws.git"
+      }
+    },
+    {
+      "name": "xml-name-validator",
+      "version": "5.0.0",
+      "license": "Apache-2.0",
+      "repository": "jsdom/xml-name-validator"
+    },
+    {
+      "name": "xmlchars",
+      "version": "2.2.0",
+      "license": "MIT",
+      "repository": "https://github.com/lddubeau/xmlchars.git"
+    },
+    {
+      "name": "yallist",
+      "version": "3.1.1",
+      "license": "ISC",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/isaacs/yallist.git"
+      }
+    },
+    {
+      "name": "zrender",
+      "version": "5.6.1",
+      "license": "BSD-3-Clause",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/ecomfe/zrender.git"
+      }
+    }
+  ]
+}

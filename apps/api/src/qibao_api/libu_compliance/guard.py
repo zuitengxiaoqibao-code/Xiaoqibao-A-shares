@@ -28,6 +28,30 @@ class AuthorizedHistorySource:
         self._compliance.require_feature_sources(self._feature, self._asset)
         return self._source.fetch_daily(symbol, limit)
 
+    def listing_date(self, symbol: str):
+        self._compliance.require_feature_sources(self._feature, self._asset)
+        return self._source.listing_date(symbol)
+
+    def verify_history(self, symbol, bars, target_date, listing_date=None):
+        self._compliance.require_feature_sources(self._feature, self._asset)
+        return self._source.verify_history(symbol, bars, target_date, listing_date)
+
+    def prefetch(self, symbols, target_date):
+        self._compliance.require_feature_sources(self._feature, self._asset)
+        return self._source.prefetch(symbols, target_date)
+
+    def bar(self, symbol, target_date):
+        self._compliance.require_feature_sources(self._feature, self._asset)
+        return self._source.bar(symbol, target_date)
+
+    def bars(self):
+        self._compliance.require_feature_sources(self._feature, self._asset)
+        return self._source.bars()
+
+    def unavailable_reason(self, symbol, target_date):
+        self._compliance.require_feature_sources(self._feature, self._asset)
+        return self._source.unavailable_reason(symbol, target_date)
+
 
 class QuoteSource(Protocol[Result]):
     async def fetch(self, symbol: str) -> Result: ...

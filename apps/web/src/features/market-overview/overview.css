@@ -388,6 +388,9 @@
   .dragon-tiger-workbench > aside { max-height: 250px; }
   .dragon-tiger-totals { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+.homepage-background-state { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 0 0 12px; padding: 10px 14px; border: 1px solid var(--border-subtle); color: var(--text-secondary); background: var(--surface-base); font-size: 13px; }
+.homepage-background-state small { flex: 1; overflow-wrap: anywhere; }
+.homepage-background-state button { margin-left: auto; padding: 6px 10px; color: var(--text-primary); background: var(--surface-base); border: 1px solid var(--border-strong); cursor: pointer; }
 .homepage-startup-overlay {
   position: fixed;
   z-index: 1200;

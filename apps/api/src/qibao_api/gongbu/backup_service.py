@@ -5,10 +5,43 @@ import sqlite3
 import tempfile
 import threading
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from uuid import uuid4
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+class BackupManifestFile(BaseModel):
+    path: str = Field(min_length=1)
+    size: int = Field(ge=0, strict=True)
+    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+    @field_validator("path")
+    @classmethod
+    def relative_path(cls, value: str) -> str:
+        path = PurePosixPath(value)
+        if (
+            path.is_absolute() or ".." in path.parts or not path.parts
+            or any(char in value for char in ("\\", ":", "\x00"))
+            or path.as_posix() != value
+        ):
+            raise ValueError("manifest path must be a normalized relative path")
+        return value
+
+
+class BackupManifest(BaseModel):
+    version: Literal[1]
+    backup_id: str
+    created_at: AwareDatetime
+    files: list[BackupManifestFile]
+
+    @model_validator(mode="after")
+    def unique_paths(self) -> "BackupManifest":
+        paths = [item.path for item in self.files]
+        if len(paths) != len(set(paths)):
+            raise ValueError("duplicate manifest file paths")
+        return self
 
 
 class BackupRecord(BaseModel):
@@ -87,7 +120,9 @@ class BackupService:
         manifest_path = root / "manifest.json"
         try:
             manifest_text = manifest_path.read_text(encoding="utf-8")
-            manifest = json.loads(manifest_text)
+            manifest = BackupManifest.model_validate_json(manifest_text).model_dump(mode="json")
+            if manifest["backup_id"] != backup_id:
+                raise ValueError("manifest backup_id mismatch")
         except (OSError, ValueError, TypeError):
             return BackupVerification(
                 backup_id=backup_id, valid=False, restore_drill_passed=False,
@@ -115,11 +150,15 @@ class BackupService:
             ):
                 mismatches.append(item["path"])
                 continue
-            if (
-                not path.is_file()
-                or path.stat().st_size != item["size"]
-                or _sha256(path) != item["sha256"]
-            ):
+            try:
+                matches = (
+                    path.is_file()
+                    and path.stat().st_size == item["size"]
+                    and _sha256(path) == item["sha256"]
+                )
+            except OSError:
+                matches = False
+            if not matches:
                 mismatches.append(item["path"])
         mismatches = list(dict.fromkeys(mismatches))
         valid = not mismatches
@@ -203,7 +242,14 @@ class BackupService:
             manifest_path = root / "manifest.json"
             if not manifest_path.is_file():
                 continue
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            try:
+                manifest = BackupManifest.model_validate_json(
+                    manifest_path.read_text(encoding="utf-8")
+                ).model_dump(mode="json")
+                if manifest["backup_id"] != root.name:
+                    continue
+            except (OSError, ValueError, TypeError):
+                continue
             records.append(BackupRecord(
                 backup_id=manifest["backup_id"],
                 created_at=manifest["created_at"],

@@ -100,9 +100,14 @@ class LocalApiServer:
         self.wait_until_ready()
 
     def stop(self) -> None:
+        logger.info("desktop shutdown stage=api-stop-requested")
         self._server.should_exit = True
         if self._thread.ident is not None:
             self._thread.join(timeout=10)
+            if self._thread.is_alive():
+                logger.warning("desktop shutdown stage=api-stop-timeout; background tasks may still be finishing")
+            else:
+                logger.info("desktop shutdown stage=api-stopped")
         try:
             self._socket.close()
         except OSError:

@@ -1,11 +1,52 @@
 from datetime import UTC, datetime
 import time
+import threading
 
 from qibao_api.operations.realtime_ai import RealtimeAITriggerQueue
 from qibao_api.operations.realtime_snapshot_bus import RealtimeSnapshotBus
 
 
 NOW = datetime(2026, 8, 18, 2, 30, tzinfo=UTC)
+
+
+def test_queue_bounds_pending_work_and_shutdown_does_not_wait_for_gateway(monkeypatch):
+    bus = RealtimeSnapshotBus()
+    worker = RealtimeAITriggerQueue(bus, max_pending=2)
+    started, release = threading.Event(), threading.Event()
+
+    def blocking_analysis(_trigger):
+        started.set()
+        release.wait(5)
+
+    monkeypatch.setattr(worker, "_analyze", blocking_analysis)
+    try:
+        assert worker._submit({})
+        assert started.wait(2)
+        assert worker._submit({})
+        assert all(not worker._submit({}) for _ in range(100))
+        assert worker.status()["pending"] == 2
+        assert worker.status()["dropped"] == 100
+        before = time.monotonic()
+        worker.close()
+        assert time.monotonic() - before < 1
+        assert worker.status()["cancelled"] == 1
+        assert worker.status()["pending"] == 1
+    finally:
+        release.set()
+        worker._executor.shutdown(wait=True)
+    assert worker.status()["pending"] == 0
+
+
+def test_expired_dedupe_keys_are_pruned_even_for_unchanged_events():
+    worker = RealtimeAITriggerQueue(RealtimeSnapshotBus())
+    try:
+        event = {"kind": "news_events", "payload": {"snapshot_id": "one"}}
+        assert worker._build_trigger(event)
+        worker._dedupe["expired"] = time.monotonic() - 61
+        assert worker._build_trigger(event) is None
+        assert "expired" not in worker._dedupe
+    finally:
+        worker.close()
 
 
 class Gateway:

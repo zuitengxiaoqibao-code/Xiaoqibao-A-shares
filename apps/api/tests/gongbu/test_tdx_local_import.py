@@ -35,6 +35,7 @@ def test_local_import_reads_day_files_and_skips_existing_dates(tmp_path) -> None
 
     assert result.state == "completed"
     assert result.imported_rows == 1
+
     assert result.replaced_rows == 1
     assert [item.trade_date for item in repository.latest("600000", 10)] == [
         date(2026, 8, 13), date(2026, 8, 12)
@@ -174,9 +175,10 @@ def test_synchronous_import_reports_discovery_progress_for_each_day_file(tmp_pat
     )
 
     assert result.state == "completed"
-    assert [event["scanned_files"] for event in observed] == [1, 2]
-    assert [event["total_scan_files"] for event in observed] == [2, 2]
-    assert [event["day_files"] for event in observed] == [1, 2]
+    assert all(event["scanned_files"] == 2 for event in observed)
+    assert all(event["total_scan_files"] == 2 for event in observed)
+    assert observed[-1]["processed_files"] == 2
+    assert observed[-1]["imported_rows"] == 2
     assert observed[-1]["readable_files"] == 2
     assert observed[-1]["current_file"].endswith("sh600001.day")
 
@@ -418,6 +420,38 @@ def test_incremental_import_uses_latest_dates_without_counting_full_history(tmp_
 
     assert result.imported_rows == 1
     assert [bar.trade_date for bar in repository.rows] == [date(2026, 8, 18)]
+
+
+def test_import_bounds_large_files_and_reports_each_committed_batch(tmp_path) -> None:
+    root = tmp_path / "vipdoc" / "sh" / "lday"
+    root.mkdir(parents=True)
+    # One large file alone used to exceed a file-count-only write limit.
+    (root / "sh600000.day").write_bytes(_day_record(20260818) * 40001)
+    observed = []
+
+    class Repository:
+        def __init__(self):
+            self.batch_sizes = []
+
+        def append_preferred_batch(self, rows, _priority):
+            assert observed[-1]["phase"] == "writing"
+            assert observed[-1]["pending_write_rows"] == len(rows)
+            assert observed[-1]["imported_rows"] == sum(self.batch_sizes)
+            self.batch_sizes.append(len(rows))
+            return len(rows), 0, 0
+
+        append_preferred = append_preferred_batch
+
+    repository = Repository()
+    result = TdxLocalImportService(repository, as_of=date(2026, 8, 19)).import_now(
+        (tmp_path / "vipdoc",), batch_size=256, discovery_progress=observed.append,
+    )
+
+    assert repository.batch_sizes == [20000, 20000, 1]
+    assert result.imported_rows == 40001
+    committed = [event["imported_rows"] for event in observed if event["phase"] == "batch_committed"]
+    assert committed == [20000, 40000, 40001]
+    assert observed[-1]["pending_write_rows"] == 0
 
 
 def test_incremental_import_latest_date_comes_from_imported_rows_not_existing_watermark(tmp_path) -> None:

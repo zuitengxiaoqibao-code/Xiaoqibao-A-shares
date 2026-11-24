@@ -474,6 +474,19 @@ def service(
     )
 
 
+def test_overview_resolves_event_names_from_local_directory_without_quote_members():
+    directory = SimpleNamespace(resolve=lambda symbol: SimpleNamespace(name="证券目录名称") if symbol == "600001" else None)
+    overview = service(Source(), instrument_directory=directory, news_repository=NewsRepository([
+        event(0, event_type="market_news", affected_instruments=(("a_share", "600001"),)),
+    ]))
+    result = overview.current(NOW)
+    assert result.stock_names["600001"] == "证券目录名称"
+    # Older cached responses gain names without requiring another quote fetch.
+    cached = result.model_copy(update={"stock_names": {}})
+    assert overview._with_metadata(cached).stock_names["600001"] == "证券目录名称"
+    assert overview._event_stock_names((SimpleNamespace(symbols=("999999",)),)) == {}
+
+
 def test_overview_uses_and_persists_verified_previous_regime_risk() -> None:
     repository = RegimeSentimentRepository()
     result = service(
@@ -628,6 +641,38 @@ def test_overview_uses_fresh_verified_sector_snapshot_when_local_sectors_are_emp
         ),
     )
     assert result.data_scope.sector_sample == "strong_sector"
+
+
+def test_overview_prefers_sector_heatmap_over_news_theme_fallback() -> None:
+    class SectorRepository:
+        def history(self, *, limit=60):
+            return (self.latest(),)
+
+        def latest(self):
+            return SectorFundFlowSnapshot(
+                snapshot_id="sector-flow-1234567890abcdef12345678",
+                observed_at=NOW,
+                items=(SectorFundFlowItem(
+                    sector_code="BK1036",
+                    sector_name="人工智能",
+                    change_percent=Decimal("2.36"),
+                    amount_yi=Decimal("388.00"),
+                    main_net_yi=Decimal("23.80"),
+                    rising_count=71,
+                    falling_count=9,
+                ),),
+                content_hash="a" * 64,
+                raw_snapshot=b"{}",
+            )
+
+    result = service(
+        Source(),
+        news_repository=NewsRepository([event(0, theme="电力体制改革")]),
+        sector_fund_flow_repository=SectorRepository(),
+    ).current(NOW)
+
+    assert [item.name for item in result.sectors] == ["人工智能"]
+    assert result.sectors[0].sector_id == "BK1036"
 
 
 def test_overview_keeps_same_day_verified_sector_snapshot_during_source_outage() -> None:

@@ -85,8 +85,22 @@ class HistorySyncRepository:
                 );
                 CREATE INDEX IF NOT EXISTS ix_history_sync_items_pending
                 ON history_sync_items(job_id, state, symbol);
+                CREATE TABLE IF NOT EXISTS history_listing_evidence (
+                    symbol TEXT NOT NULL, target_date TEXT NOT NULL,
+                    listing_date TEXT NOT NULL, bar_count INTEGER NOT NULL,
+                    source TEXT NOT NULL, observed_at TEXT NOT NULL,
+                    PRIMARY KEY(symbol, target_date)
+                );
+                CREATE TABLE IF NOT EXISTS history_suspension_evidence (
+                    symbol TEXT NOT NULL, target_date TEXT NOT NULL,
+                    bar_count INTEGER NOT NULL, latest_trade_date TEXT NOT NULL,
+                    observed_at TEXT NOT NULL, PRIMARY KEY(symbol, target_date)
+                );
                 """
             )
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(history_sync_items)")}
+            if "error_detail" not in columns:
+                connection.execute("ALTER TABLE history_sync_items ADD COLUMN error_detail TEXT")
 
     def create_job(
         self,
@@ -136,7 +150,10 @@ class HistorySyncRepository:
                           sum(CASE WHEN i.state = 'skipped' THEN 1 ELSE 0 END) AS skipped_count,
                           sum(CASE WHEN i.state IN ('pending', 'running') THEN 1 ELSE 0 END) AS pending_count,
                           sum(CASE WHEN i.state = 'ready' AND i.source = 'mootdx' THEN 1 ELSE 0 END) AS tdx_ready_count,
-                          sum(CASE WHEN i.state = 'ready' AND i.source = 'baidu' THEN 1 ELSE 0 END) AS baidu_ready_count
+                          sum(CASE WHEN i.state = 'ready' AND i.source = 'eltdx' THEN 1 ELSE 0 END) AS eltdx_ready_count,
+                          sum(CASE WHEN i.state = 'ready' AND i.source = 'baidu' THEN 1 ELSE 0 END) AS baidu_ready_count,
+                          sum(CASE WHEN i.state = 'ready' AND i.source = 'eastmoney' THEN 1 ELSE 0 END) AS eastmoney_ready_count,
+                          sum(CASE WHEN i.state = 'ready' AND i.source = 'tencent' THEN 1 ELSE 0 END) AS tencent_ready_count
                    FROM history_sync_jobs j
                    LEFT JOIN history_sync_items i ON i.job_id = j.job_id
                    WHERE j.job_id = ?
@@ -209,10 +226,11 @@ class HistorySyncRepository:
         source: str | None,
         written_rows: int,
         error_code: str | None = None,
+        error_detail: str | None = None,
     ) -> HistorySyncItem:
         if state not in _TERMINAL_ITEM_STATES:
             raise ValueError("item completion requires a terminal state")
-        if source not in (None, "mootdx", "baidu"):
+        if source not in (None, "mootdx", "eltdx", "baidu", "eastmoney", "tencent"):
             raise ValueError("unsupported history source")
         if written_rows < 0:
             raise ValueError("written_rows must not be negative")
@@ -223,11 +241,11 @@ class HistorySyncRepository:
         with self._lock, self._connect() as connection:
             connection.execute(
                 """UPDATE history_sync_items
-                   SET state = ?, source = ?, written_rows = ?, error_code = ?,
+                   SET state = ?, source = ?, written_rows = ?, error_code = ?, error_detail = ?,
                        updated_at = ?
                    WHERE job_id = ? AND symbol = ?
                      AND state IN ('pending', 'running')""",
-                (state, source, written_rows, error_code, now, job_id, symbol),
+                (state, source, written_rows, error_code, (error_detail or "")[:1200] or None, now, job_id, symbol),
             )
             connection.execute(
                 "UPDATE history_sync_jobs SET updated_at = ? WHERE job_id = ?",
@@ -252,6 +270,14 @@ class HistorySyncRepository:
             )
         return self.get(job_id)
 
+    def complete_closing_batch(self, job_id: str, symbols: tuple[str, ...]) -> None:
+        now = self._now()
+        with self._lock, self._connect() as connection:
+            connection.executemany("UPDATE history_sync_items SET state='ready', source='tencent', written_rows=1, "
+                "attempts=attempts+1,error_code=NULL,error_detail=NULL,updated_at=? WHERE job_id=? AND symbol=? AND state='pending'",
+                [(now, job_id, validate_a_share_code(symbol)) for symbol in symbols])
+            connection.execute("UPDATE history_sync_jobs SET state='running',updated_at=? WHERE job_id=?", (now, job_id))
+
     def resume(self, job_id: str) -> HistorySyncJob:
         now = self._now()
         with self._lock, self._connect() as connection:
@@ -269,8 +295,8 @@ class HistorySyncRepository:
         with self._lock, self._connect() as connection:
             connection.execute(
                 """UPDATE history_sync_items
-                   SET state = 'pending', source = NULL, written_rows = 0,
-                       error_code = NULL, updated_at = ?
+                   SET state = 'pending', source = NULL,
+                       error_code = NULL, error_detail = NULL, updated_at = ?
                    WHERE job_id = ? AND state IN ('failed', 'pending', 'running')""",
                 (now, job_id),
             )
@@ -280,6 +306,46 @@ class HistorySyncRepository:
                    WHERE job_id = ?""",
                 (now, job_id),
             )
+        return self.get(job_id)
+
+    def requeue_gaps(self, job_id: str, symbols: tuple[str, ...]) -> HistorySyncJob:
+        """Retry verified remaining gaps, including previously 'ready' items.
+
+        A source may have returned a short history on the previous attempt.
+        Reuse the daily job without treating that old result as a new repair.
+        """
+        validated = tuple(dict.fromkeys(validate_a_share_code(symbol) for symbol in symbols))
+        now = self._now()
+        with self._lock, self._connect() as connection:
+            job = self.get(job_id)
+            if job.state in {"pending", "running"}:
+                return job
+            connection.executemany(
+                """INSERT INTO history_sync_items
+                   (job_id, symbol, state, attempts, source, written_rows, error_code, updated_at)
+                   VALUES (?, ?, 'pending', 0, NULL, 0, NULL, ?)
+                   ON CONFLICT(job_id, symbol) DO UPDATE SET
+                       state = 'pending', source = NULL,
+                       error_code = NULL, error_detail = NULL, updated_at = excluded.updated_at""",
+                [(job_id, symbol, now) for symbol in validated],
+            )
+            connection.execute(
+                """UPDATE history_sync_jobs SET state = 'pending', pause_requested = 0,
+                   updated_at = ? WHERE job_id = ?""", (now, job_id),
+            )
+        return self.get(job_id)
+
+    def restrict_to_gaps(self, job_id: str, symbols: tuple[str, ...]) -> HistorySyncJob:
+        """Retain historical item evidence, but don't fetch obsolete directory entries."""
+        validated = tuple(validate_a_share_code(symbol) for symbol in symbols)
+        placeholders = ",".join("?" for _ in validated)
+        with self._lock, self._connect() as connection:
+            connection.execute(f"UPDATE history_sync_items SET state='skipped', updated_at=? "
+                f"WHERE job_id=? AND state IN ('pending','running','failed') AND symbol NOT IN ({placeholders})",
+                               (self._now(), job_id, *validated))
+            connection.executemany("INSERT OR IGNORE INTO history_sync_items "
+                "(job_id,symbol,state,attempts,written_rows,updated_at) VALUES (?,?,'pending',0,0,?)",
+                [(job_id, symbol, self._now()) for symbol in validated])
         return self.get(job_id)
 
     def is_pause_requested(self, job_id: str) -> bool:
@@ -317,6 +383,26 @@ class HistorySyncRepository:
 
     def close(self) -> None:
         return None
+
+    def confirm_listing_history(self, symbol: str, target_date: date, listing_date: date, bar_count: int, source: str) -> None:
+        with self._lock, self._connect() as connection:
+            connection.execute("INSERT OR REPLACE INTO history_listing_evidence VALUES (?, ?, ?, ?, ?, ?)",
+                               (validate_a_share_code(symbol), target_date.isoformat(), listing_date.isoformat(), bar_count, source, self._now()))
+
+    def listing_history_evidence(self, target_date: date) -> dict[str, int]:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute("SELECT symbol,bar_count FROM history_listing_evidence WHERE target_date=?", (target_date.isoformat(),)).fetchall()
+        return {row[0]: row[1] for row in rows}
+
+    def confirm_suspension(self, symbol, target_date, bar_count, latest_trade_date):
+        with self._lock, self._connect() as connection:
+            connection.execute("INSERT OR REPLACE INTO history_suspension_evidence VALUES (?, ?, ?, ?, ?)",
+                (validate_a_share_code(symbol), target_date.isoformat(), bar_count, latest_trade_date.isoformat(), self._now()))
+
+    def suspension_evidence(self, target_date):
+        with self._lock, self._connect() as connection:
+            rows = connection.execute("SELECT symbol, bar_count, latest_trade_date FROM history_suspension_evidence WHERE target_date=?", (target_date.isoformat(),)).fetchall()
+        return {row[0]: (row[1], date.fromisoformat(row[2])) for row in rows}
 
     def append_repair_audit(self, audit: HistoryRepairAudit) -> None:
         with self._lock, self._connect() as connection:
@@ -388,6 +474,9 @@ class HistorySyncRepository:
             pending_count=int(row["pending_count"] or 0),
             tdx_ready_count=int(row["tdx_ready_count"] or 0),
             baidu_ready_count=int(row["baidu_ready_count"] or 0),
+            eastmoney_ready_count=int(row["eastmoney_ready_count"] or 0),
+            eltdx_ready_count=int(row["eltdx_ready_count"] or 0),
+            tencent_ready_count=int(row["tencent_ready_count"] or 0),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -402,5 +491,6 @@ class HistorySyncRepository:
             source=row["source"],
             written_rows=int(row["written_rows"]),
             error_code=row["error_code"],
+            error_detail=row["error_detail"],
             updated_at=row["updated_at"],
         )

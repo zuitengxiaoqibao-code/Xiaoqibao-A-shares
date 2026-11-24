@@ -8,6 +8,23 @@ afterEach(() => {
 });
 
 describe("coalescedFetch", () => {
+  it("starts a fresh request immediately after the last caller cancels", async () => {
+    const fetchMock = vi.fn()
+      .mockImplementationOnce((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+      }))
+      .mockResolvedValueOnce(new Response("fresh"));
+    vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
+    const first = coalescedFetch("/api/retry", { signal: controller.signal });
+    const cancelled = expect(first).rejects.toMatchObject({ name: "AbortError" });
+    controller.abort();
+    const second = coalescedFetch("/api/retry");
+    await cancelled;
+    expect(await (await second).text()).toBe("fresh");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("shares one in-flight GET while returning an independent response to every caller", async () => {
     let resolveFetch!: (response: Response) => void;
     const fetchMock = vi.fn(() => new Promise<Response>((resolve) => { resolveFetch = resolve; }));

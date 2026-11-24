@@ -1,0 +1,6 @@
+[console_scripts]
+eltdx=eltdx.cli:main
+eltdx-f10-smoke=eltdx.cli:f10_smoke
+eltdx-http=eltdx.http_server:main
+eltdx-mcp=eltdx.mcp:main
+eltdx-smoke=eltdx.cli:smoke

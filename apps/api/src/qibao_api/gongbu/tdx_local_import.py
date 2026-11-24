@@ -230,18 +230,6 @@ class TdxLocalImportService:
                 symbol = _a_share_symbol(candidate)
                 if self._supported_symbol(symbol) is not None:
                     files.append((candidate, symbol, scan_index))
-                elif discovery_progress is not None:
-                    elapsed = max(0.001, time.monotonic() - scan_started)
-                    rate = scan_index / elapsed
-                    discovery_progress({
-                        "scanned_files": scan_index,
-                        "total_scan_files": total_scan_files,
-                        "day_files": scan_index,
-                        "readable_files": readable_files,
-                        "current_file": str(candidate),
-                        "scan_speed": rate,
-                        "scan_eta_seconds": max(0.0, (total_scan_files - scan_index) / max(0.001, rate)),
-                    })
             imported = replaced = skipped = 0
             failed = len(errors)
             latest: date | None = None
@@ -272,11 +260,47 @@ class TdxLocalImportService:
                     scan_started=scan_started,
                 )
             pending: list[tuple[Path, str, list[DailyBar], date]] = []
+            pending_rows = 0
+            processed_files = 0
+            current_file: Path | None = None
+            last_report = 0.0
+            last_flush = time.monotonic()
+            # File sizes vary by decades of history. Bound both records and
+            # files so one write cannot monopolize the repository for minutes.
+            max_batch_rows = 20_000
+            max_batch_files = min(batch_size, 32)
+
+            def report(phase: str = "importing", *, force: bool = False) -> None:
+                nonlocal last_report
+                if discovery_progress is None:
+                    return
+                now = time.monotonic()
+                if not force and processed_files not in {1, total_files} and now - last_report < 0.25:
+                    return
+                last_report = now
+                discovery_progress({
+                    "phase": phase,
+                    "scanned_files": total_scan_files,
+                    "total_scan_files": total_scan_files,
+                    "day_files": total_scan_files,
+                    "readable_files": readable_files,
+                    "current_file": str(current_file) if current_file else None,
+                    "processed_files": processed_files,
+                    "total_import_files": total_files,
+                    "imported_rows": imported,
+                    "replaced_rows": replaced,
+                    "skipped_rows": skipped,
+                    "failed_files": failed,
+                    "pending_write_rows": pending_rows if phase == "writing" else 0,
+                    "scan_speed": processed_files / max(0.001, now - scan_started),
+                    "scan_eta_seconds": None,
+                })
 
             def flush_pending() -> None:
-                nonlocal imported, replaced, skipped, failed, latest
+                nonlocal imported, replaced, skipped, failed, latest, pending_rows, last_flush
                 if not pending:
                     return
+                report("writing", force=True)
                 groups = tuple(pending)
                 pending.clear()
                 try:
@@ -294,18 +318,18 @@ class TdxLocalImportService:
                     skipped += ignored
                     for _candidate, _symbol, _bars, group_latest in groups:
                         latest = max(latest, group_latest) if latest else group_latest
-                except Exception:
+                except Exception as batch_error:
                     if len(groups) == 1:
                         candidate, _symbol, _bars, _latest = groups[0]
                         failed += 1
                         errors.append(TdxImportError(
                             path=str(candidate), code="file_import_failed",
-                            detail="数据库写入失败",
+                            detail=str(batch_error) or "数据库写入失败",
                         ))
                     else:
                         for candidate, _symbol, bars, group_latest in groups:
                             try:
-                                added, upgraded, ignored = self.bar_repository.append_preferred(
+                                added, upgraded, ignored = append_batch(
                                     bars, ("tdx-local-day", "tdx-package"),
                                 )
                                 imported += added
@@ -318,8 +342,12 @@ class TdxLocalImportService:
                                     path=str(candidate), code="file_import_failed",
                                     detail=str(error) or type(error).__name__,
                                 ))
+                pending_rows = 0
+                last_flush = time.monotonic()
+                report("batch_committed", force=True)
 
             for index, (candidate, symbol, scan_index) in enumerate(files, start=1):
+                current_file = candidate
                 try:
                     latest_stored = latest_dates.get(symbol)
                     start_date = latest_stored + timedelta(days=1) if latest_stored else None
@@ -330,28 +358,25 @@ class TdxLocalImportService:
                     if not bars:
                         if incremental and latest_stored is not None:
                             readable_files += 1
-                            if discovery_progress is not None:
-                                elapsed = max(0.001, time.monotonic() - scan_started)
-                                scanned = scan_index
-                                rate = scanned / elapsed
-                                discovery_progress({
-                                    "scanned_files": scanned,
-                                    "total_scan_files": total_scan_files,
-                                    "day_files": scanned,
-                                    "readable_files": readable_files,
-                                    "current_file": str(candidate),
-                                    "scan_speed": rate,
-                                    "scan_eta_seconds": max(0.0, (total_scan_files - scanned) / max(0.001, rate)),
-                                })
+                            processed_files = index
+                            report()
                             if progress is not None:
                                 progress((index, total_files, symbol))
                             continue
                         raise ValueError("文件没有可验证的日线记录")
                     converted = [self._to_daily_bar(item, source=source) for item in bars]
                     readable_files += 1
-                    pending.append((candidate, symbol, converted, bars[-1].trade_date))
-                    if len(pending) >= batch_size:
-                        flush_pending()
+                    for offset in range(0, len(converted), max_batch_rows):
+                        chunk = converted[offset:offset + max_batch_rows]
+                        if pending_rows + len(chunk) > max_batch_rows:
+                            flush_pending()
+                        pending.append((candidate, symbol, chunk, chunk[-1].trade_date))
+                        pending_rows += len(chunk)
+                        if offset + len(chunk) == len(converted):
+                            processed_files = index
+                        if (len(pending) >= max_batch_files or pending_rows >= max_batch_rows
+                                or time.monotonic() - last_flush >= 1.0):
+                            flush_pending()
                 except ValueError as error:
                     failed += 1
                     errors.append(TdxImportError(
@@ -364,19 +389,8 @@ class TdxLocalImportService:
                         path=str(candidate), code="file_import_failed",
                         detail=str(error) or type(error).__name__,
                     ))
-                if discovery_progress is not None:
-                    elapsed = max(0.001, time.monotonic() - scan_started)
-                    scanned = scan_index
-                    rate = scanned / elapsed
-                    discovery_progress({
-                        "scanned_files": scanned,
-                        "total_scan_files": total_scan_files,
-                        "day_files": scanned,
-                        "readable_files": readable_files,
-                        "current_file": str(candidate),
-                        "scan_speed": rate,
-                        "scan_eta_seconds": max(0.0, (total_scan_files - scanned) / max(0.001, rate)),
-                    })
+                processed_files = index
+                report()
                 if progress is not None:
                     progress((index, total_files, symbol))
             flush_pending()

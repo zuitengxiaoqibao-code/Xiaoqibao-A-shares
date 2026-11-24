@@ -215,7 +215,8 @@ describe("Dashboard beginner shell", () => {
   it("shows one complete menu without navigation modes", () => {
     render(<Dashboard loadSnapshot={() => Promise.resolve(card)} />);
     const navigation = screen.getByRole("navigation", { name: "主要功能" });
-    expect(navigation.querySelectorAll("button")).toHaveLength(14);
+    expect(navigation.querySelectorAll("button")).toHaveLength(13);
+    expect(screen.getByRole("complementary").querySelectorAll("button")).toHaveLength(16);
     expect(screen.queryByRole("button", { name: "新手模式" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "专家模式" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "信息总览" })).toBeInTheDocument();
@@ -238,6 +239,30 @@ describe("Dashboard beginner shell", () => {
 
     expect(window.location.pathname).toBe("/market-overview");
     expect(await screen.findByRole("heading", { name: "信息总览" })).toBeInTheDocument();
+  });
+
+  it("opens intelligence in the right workspace and restores its route", () => {
+    render(<Dashboard loadSnapshot={() => Promise.resolve(card)} />);
+    const open = vi.spyOn(window, "open");
+    fireEvent.click(screen.getByRole("button", { name: /易数智算/ }));
+    expect(window.location.pathname).toBe("/yishu-intelligence");
+    expect(screen.getByRole("heading", { name: "易数智算" })).toBeInTheDocument();
+    expect(loadWorkspaceState()?.route).toBe("/yishu-intelligence");
+    expect(open).not.toHaveBeenCalled();
+    open.mockRestore();
+  });
+
+  it("replaces the bond menu with an embedded market cloud workspace", () => {
+    render(<Dashboard loadSnapshot={() => Promise.resolve(card)} />);
+    const open = vi.spyOn(window, "open");
+    expect(screen.queryByRole("button", { name: "可转债" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "大盘云图" }));
+    expect(window.location.pathname).toBe("/market-cloud");
+    expect(screen.getByRole("heading", { name: "大盘云图" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "大盘云图" })).toHaveAttribute("aria-current", "page");
+    expect(loadWorkspaceState()?.route).toBe("/market-cloud");
+    expect(open).not.toHaveBeenCalled();
+    open.mockRestore();
   });
 
   it("opens first limit-up on its stable route", async () => {
@@ -514,24 +539,24 @@ describe("Dashboard beginner shell", () => {
     expect(runBacktest).toHaveBeenCalledWith("600000", expect.objectContaining({ strategy: "sma_cross" }), expect.any(AbortSignal));
   });
 
-  it("keeps convertible bonds in an isolated route without the A-share symbol", async () => {
-    window.history.replaceState({}, "", "/?symbol=600000");
+  it("preserves the legacy convertible-bond route without a sidebar entry", async () => {
+    window.history.replaceState({}, "", "/convertible-bonds");
     render(<SelectedInstrumentProvider><Dashboard loadSnapshot={() => Promise.resolve(card)}
       loadBondDashboard={() => Promise.resolve({ status: "empty", bond_count: 0, bond_codes: [] })}
       loadBondDiagnosis={() => Promise.reject(new Error("unused"))}
       loadBondCandidates={() => Promise.resolve({ status: "empty", items: [] })} /></SelectedInstrumentProvider>);
-    fireEvent.click(screen.getByRole("button", { name: "可转债" }));
+    expect(screen.queryByRole("button", { name: "可转债" })).not.toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "可转债专区" })).toBeInTheDocument();
     expect(window.location.pathname).toBe("/convertible-bonds");
     expect(new URL(window.location.href).searchParams.has("symbol")).toBe(false);
   });
 
-  it("restores the last A-share selection after a bond round trip", async () => {
+  it("restores the last A-share selection after a market cloud round trip", async () => {
     window.history.replaceState({}, "", "/?symbol=600000");
     render(<SelectedInstrumentProvider><Dashboard loadSnapshot={() => Promise.resolve(card)}
       loadBondDashboard={() => Promise.resolve({ status: "empty", bond_count: 0, bond_codes: [] })}
       loadBondDiagnosis={() => Promise.reject(new Error("unused"))} loadBondCandidates={() => Promise.resolve({ status: "empty", items: [] })} /></SelectedInstrumentProvider>);
-    fireEvent.click(screen.getByRole("button", { name: "可转债" }));
+    fireEvent.click(screen.getByRole("button", { name: "大盘云图" }));
     expect(new URL(window.location.href).searchParams.has("symbol")).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "今日研判" }));
     expect(new URL(window.location.href).searchParams.get("symbol")).toBe("600000");

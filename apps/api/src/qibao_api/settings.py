@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     web_dir: Path = DEFAULT_WEB_DIR
     scheduler_enabled: bool = True
     scheduler_interval_seconds: int = 30
+    eltdx_enabled: bool = True
+    axdata_enabled: bool = True
     ai_base_url: str | None = None
     ai_api_key: SecretStr | None = None
     ai_model: str | None = None

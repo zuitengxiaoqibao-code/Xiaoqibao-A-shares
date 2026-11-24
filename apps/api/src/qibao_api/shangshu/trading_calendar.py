@@ -1,7 +1,46 @@
-from datetime import date, datetime, timedelta
-from typing import Protocol
+from datetime import date, datetime, time, timedelta
+from typing import Literal, Protocol
+from zoneinfo import ZoneInfo
 
 import httpx
+from pydantic import AwareDatetime, BaseModel
+
+
+class MarketSessionStatus(BaseModel):
+    status: Literal["ready", "unavailable"]
+    trading_date: date
+    observed_at: AwareDatetime
+    is_trading_day: bool | None
+    phase: Literal["closed", "pre_open", "intraday", "lunch_break", "post_close", "unknown"]
+
+
+def market_session_status(now: datetime, calendar) -> MarketSessionStatus:
+    local = now.astimezone(ZoneInfo("Asia/Shanghai"))
+    trading_day = None
+    if calendar is not None:
+        check = getattr(calendar, "trading_day_status", calendar.is_trading_day)
+        try:
+            trading_day = check(local.date())
+        except (ValueError, OSError):
+            trading_day = None
+    phase = "unknown"
+    if trading_day is False:
+        phase = "closed"
+    elif trading_day is True:
+        clock = local.time()
+        if clock < time(9, 30):
+            phase = "pre_open"
+        elif clock < time(11, 30) or time(13) <= clock < time(15):
+            phase = "intraday"
+        elif clock < time(13):
+            phase = "lunch_break"
+        else:
+            phase = "post_close"
+    return MarketSessionStatus(
+        status="unavailable" if trading_day is None else "ready",
+        trading_date=local.date(), observed_at=local,
+        is_trading_day=trading_day, phase=phase,
+    )
 
 
 class TradingDaySignal(Protocol):
@@ -76,13 +115,18 @@ class StoredTradingCalendar:
         self.schedule = schedule
 
     def is_trading_day(self, value: date) -> bool:
+        return self.trading_day_status(value) is True
+
+    def trading_day_status(self, value: date) -> bool | None:
         if value in self.bar_repository.trade_dates(limit=1000):
             return True
         if self.schedule is not None:
             scheduled = self.schedule.is_trading_day(value)
             if scheduled is not None:
                 return scheduled
-        return self.live_signal is not None and self.live_signal.confirmed_date() == value
+        if self.live_signal is not None and self.live_signal.confirmed_date() == value:
+            return True
+        return False if value.weekday() >= 5 else None
 
     def previous_trading_day(self, value: date) -> date:
         candidates = [

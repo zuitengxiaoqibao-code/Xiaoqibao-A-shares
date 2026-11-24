@@ -16,6 +16,11 @@ class Service:
     def __init__(self):
         self.calls = []
 
+    def analysis_snapshot(self, snapshot_id):
+        if snapshot_id != "a" * 64:
+            raise KeyError(snapshot_id)
+        return self.current(NOW, limit=20)
+
     def current(self, now, *, limit, settings=None):
         self.calls.append((now, limit, settings))
         return LateSessionSelectionResponse(
@@ -64,13 +69,26 @@ def test_late_session_ai_analysis_route_explains_no_data_reason():
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[get_effective_ai_settings] = lambda: None
-    selection = Service().current(NOW, limit=20)
+    app.dependency_overrides[get_late_session_selection_service] = lambda: Service()
 
     response = TestClient(app).post(
         "/api/v1/a-shares/late-session-selection/ai-analysis",
-        json=selection.model_dump(mode="json"),
+        json={"snapshot_id": "a" * 64},
     )
 
     assert response.status_code == 200
     assert response.json()["status"] == "no_candidates"
     assert response.json()["reason"]
+
+
+def test_ai_route_rejects_client_quotes_and_unknown_snapshots():
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_effective_ai_settings] = lambda: None
+    app.dependency_overrides[get_late_session_selection_service] = lambda: Service()
+    client = TestClient(app)
+    url = "/api/v1/a-shares/late-session-selection/ai-analysis"
+    assert client.post(url, json={"snapshot_id": "a" * 64, "candidate_count": 999}).status_code == 422
+    response = client.post(url, json={"snapshot_id": "b" * 64})
+    assert response.status_code == 409
+    assert "刷新" in response.json()["detail"]

@@ -18,6 +18,15 @@ build/
 .env
 .env.*
 !.env.example
+*.duckdb
+*.duckdb.wal
+*-wal
+*-shm
+/docs/project-memory/
+/docs/superpowers/
+/docs/verification/
+/release/.public-stage-*/
+!/release/XiaoQiBao-Portable-Windows-x64.zip
 /config/
 /data/
 /news/

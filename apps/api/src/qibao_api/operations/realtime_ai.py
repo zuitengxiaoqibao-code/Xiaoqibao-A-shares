@@ -6,6 +6,7 @@ import queue
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from time import monotonic
 from typing import Any
 
 from qibao_api.ai_status import classify_ai_status
@@ -23,13 +24,15 @@ class RealtimeAITriggerQueue:
         observability=None,
         max_workers: int = 1,
         dedupe_seconds: int = 60,
+        max_pending: int = 8,
     ) -> None:
-        if max_workers < 1 or dedupe_seconds < 1:
-            raise ValueError("max_workers and dedupe_seconds must be positive")
+        if max_workers < 1 or dedupe_seconds < 1 or max_pending < 1:
+            raise ValueError("max_workers, dedupe_seconds and max_pending must be positive")
         self.bus = bus
         self.ai_gateway = ai_gateway
         self.observability = observability
         self.dedupe_seconds = dedupe_seconds
+        self.max_pending = max_pending
         self._subscription = None
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="realtime-ai")
         self._thread: threading.Thread | None = None
@@ -40,8 +43,14 @@ class RealtimeAITriggerQueue:
         self._submitted = 0
         self._completed = 0
         self._failed = 0
+        self._pending = 0
+        self._dropped = 0
+        self._cancelled = 0
+        self._closed = False
 
     def start(self) -> None:
+        if self._closed:
+            raise RuntimeError("realtime AI queue is closed")
         if self._thread is not None and self._thread.is_alive():
             return
         self._subscription = self.bus.subscribe({"market_overview", "quant_strategy", "company_research", "news_events", "late_session_candidates"})
@@ -50,6 +59,8 @@ class RealtimeAITriggerQueue:
         self._thread.start()
 
     def close(self) -> None:
+        with self._lock:
+            self._closed = True
         self._stop.set()
         if self._subscription is not None:
             self.bus.unsubscribe(self._subscription)
@@ -57,7 +68,7 @@ class RealtimeAITriggerQueue:
         if self._thread is not None:
             self._thread.join(timeout=2)
             self._thread = None
-        self._executor.shutdown(wait=True, cancel_futures=True)
+        self._executor.shutdown(wait=False, cancel_futures=True)
 
     def status(self) -> dict[str, Any]:
         with self._lock:
@@ -67,7 +78,10 @@ class RealtimeAITriggerQueue:
                 "completed": self._completed,
                 "failed": self._failed,
                 "dedupe_window_seconds": self.dedupe_seconds,
-                "pending": max(0, self._submitted - self._completed - self._failed),
+                "pending": self._pending,
+                "max_pending": self.max_pending,
+                "dropped": self._dropped,
+                "cancelled": self._cancelled,
             }
 
     def _run(self) -> None:
@@ -81,9 +95,29 @@ class RealtimeAITriggerQueue:
             trigger = self._build_trigger(event)
             if trigger is None:
                 continue
-            with self._lock:
-                self._submitted += 1
-            self._executor.submit(self._analyze, trigger)
+            self._submit(trigger)
+
+    def _submit(self, trigger: dict[str, Any]) -> bool:
+        with self._lock:
+            if self._closed or self._pending >= self.max_pending:
+                self._dropped += 1
+                return False
+            self._pending += 1
+            try:
+                future = self._executor.submit(self._analyze, trigger)
+            except RuntimeError:
+                self._pending -= 1
+                self._dropped += 1
+                return False
+            self._submitted += 1
+            future.add_done_callback(self._finished)
+            return True
+
+    def _finished(self, future) -> None:
+        with self._lock:
+            self._pending -= 1
+            if future.cancelled():
+                self._cancelled += 1
 
     def _build_trigger(self, event: dict[str, Any]) -> dict[str, Any] | None:
         kind = str(event.get("kind") or "")
@@ -91,6 +125,11 @@ class RealtimeAITriggerQueue:
         if not kind or not isinstance(payload, dict):
             return None
         now = datetime.now(timezone.utc)
+        now_mono = monotonic()
+        self._dedupe = {
+            key: timestamp for key, timestamp in self._dedupe.items()
+            if now_mono - timestamp < self.dedupe_seconds
+        }
         snapshot_hash = _hash(payload)
         previous = self._previous.get(kind)
         fingerprint = _fingerprint(kind, payload)
@@ -103,11 +142,12 @@ class RealtimeAITriggerQueue:
             self._previous[kind] = {"fingerprint": fingerprint, "hash": snapshot_hash, "payload": payload}
             return None
         dedupe_key = f"{kind}:{reason}:{snapshot_hash}"
-        now_mono = now.timestamp()
         last = self._dedupe.get(dedupe_key)
         if last is not None and now_mono - last < self.dedupe_seconds:
             return None
         self._dedupe[dedupe_key] = now_mono
+        while len(self._dedupe) > 2048:
+            self._dedupe.pop(next(iter(self._dedupe)))
         self._previous[kind] = {"fingerprint": fingerprint, "hash": snapshot_hash, "payload": payload}
         evidence, conclusions = _evidence(kind, payload, previous.get("payload") if previous else None, reason)
         return {
@@ -183,13 +223,15 @@ class RealtimeAITriggerQueue:
                     else ai_status.message
                 ),
             }
-            self.bus.publish(
-                "ai_analysis",
-                payload,
-                observed_at=_parse_datetime(payload["generated_at"]),
-                source=payload["provider"],
-                freshness="live",
-            )
+            with self._lock:
+                if self._closed:
+                    self._cancelled += 1
+                    return
+                self.bus.publish(
+                    "ai_analysis", payload,
+                    observed_at=_parse_datetime(payload["generated_at"]),
+                    source=payload["provider"], freshness="live",
+                )
             if self.observability is not None:
                 self.observability.record(
                     "realtime_ai",

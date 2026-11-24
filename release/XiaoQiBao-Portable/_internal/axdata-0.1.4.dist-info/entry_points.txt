@@ -1,0 +1,8 @@
+[axdata.providers]
+cninfo = axdata_source_cninfo.provider:provider
+tdx = axdata_source_tdx.provider:provider
+tdx_ext = axdata_source_tdx_ext.provider:provider
+tencent = axdata_source_tencent.provider:provider
+
+[console_scripts]
+axdata = axdata_core.cli:main

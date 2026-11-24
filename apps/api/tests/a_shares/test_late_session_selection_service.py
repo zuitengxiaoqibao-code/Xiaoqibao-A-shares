@@ -3,11 +3,36 @@ from decimal import Decimal
 from types import SimpleNamespace
 import threading
 import time
+import pytest
 from zoneinfo import ZoneInfo
 
 from qibao_api.a_shares.late_session_selection_service import LateSessionSelectionService
 from qibao_api.contracts.late_session_selection import LateSessionRuleSettings
 from qibao_api.gongbu.tdx_local_overview import TdxRealtimeQuote
+
+
+def test_ai_snapshot_is_frozen_bounded_and_expires(monkeypatch):
+    now = datetime(2026, 8, 17, 6, 31, tzinfo=ZoneInfo("UTC"))
+    service = LateSessionSelectionService(
+        local_market_source=SimpleNamespace(current_quotes=lambda: ()),
+        bar_repository=_Bars(), instrument_directory=None,
+    )
+    response = service.current(now)
+    assert response.snapshot_id is not None
+    saved = service.analysis_snapshot(response.snapshot_id)
+    assert saved == response
+    assert saved is not response
+    changed = response.model_copy(update={"candidate_count": 999})
+    assert service.analysis_snapshot(changed.snapshot_id).candidate_count == 0
+    for index in range(130):
+        service._remember_snapshot(response.model_copy(update={"no_data_reason": str(index)}))
+    assert len(service._snapshots) == 128
+    with pytest.raises(KeyError):
+        service.analysis_snapshot(response.snapshot_id)
+    snapshot_id = next(iter(service._snapshots))
+    monkeypatch.setattr("qibao_api.a_shares.late_session_selection_service.monotonic", lambda: time.monotonic() + 901)
+    with pytest.raises(KeyError):
+        service.analysis_snapshot(snapshot_id)
 
 
 class _LocalSource:

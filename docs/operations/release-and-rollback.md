@@ -12,4 +12,4 @@
 
 `-SkipApiProbe` 只用于恢复演练单元测试，不能用于正式发布验收。`run-portable-smoke.ps1 -PortableRootOverride <temp-root>` 只供恢复演练让正式 EXE 读取临时副本；该外部目录由调用方管理，smoke 不会删除或改写正式发布目录。
 
-回滚只使用 `BackupService` 生成且逐文件哈希通过的 `backup-*` 目录。`scripts/rollback-portable-data.ps1` 不会主动关闭任何程序；一树-A股观测台仍运行时会拒绝回滚，通达信不在该脚本的进程范围内。替换前的 `data` 目录会改名保留，便于二次恢复。
+回滚只使用 `BackupService` 生成且逐文件哈希通过的 `backup-*` 目录。`scripts/rollback-portable-data.ps1` 不会主动关闭任何程序；易数-A股观测台仍运行时会拒绝回滚，通达信不在该脚本的进程范围内。替换前的 `data` 目录会改名保留，便于二次恢复。

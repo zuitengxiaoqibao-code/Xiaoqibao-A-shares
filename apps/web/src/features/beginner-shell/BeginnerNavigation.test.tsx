@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { BeginnerNavigation, type BeginnerView } from "./BeginnerNavigation";
@@ -20,29 +20,36 @@ describe("BeginnerNavigation", () => {
 
     expect(screen.getByRole("complementary")).toHaveClass("terminal-navigation", "beginner-sidebar");
     const navigation = screen.getByRole("navigation", { name: "主要功能" });
-    expect(navigation).toHaveTextContent("信息总览今日研判个股观察公司研究首次涨停尾盘选股量化分析数据大屏新闻热点风险提醒历史复盘监控中心数据设置本地运维");
-    expect(navigation.querySelectorAll("button")).toHaveLength(14);
+    expect(within(navigation).getAllByRole("heading").map((heading) => heading.textContent)).toEqual(["工作台", "个股研究", "策略筛选", "资讯风控", "特色工具"]);
+    expect(navigation.querySelectorAll("button")).toHaveLength(13);
+    expect(screen.getAllByRole("button")).toHaveLength(16);
     expect(screen.getByRole("button", { name: "量化分析" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "数据设置" })).toBeInTheDocument();
     const marketOverview = screen.getByRole("button", { name: "信息总览" });
+    const dataScreen = screen.getByRole("button", { name: "数据大屏" });
     const todayDecision = screen.getByRole("button", { name: "今日研判" });
     const companyResearch = screen.getByRole("button", { name: "公司研究" });
-    expect(marketOverview.nextElementSibling).toBe(todayDecision);
+    expect(marketOverview.nextElementSibling).toBe(dataScreen);
+    expect(dataScreen.nextElementSibling).toBe(todayDecision);
     expect(screen.getByRole("button", { name: "个股观察" }).nextElementSibling).toBe(companyResearch);
     expect(screen.getByRole("button", { name: "历史复盘" }).nextElementSibling).toBe(screen.getByRole("button", { name: "监控中心" }));
-    expect(screen.getByRole("button", { name: "监控中心" }).nextElementSibling).toBe(screen.getByRole("button", { name: "数据设置" }));
+    expect(within(navigation).queryByRole("button", { name: "数据设置" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "新手模式" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "可转债" })).toBeInTheDocument();
-    expect(screen.getByText("一树-A股观测台")).toBeInTheDocument();
-    const company = screen.getByText("上海一树电子商务有限公司");
+    expect(screen.getByRole("button", { name: "大盘云图" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "可转债" })).not.toBeInTheDocument();
+    expect(screen.getByText("易数-A股观测台")).toBeInTheDocument();
+    const company = screen.getByRole("button", { name: /易数智算/ });
     const disclaimer = screen.getByText(/只做观察与风险提示/);
     expect(company.nextElementSibling).toBe(disclaimer);
+    expect(company.parentElement).toHaveClass("beginner-sidebar-bottom");
+    expect(screen.queryByText("个股自选")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("任务活动状态")).not.toBeInTheDocument();
   });
 
   it("keeps all routes at the same navigation level", () => {
     render(<BeginnerNavigation active="dashboard" onNavigate={vi.fn()} />);
     const navigation = screen.getByRole("navigation", { name: "主要功能" });
-    expect(navigation.querySelectorAll("button")).toHaveLength(14);
+    expect(navigation.querySelectorAll("button")).toHaveLength(13);
     const firstLimitUp = screen.getByRole("button", { name: "首次涨停" });
     const lateSession = screen.getByRole("button", { name: "尾盘选股" });
     const quantAnalysis = screen.getByRole("button", { name: "量化分析" });
@@ -60,6 +67,18 @@ describe("BeginnerNavigation", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "风险提醒" }));
     expect(onNavigate).toHaveBeenCalledWith("risk");
+  });
+
+  it("keeps system tools and the prominent intelligence entry in the fixed footer", () => {
+    const onNavigate = vi.fn();
+    render(<BeginnerNavigation active="yishu_intelligence" onNavigate={onNavigate} />);
+    const footer = screen.getByRole("button", { name: "数据设置" }).closest(".beginner-sidebar-bottom");
+    expect(footer).toContainElement(screen.getByRole("button", { name: "本地运维" }));
+    const intelligence = screen.getByRole("button", { name: /易数智算/ });
+    expect(footer).toContainElement(intelligence);
+    expect(intelligence).toHaveAttribute("aria-current", "page");
+    fireEvent.click(intelligence);
+    expect(onNavigate).toHaveBeenCalledWith("yishu_intelligence");
   });
 
   it("reports and highlights the local operations route", () => {

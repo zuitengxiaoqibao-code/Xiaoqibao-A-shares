@@ -374,7 +374,7 @@ async def _hotspot_live_refresh_loop(
             datetime_time(9, 0) <= local_now.time() <= datetime_time(15, 30)
         )
         try:
-            if session_time and calendar.is_trading_day(trading_date):
+            if session_time and await asyncio.to_thread(calendar.is_trading_day, trading_date):
                 await asyncio.to_thread(service.sync, trading_date, fetched_at=now)
         except asyncio.CancelledError:
             raise
@@ -813,6 +813,10 @@ async def lifespan(application: FastAPI):
     compliance.set_feature_sources("a_share_finance", "a_share", ("mootdx",))
     compliance.set_feature_sources("history_sync.mootdx", "a_share", ("mootdx",))
     compliance.set_feature_sources("history_sync.baidu", "a_share", ("baidu",))
+    compliance.set_feature_sources("history_sync.eastmoney", "a_share", ("eastmoney",))
+    compliance.set_feature_sources("history_sync.eltdx", "a_share", ("eltdx",))
+    compliance.set_feature_sources("history_listing.sina", "a_share", ("sina",))
+    compliance.set_feature_sources("history_close.tencent", "a_share", ("tencent",))
     compliance.set_feature_sources("bond_quotes", "convertible_bond", ("tencent",))
     compliance.set_feature_sources("bond_clauses", "convertible_bond", ("eastmoney",))
     compliance.set_feature_sources("bond_valuations", "convertible_bond", ("eastmoney",))
@@ -933,6 +937,11 @@ async def lifespan(application: FastAPI):
         with httpx.Client(
             timeout=httpx.Timeout(60, connect=15, read=60, write=60, pool=15)
         ) as history_client:
+            from qibao_api.gongbu.eltdx_source import EltdxSource
+            eltdx_source = EltdxSource(observer=operations_repository.append_source_attempt) if getattr(settings, "eltdx_enabled", True) else None
+            eltdx_history_source = AuthorizedHistorySource(
+                eltdx_source, compliance, "history_sync.eltdx", "a_share",
+            ) if eltdx_source is not None else None
             history_sources = [
                 AuthorizedHistorySource(
                     TdxHistorySource(
@@ -955,6 +964,16 @@ async def lifespan(application: FastAPI):
                     "a_share",
                 )
             )
+            from qibao_api.gongbu.eastmoney_history import EastmoneyHistorySource
+            eastmoney_history_source = AuthorizedHistorySource(
+                EastmoneyHistorySource(history_client), compliance, "history_sync.eastmoney", "a_share",
+            )
+            from qibao_api.gongbu.listing_history import SinaListingDateSource
+            listing_date_source = AuthorizedHistorySource(SinaListingDateSource(history_client), compliance,
+                                                         "history_listing.sina", "a_share")
+            from qibao_api.gongbu.tencent_close_history import TencentCloseHistorySource
+            close_history_source = AuthorizedHistorySource(TencentCloseHistorySource(history_client), compliance,
+                                                          "history_close.tencent", "a_share")
             bar_repository = BarRepository(
                 settings.data_dir / "market.duckdb",
                 settings.data_dir / "parquet" / "a-shares",
@@ -1001,7 +1020,7 @@ async def lifespan(application: FastAPI):
                 news_repository, bar_repository
             )
             application.state.market_data_service = MarketDataService(
-                FallbackHistorySource(history_sources),
+                FallbackHistorySource(([eltdx_history_source] if eltdx_history_source else []) + history_sources),
                 bar_repository,
             )
             application.state.pipeline = ResearchPipeline(
@@ -1359,9 +1378,10 @@ async def lifespan(application: FastAPI):
                 application.state.watchlist_risk_service = WatchlistRiskService(
                     a_share_instrument_directory, bar_repository
                 )
+                from qibao_api.gongbu.a_share_universe import SinaAShareUniverseSource
                 application.state.a_share_universe_source = FallbackAShareUniverseSource(
+                    SinaAShareUniverseSource(client=client),
                     EastmoneyAShareUniverseSource(client=client),
-                    CninfoAShareUniverseSource(client=client),
                 )
                 latest_directory_observation = (
                     a_share_instrument_directory.latest_named_observed_at()
@@ -1392,6 +1412,13 @@ async def lifespan(application: FastAPI):
                     job_repository=history_sync_repository,
                     clock=lambda: datetime.now(timezone.utc),
                     trading_calendar=trading_calendar,
+                    fallback_sources=tuple(
+                        ([("eltdx", eltdx_history_source)] if eltdx_history_source else [])
+                        + [("eastmoney", eastmoney_history_source)]
+                    ),
+                    max_workers=4,
+                    listing_date_source=listing_date_source,
+                    close_source=close_history_source,
                 )
                 application.state.full_market_history_service = (
                     full_market_history_service
@@ -1399,6 +1426,26 @@ async def lifespan(application: FastAPI):
                 application.state.history_supplement_service.history_service = (
                     full_market_history_service
                 )
+                repair_event_loop = asyncio.get_running_loop()
+
+                async def _refresh_repair_universe() -> None:
+                    compliance.require_feature_sources("a_share_universe", "a_share")
+                    instruments = await application.state.a_share_universe_source.fetch()
+                    if len(instruments) < 4000:
+                        raise ValueError("证券目录来源未返回完整 A 股目录")
+                    a_share_instrument_directory.observe_many(instruments)
+
+                def _prepare_repair_universe() -> None:
+                    future = asyncio.run_coroutine_threadsafe(
+                        _refresh_repair_universe(), repair_event_loop,
+                    )
+                    try:
+                        future.result(timeout=60)
+                    except Exception:
+                        future.cancel()
+                        raise
+
+                application.state.history_supplement_service.prepare_universe = _prepare_repair_universe
                 history_supplement_executor.submit(
                     _reconcile_history_supplement,
                     application.state.history_supplement_service,
@@ -1600,12 +1647,22 @@ async def lifespan(application: FastAPI):
                     )
                 log_startup_stage("market-sentiment-ready")
                 tencent_overview_source = TencentOverviewSource(history_client)
+                from qibao_api.gongbu.axdata_quotes import AxDataTencentQuoteSource
+                from qibao_api.gongbu.external_quote_sources import ExternalQuoteFallbackSource
+                additional_quote_sources = []
+                if eltdx_source is not None:
+                    additional_quote_sources.append(eltdx_source)
+                if getattr(settings, "axdata_enabled", True):
+                    additional_quote_sources.append(AxDataTencentQuoteSource(observer=operations_repository.append_source_attempt))
                 market_quote_source = build_external_quote_source(
                     tencent_overview_source,
                     external_data_source_repository,
                     history_client,
                 )
+                if additional_quote_sources:
+                    market_quote_source = ExternalQuoteFallbackSource(market_quote_source, additional_quote_sources)
                 application.state.market_overview_service = MarketOverviewService(
+                    instrument_directory=a_share_instrument_directory,
                     sentiment_repository=market_sentiment_repository,
                     news_repository=news_repository,
                     first_limit_up_repository=first_limit_up_repository,
@@ -1775,6 +1832,7 @@ async def lifespan(application: FastAPI):
                 yield
             finally:
                 application.state.shutting_down = True
+                application.state.history_supplement_service.stop_accepting_jobs()
                 if stock_realtime_quote_service is not None:
                     await stock_realtime_quote_service.close()
                 if local_source_discovery_task is not None:
@@ -1880,6 +1938,8 @@ async def lifespan(application: FastAPI):
                 tdx_import_executor.shutdown(wait=True, cancel_futures=True)
                 history_sync_executor.shutdown(wait=True, cancel_futures=True)
                 read_executor.shutdown(wait=True, cancel_futures=True)
+                if eltdx_source is not None:
+                    eltdx_source.close()
                 application.state.history_supplement_service.close()
                 history_sync_repository.close()
                 tdx_import_repository.close()
@@ -1911,13 +1971,24 @@ async def lifespan(application: FastAPI):
     engine.dispose()
 
 
-app = FastAPI(title="一树电子商务-A股观测台", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="易数智算-A股观测台", version="0.1.0", lifespan=lifespan)
 
 
 def _requires_runtime_write_gate(method: str, path: str) -> bool:
     if method.upper() in {"GET", "HEAD", "OPTIONS"}:
         return False
     if path == "/health" or path.startswith("/api/v1/settings/"):
+        return False
+    if method.upper() == "POST" and path.rstrip("/") == (
+        "/api/v1/a-shares/late-session-selection/ai-analysis"
+    ):
+        return False
+    if method.upper() == "POST" and path.rstrip("/") == (
+        "/api/v1/a-shares/history-supplement/official/start"
+    ):
+        # This endpoint only persists/submits a job under its service lock.
+        # A slow scheduler tick must not delay its acknowledgement or execute
+        # a stale queued POST after the browser has already timed out.
         return False
 
     segments = path.strip("/").split("/")

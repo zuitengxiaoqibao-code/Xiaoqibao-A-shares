@@ -1,6 +1,7 @@
 import hashlib
 import json
 import sqlite3
+import pytest
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
@@ -8,6 +9,30 @@ from qibao_api.contracts.bars import DailyBar
 from qibao_api.gongbu.backup_service import BackupService
 from qibao_api.gongbu.fund_flow import FundFlowRepository, FundFlowSnapshot
 from qibao_api.storage.bar_repository import BarRepository
+
+
+@pytest.mark.parametrize("manifest", [{}, [], {"files": {}}, {"files": [None]}, {"version": 1, "backup_id": "backup-corrupt", "created_at": "invalid", "files": []}])
+def test_corrupt_manifest_is_reported_and_does_not_break_backup_listing(tmp_path, manifest):
+    service = BackupService(tmp_path)
+    root = service.backups_dir / "backup-corrupt"
+    root.mkdir()
+    (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    verification = service.verify("backup-corrupt", restore_drill=True)
+    assert not verification.valid
+    assert verification.mismatched_files == ("manifest.json",)
+    assert service.backups() == []
+
+
+@pytest.mark.parametrize("path", ["../escape", "/absolute", "C:/escape", "bad\x00path", "a\\b", "."])
+def test_invalid_manifest_paths_fail_verification_without_reading_files(tmp_path, path):
+    service = BackupService(tmp_path)
+    root = service.backups_dir / "backup-corrupt"
+    root.mkdir()
+    (root / "manifest.json").write_text(json.dumps({
+        "version": 1, "backup_id": "backup-corrupt", "created_at": "2026-11-19T00:00:00Z",
+        "files": [{"path": path, "size": 0, "sha256": "a" * 64}],
+    }), encoding="utf-8")
+    assert service.verify("backup-corrupt").mismatched_files == ("manifest.json",)
 
 
 def test_backup_captures_live_databases_and_passes_restore_drill(tmp_path) -> None:

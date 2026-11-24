@@ -12,6 +12,8 @@ SOURCE_PRIORITY: dict[str, int] = {
     "local-tdx": 0,
     "tdx": 0,
     "mootdx": 0,
+    "eltdx": 0,
+    "axdata-tencent": 1,
     "tencent": 1,
     "eastmoney": 2,
     "baidu": 3,

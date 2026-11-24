@@ -2,6 +2,8 @@ export type RealtimeStreamEvent<T = unknown> = {
   event_id: string;
   kind: string;
   sequence: number;
+  stream_id?: string;
+  stream_started_at?: string;
   observed_at: string;
   source: string;
   freshness: string;
